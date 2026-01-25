@@ -1,0 +1,60 @@
+from datetime import datetime
+from uuid import UUID
+from pydantic import BaseModel, ConfigDict
+from enum import Enum
+
+
+class ProblemVisibility(str, Enum):
+    PUBLIC = "public"
+    PRIVATE = "private"
+
+
+class ProblemDifficulty(str, Enum):
+    EASY = "easy"
+    MEDIUM = "medium"
+    HARD = "hard"
+
+
+class ProblemCreate(BaseModel):
+    title: str
+    description: str | None = None
+    visibility: ProblemVisibility = ProblemVisibility.PRIVATE
+    difficulty: ProblemDifficulty | None = None
+    tags: list[str] = []
+
+
+class ProblemUpdate(BaseModel):
+    title: str | None = None
+    description: str | None = None
+    visibility: ProblemVisibility | None = None
+    difficulty: ProblemDifficulty | None = None
+    tags: list[str] | None = None
+
+
+class AuthorInfo(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    
+    id: UUID
+    username: str
+    avatar_url: str | None = None
+
+
+class ProblemResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    
+    id: UUID
+    title: str
+    description: str | None
+    visibility: ProblemVisibility
+    difficulty: ProblemDifficulty | None
+    tags: list[str]
+    created_at: datetime
+    updated_at: datetime
+    author: AuthorInfo
+    canvas_count: int = 0
+    library_item_count: int = 0
+
+
+class ProblemListResponse(BaseModel):
+    problems: list[ProblemResponse]
+    total: int
