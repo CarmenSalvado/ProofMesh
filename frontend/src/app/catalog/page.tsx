@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth";
-import { getProblems, Problem } from "@/lib/api";
+import { getProblems, seedProblems, Problem } from "@/lib/api";
 import { WorkspaceSidebar } from "@/components/layout/WorkspaceSidebar";
 import { WorkspaceHeader } from "@/components/layout/WorkspaceHeader";
 
@@ -14,6 +14,7 @@ export default function CatalogPage() {
 	const [problems, setProblems] = useState<Problem[]>([]);
 	const [loading, setLoading] = useState(true);
 	const [searchQuery, setSearchQuery] = useState("");
+	const [seeding, setSeeding] = useState(false);
 
 	useEffect(() => {
 		if (!authLoading && !user) {
@@ -34,6 +35,18 @@ export default function CatalogPage() {
 			console.error("Failed to load problems:", err);
 		} finally {
 			setLoading(false);
+		}
+	}
+
+	async function handleSeed() {
+		try {
+			setSeeding(true);
+			await seedProblems();
+			await loadProblems();
+		} catch (err) {
+			console.error("Failed to seed problems:", err);
+		} finally {
+			setSeeding(false);
 		}
 	}
 
@@ -63,7 +76,6 @@ export default function CatalogPage() {
 						{ label: "Catalog" },
 					]}
 					status={null}
-					showControls={false}
 				/>
 
 				<div className="flex-1 overflow-y-auto bg-[var(--bg-secondary)]">
@@ -114,6 +126,15 @@ export default function CatalogPage() {
 								<p className="text-xs text-[var(--text-muted)]">
 									{searchQuery ? "Try a different search term" : "No public problems available yet"}
 								</p>
+								{!searchQuery && (
+									<button
+										onClick={handleSeed}
+										disabled={seeding}
+										className="mt-4 text-xs text-[var(--accent-primary)] hover:text-[var(--text-primary)] transition-colors"
+									>
+										{seeding ? "Adding samples..." : "Add sample problems"}
+									</button>
+								)}
 							</div>
 						) : (
 							<div className="grid gap-4">
@@ -140,8 +161,6 @@ export default function CatalogPage() {
 														</div>
 														{problem.author.username}
 													</span>
-													<span>·</span>
-													<span>{problem.canvas_count} canvases</span>
 													<span>·</span>
 													<span>{problem.library_item_count} items</span>
 												</div>

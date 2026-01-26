@@ -57,8 +57,8 @@ class Problem(Base):
     
     # Relationships
     author: Mapped["User"] = relationship("User", back_populates="problems")
-    canvases: Mapped[list["Canvas"]] = relationship(
-        "Canvas", back_populates="problem", cascade="all, delete-orphan"
+    workspace_files: Mapped[list["WorkspaceFile"]] = relationship(
+        "WorkspaceFile", back_populates="problem", cascade="all, delete-orphan"
     )
     library_items: Mapped[list["LibraryItem"]] = relationship(
         "LibraryItem", back_populates="problem", cascade="all, delete-orphan"

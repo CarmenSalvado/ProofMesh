@@ -1,153 +1,119 @@
+from __future__ import annotations
+
+import re
+import uuid
 from uuid import UUID
-from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from app.database import get_db
-from app.models.canvas import Canvas
-from app.models.canvas_line import CanvasLine
-from app.models.agent_run import AgentRun, AgentRunStatus
-from app.models.library_item import LibraryItem, LibraryItemStatus
-from app.schemas.agent_run import AgentRunCreate, AgentRunResponse
+from app.models.problem import Problem, ProblemVisibility
+from app.models.user import User
+from app.api.deps import get_current_user_optional
+from app.schemas.agent import AgentRunRequest, AgentRunResponse, AgentProposal
 
-router = APIRouter(prefix="/api/canvases/{canvas_id}/agents", tags=["agents"])
-
-
-@router.get("/runs", response_model=list[AgentRunResponse])
-async def list_agent_runs(canvas_id: UUID, db: AsyncSession = Depends(get_db)):
-    """List all agent runs for a canvas"""
-    result = await db.execute(
-        select(AgentRun)
-        .where(AgentRun.canvas_id == canvas_id)
-        .order_by(AgentRun.created_at.desc())
-    )
-    return result.scalars().all()
+router = APIRouter(prefix="/api/agents", tags=["agents"])
 
 
-@router.post("/runs", response_model=AgentRunResponse, status_code=201)
-async def create_agent_run(
-    canvas_id: UUID, data: AgentRunCreate, db: AsyncSession = Depends(get_db)
+async def verify_problem_access(
+    problem_id: UUID,
+    db: AsyncSession,
+    current_user: User | None,
+) -> Problem:
+    result = await db.execute(select(Problem).where(Problem.id == problem_id))
+    problem = result.scalar_one_or_none()
+
+    if not problem:
+        raise HTTPException(status_code=404, detail="Problem not found")
+
+    if problem.visibility == ProblemVisibility.PRIVATE:
+        if not current_user or problem.author_id != current_user.id:
+            raise HTTPException(status_code=404, detail="Problem not found")
+
+    return problem
+
+
+def extract_latex_snippets(text: str) -> list[str]:
+    snippets = []
+    for block in re.findall(r"\$\$(.+?)\$\$", text, flags=re.DOTALL):
+        snippet = block.strip()
+        if snippet:
+            snippets.append(snippet)
+    for inline in re.findall(r"\$(.+?)\$", text):
+        snippet = inline.strip()
+        if snippet:
+            snippets.append(snippet)
+    return snippets[:3]
+
+
+@router.post("/run", response_model=AgentRunResponse)
+async def run_agent(
+    data: AgentRunRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User | None = Depends(get_current_user_optional),
 ):
-    """Start a new agent run for the canvas"""
-    # Get canvas with lines
-    result = await db.execute(
-        select(Canvas)
-        .where(Canvas.id == canvas_id)
-        .options(selectinload(Canvas.lines), selectinload(Canvas.problem))
-    )
-    canvas = result.scalar_one_or_none()
-    if not canvas:
-        raise HTTPException(status_code=404, detail="Canvas not found")
-    
-    # Build input context (problem + canvas snapshot)
-    input_context = {
-        "problem": {
-            "id": str(canvas.problem.id),
-            "title": canvas.problem.title,
-            "description": canvas.problem.description,
-        },
-        "canvas": {
-            "id": str(canvas.id),
-            "title": canvas.title,
-            "lines": [
-                {
-                    "id": str(line.id),
-                    "type": line.type.value,
-                    "content": line.content,
-                    "author_type": line.author_type.value,
-                }
-                for line in sorted(canvas.lines, key=lambda l: l.order_key)
-            ],
-        },
-    }
-    
-    # Get library items for context
-    library_result = await db.execute(
-        select(LibraryItem).where(LibraryItem.problem_id == canvas.problem.id)
-    )
-    library_items = library_result.scalars().all()
-    input_context["library"] = [
-        {
-            "id": str(item.id),
-            "title": item.title,
-            "kind": item.kind.value,
-            "status": item.status.value,
-            "content": item.content[:500],  # Truncate for context
-        }
-        for item in library_items
-    ]
-    
-    run = AgentRun(
-        canvas_id=canvas_id,
-        status=AgentRunStatus.QUEUED,
-        input_context=input_context,
-    )
-    db.add(run)
-    await db.commit()
-    await db.refresh(run)
-    
-    # TODO: Dispatch to agent runner (Redis queue or background task)
-    
-    return run
+    await verify_problem_access(data.problem_id, db, current_user)
 
+    context = (data.context or "").strip()
+    snippet = context[:600] if context else ""
+    proposals: list[AgentProposal] = []
 
-@router.get("/runs/{run_id}", response_model=AgentRunResponse)
-async def get_agent_run(
-    canvas_id: UUID, run_id: UUID, db: AsyncSession = Depends(get_db)
-):
-    """Get an agent run by ID"""
-    result = await db.execute(
-        select(AgentRun).where(
-            AgentRun.id == run_id, AgentRun.canvas_id == canvas_id
+    if snippet:
+        proposals.append(
+            AgentProposal(
+                id=str(uuid.uuid4()),
+                title="Context summary",
+                kind="analysis",
+                content_markdown=f"**Context**\\n\\n{snippet}",
+                cell_type="markdown",
+            )
         )
-    )
-    run = result.scalar_one_or_none()
-    if not run:
-        raise HTTPException(status_code=404, detail="Agent run not found")
-    return run
 
-
-@router.post("/runs/{run_id}/publish", status_code=201)
-async def publish_proposals(
-    canvas_id: UUID, run_id: UUID, db: AsyncSession = Depends(get_db)
-):
-    """
-    Publish agent proposals to the library.
-    Per CLAUDE.md: Agents ALWAYS publish their discoveries (as proposed).
-    This is called after a run completes.
-    """
-    result = await db.execute(
-        select(AgentRun)
-        .where(AgentRun.id == run_id, AgentRun.canvas_id == canvas_id)
-        .options(selectinload(AgentRun.canvas))
-    )
-    run = result.scalar_one_or_none()
-    if not run:
-        raise HTTPException(status_code=404, detail="Agent run not found")
-    
-    if run.status != AgentRunStatus.DONE:
-        raise HTTPException(status_code=400, detail="Agent run not complete")
-    
-    if not run.output or "publish" not in run.output:
-        return {"published": 0}
-    
-    published_ids = []
-    for proposal in run.output["publish"]:
-        item = LibraryItem(
-            problem_id=run.canvas.problem_id,
-            title=proposal["title"],
-            kind=proposal["kind"],
-            content=proposal["content_markdown"],
-            status=LibraryItemStatus.PROPOSED,
-            authors=[{"type": "agent", "id": str(run.id)}],
-            source={"agent_run_id": str(run.id)},
-            dependencies=proposal.get("dependencies", []),
+    if data.task == "code" or "import" in context or "def " in context:
+        proposals.append(
+            AgentProposal(
+                id=str(uuid.uuid4()),
+                title="Computation scaffold",
+                kind="code",
+                content_markdown=(
+                    "# TODO: implement computation\\n"
+                    "import math\\n\\n"
+                    "def compute():\\n"
+                    "    pass\\n\\n"
+                    "compute()\\n"
+                ),
+                cell_type="code",
+            )
         )
-        db.add(item)
-        await db.flush()
-        published_ids.append(str(item.id))
-    
-    await db.commit()
-    return {"published": len(published_ids), "ids": published_ids}
+
+    latex = extract_latex_snippets(context)
+    if latex:
+        content = "\\n\\n".join([f"$$\\n{expr}\\n$$" for expr in latex])
+        proposals.append(
+            AgentProposal(
+                id=str(uuid.uuid4()),
+                title="Extracted math",
+                kind="math",
+                content_markdown=content,
+                cell_type="markdown",
+            )
+        )
+
+    if not proposals:
+        proposals.append(
+            AgentProposal(
+                id=str(uuid.uuid4()),
+                title="Blank proposal",
+                kind="analysis",
+                content_markdown="No context available. Add a cell and try again.",
+                cell_type="markdown",
+            )
+        )
+
+    return AgentRunResponse(
+        run_id=uuid.uuid4(),
+        status="completed",
+        summary="Generated draft proposals from current notebook context.",
+        proposals=proposals,
+    )

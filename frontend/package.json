@@ -9,11 +9,8 @@
     "lint": "eslint"
   },
   "dependencies": {
-    "@tiptap/extension-placeholder": "^3.17.1",
-    "@tiptap/extension-typography": "^3.17.1",
-    "@tiptap/pm": "^3.17.1",
-    "@tiptap/react": "^3.17.1",
-    "@tiptap/starter-kit": "^3.17.1",
+    "@milkdown/crepe": "^7.18.0",
+    "@milkdown/plugin-listener": "^7.18.0",
     "@types/katex": "^0.16.8",
     "clsx": "^2.1.1",
     "katex": "^0.16.27",
@@ -24,8 +21,7 @@
     "react-markdown": "^10.1.0",
     "rehype-katex": "^7.0.1",
     "remark-math": "^6.0.0",
-    "tailwind-merge": "^3.4.0",
-    "tiptap-markdown": "^0.9.0"
+    "tailwind-merge": "^3.4.0"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

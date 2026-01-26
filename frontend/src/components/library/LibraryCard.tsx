@@ -2,7 +2,17 @@
 
 import { MarkdownRenderer } from "@/components/ui/MarkdownRenderer";
 
-type LibraryItemKind = "lemma" | "claim" | "definition" | "theorem" | "counterexample" | "computation" | "note" | "conjecture";
+type LibraryItemKind =
+	| "resource"
+	| "idea"
+	| "content"
+	| "lemma"
+	| "claim"
+	| "definition"
+	| "theorem"
+	| "counterexample"
+	| "computation"
+	| "note";
 type LibraryItemStatus = "proposed" | "verified" | "rejected";
 
 interface LibraryCardProps {
@@ -20,12 +30,14 @@ interface LibraryCardProps {
 }
 
 const kindConfig: Record<LibraryItemKind, { label: string; color: string; bg: string }> = {
+	resource: { label: "RES", color: "text-slate-700", bg: "bg-slate-100" },
+	idea: { label: "IDEA", color: "text-fuchsia-700", bg: "bg-fuchsia-50" },
+	content: { label: "CONTENT", color: "text-cyan-700", bg: "bg-cyan-50" },
 	lemma: { label: "LEMMA", color: "text-emerald-700", bg: "bg-emerald-50" },
 	claim: { label: "CLAIM", color: "text-blue-700", bg: "bg-blue-50" },
 	definition: { label: "DEF", color: "text-indigo-700", bg: "bg-indigo-50" },
 	theorem: { label: "THM", color: "text-amber-700", bg: "bg-amber-50" },
 	computation: { label: "COMP", color: "text-purple-700", bg: "bg-purple-50" },
-	conjecture: { label: "CONJ", color: "text-pink-700", bg: "bg-pink-50" },
 	counterexample: { label: "COUNTER", color: "text-red-700", bg: "bg-red-50" },
 	note: { label: "NOTE", color: "text-zinc-700", bg: "bg-zinc-100" },
 };

@@ -163,7 +163,7 @@ export function ProblemSidebar({ problemId }: ProblemSidebarProps) {
 					<ArrowLeft size={16} />
 				</Link>
 				<div className="ml-2 font-medium text-[13px] text-[var(--text-primary)] truncate">
-					{problem?.title || "Problem Workspace"}
+					{problem?.title || "Problem Space"}
 				</div>
 			</div>
 
@@ -187,7 +187,7 @@ export function ProblemSidebar({ problemId }: ProblemSidebarProps) {
 						{loading ? (
 							<div className="px-2 text-[12px] text-[var(--text-faint)]">Loading...</div>
 						) : canvases.length === 0 ? (
-							<div className="px-2 text-[12px] text-[var(--text-faint)] italic">Empty workspace</div>
+							<div className="px-2 text-[12px] text-[var(--text-faint)] italic">No canvases yet</div>
 						) : (
 							<FolderItem node={fileTree} problemId={problemId} pathname={pathname || ""} level={0} />
 						)}

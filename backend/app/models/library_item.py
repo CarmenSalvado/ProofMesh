@@ -9,6 +9,9 @@ from app.database import Base
 
 
 class LibraryItemKind(str, Enum):
+    RESOURCE = "resource"
+    IDEA = "idea"
+    CONTENT = "content"
     LEMMA = "lemma"
     CLAIM = "claim"
     DEFINITION = "definition"
@@ -63,4 +66,3 @@ class LibraryItem(Base):
     
     # Relationships
     problem: Mapped["Problem"] = relationship("Problem", back_populates="library_items")
-    canvas_refs: Mapped[list["CanvasLine"]] = relationship("CanvasLine", back_populates="library_item")

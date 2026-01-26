@@ -1,0 +1,11 @@
+{
+  "LiteBuildConfig": {
+    "output_dir": "../public/jupyterlite",
+    "federated_extensions": [
+      "./extensions/proofmesh-bridge"
+    ],
+    "settings_overrides": [
+      "./overrides.json"
+    ]
+  }
+}

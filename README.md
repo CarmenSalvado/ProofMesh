@@ -61,8 +61,8 @@ ProofMesh/
 ## Core Concepts
 
 - **Problem**: A mathematical problem to explore
-- **Canvas**: A live Markdown document for reasoning (many per problem)
+- **Workspace (Lab)**: A markdown-first workspace powered by Milkdown Crepe
 - **Library**: Accumulated knowledge (lemmas, claims, etc.)
-- **Agent**: AI assistant that proposes results (never edits canvas directly)
+- **Agent**: AI assistant that proposes results (integrated later)
 
 See [CLAUDE.md](CLAUDE.md) for full specification.

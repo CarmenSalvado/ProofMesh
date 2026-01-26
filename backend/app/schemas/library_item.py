@@ -5,6 +5,9 @@ from enum import Enum
 
 
 class LibraryItemKind(str, Enum):
+    RESOURCE = "resource"
+    IDEA = "idea"
+    CONTENT = "content"
     LEMMA = "lemma"
     CLAIM = "claim"
     DEFINITION = "definition"
@@ -27,8 +30,8 @@ class AuthorInfo(BaseModel):
 
 
 class SourceInfo(BaseModel):
-    canvas_id: UUID | None = None
-    line_id: UUID | None = None
+    file_path: str | None = None
+    cell_id: str | None = None
     agent_run_id: UUID | None = None
 
 

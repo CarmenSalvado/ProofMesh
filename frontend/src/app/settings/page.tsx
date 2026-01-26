@@ -13,8 +13,6 @@ export default function SettingsPage() {
 	const router = useRouter();
 	const [username, setUsername] = useState("");
 	const [email, setEmail] = useState("");
-	const [autoProve, setAutoProve] = useState(false);
-	const [agentSuggestions, setAgentSuggestions] = useState(true);
 
 	useEffect(() => {
 		if (!isLoading && !user) {
@@ -25,24 +23,7 @@ export default function SettingsPage() {
 			setEmail(user.email);
 		}
 
-		// Load preferences from localStorage
-		const savedAutoProve = localStorage.getItem("autoProve");
-		const savedSuggestions = localStorage.getItem("agentSuggestions");
-		if (savedAutoProve !== null) setAutoProve(savedAutoProve === "true");
-		if (savedSuggestions !== null) setAgentSuggestions(savedSuggestions === "true");
 	}, [isLoading, user, router]);
-
-	const handleAutoProveToggle = () => {
-		const newValue = !autoProve;
-		setAutoProve(newValue);
-		localStorage.setItem("autoProve", String(newValue));
-	};
-
-	const handleSuggestionsToggle = () => {
-		const newValue = !agentSuggestions;
-		setAgentSuggestions(newValue);
-		localStorage.setItem("agentSuggestions", String(newValue));
-	};
 
 	if (isLoading) {
 		return (
@@ -65,7 +46,6 @@ export default function SettingsPage() {
 						{ label: "Settings" },
 					]}
 					status={null}
-					showControls={false}
 				/>
 
 				<div className="flex-1 overflow-y-auto bg-[var(--bg-secondary)]">
@@ -131,47 +111,6 @@ export default function SettingsPage() {
 									<option value="dark">Dark</option>
 									<option value="system">System</option>
 								</select>
-							</div>
-						</div>
-
-						{/* Agents Section */}
-						<div className="bg-[var(--bg-primary)] border border-[var(--border-primary)] rounded-xl p-6 mb-6">
-							<h2 className="text-sm font-medium text-[var(--text-primary)] mb-4">Agent Preferences</h2>
-
-							<div className="space-y-4">
-								<div className="flex items-center justify-between">
-									<div>
-										<p className="text-sm text-[var(--text-secondary)]">Auto-Prove</p>
-										<p className="text-xs text-[var(--text-faint)]">Automatically run agents on new content</p>
-									</div>
-									<button
-										onClick={handleAutoProveToggle}
-										className={`w-10 h-5 rounded-full relative transition-colors ${autoProve ? "bg-[var(--success)]" : "bg-[var(--border-secondary)]"
-											}`}
-									>
-										<span
-											className={`absolute top-0.5 w-4 h-4 bg-[var(--bg-primary)] rounded-full shadow-sm transition-all ${autoProve ? "left-[22px]" : "left-0.5"
-												}`}
-										/>
-									</button>
-								</div>
-
-								<div className="flex items-center justify-between">
-									<div>
-										<p className="text-sm text-[var(--text-secondary)]">Agent Suggestions</p>
-										<p className="text-xs text-[var(--text-faint)]">Show inline suggestions from agents</p>
-									</div>
-									<button
-										onClick={handleSuggestionsToggle}
-										className={`w-10 h-5 rounded-full relative transition-colors ${agentSuggestions ? "bg-[var(--success)]" : "bg-[var(--border-secondary)]"
-											}`}
-									>
-										<span
-											className={`absolute top-0.5 w-4 h-4 bg-[var(--bg-primary)] rounded-full shadow-sm transition-all ${agentSuggestions ? "left-[22px]" : "left-0.5"
-												}`}
-										/>
-									</button>
-								</div>
 							</div>
 						</div>
 

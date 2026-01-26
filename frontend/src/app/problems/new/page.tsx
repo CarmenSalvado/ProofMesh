@@ -53,7 +53,7 @@ export default function NewProblemPage() {
 
 			router.push(`/problems/${problem.id}`);
 		} catch (err) {
-			setError(err instanceof Error ? err.message : "Failed to create workspace");
+			setError(err instanceof Error ? err.message : "Failed to create problem");
 		} finally {
 			setLoading(false);
 		}
@@ -67,20 +67,19 @@ export default function NewProblemPage() {
 				<WorkspaceHeader
 					breadcrumbs={[
 						{ label: "Dashboard", href: "/dashboard" },
-						{ label: "New Workspace" },
+						{ label: "New Problem" },
 					]}
 					status={null}
-					showControls={false}
 				/>
 
 				<div className="flex-1 overflow-y-auto bg-[var(--bg-secondary)]">
 					<div className="max-w-2xl mx-auto px-8 py-12">
 						<div className="mb-8">
 							<h1 className="text-2xl font-medium tracking-tight text-[var(--text-primary)] mb-2">
-								Create New Workspace
+								Create New Problem
 							</h1>
 							<p className="text-sm text-[var(--text-muted)]">
-								Start a new mathematical exploration
+								Define a problem space for shared work
 							</p>
 						</div>
 
@@ -100,7 +99,7 @@ export default function NewProblemPage() {
 									type="text"
 									value={title}
 									onChange={(e) => setTitle(e.target.value)}
-									placeholder="e.g., Riemann Hypothesis Analysis"
+									placeholder="e.g., Prime Gap Exploration"
 									className="w-full bg-[var(--bg-tertiary)] text-[var(--text-primary)] border-[var(--border-primary)] focus:border-[var(--accent-primary)]"
 									required
 								/>
@@ -114,7 +113,7 @@ export default function NewProblemPage() {
 								<textarea
 									value={description}
 									onChange={(e) => setDescription(e.target.value)}
-									placeholder="Briefly describe your mathematical exploration..."
+									placeholder="Briefly describe the problem and current context..."
 									rows={4}
 									className="w-full resize-none bg-[var(--bg-tertiary)] text-[var(--text-primary)] border-[var(--border-primary)] focus:border-[var(--accent-primary)]"
 								/>
@@ -162,7 +161,7 @@ export default function NewProblemPage() {
 									type="text"
 									value={tags}
 									onChange={(e) => setTags(e.target.value)}
-									placeholder="number-theory, analysis, topology (comma-separated)"
+									placeholder="number-theory, analysis, topology"
 									className="w-full bg-[var(--bg-tertiary)] text-[var(--text-primary)] border-[var(--border-primary)] focus:border-[var(--accent-primary)]"
 								/>
 							</div>
@@ -184,7 +183,7 @@ export default function NewProblemPage() {
 											<svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 												<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.5v15m7.5-7.5h-15" />
 											</svg>
-											Create Workspace
+											Create Problem
 										</>
 									)}
 								</button>

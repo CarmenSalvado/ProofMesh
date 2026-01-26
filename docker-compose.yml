@@ -50,7 +50,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://proofmesh:proofmesh@postgres:5432/proofmesh
       REDIS_URL: redis://redis:6379
       DEBUG: "true"
-      CORS_ORIGINS: '["http://localhost:3000"]'
+      CORS_ORIGINS: '["http://localhost:3000","http://127.0.0.1:3000"]'
     depends_on:
       postgres:
         condition: service_healthy

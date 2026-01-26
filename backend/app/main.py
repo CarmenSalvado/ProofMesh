@@ -4,12 +4,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.api.auth import router as auth_router
-from app.api.ws import router as ws_router
 from app.api import (
     problems_router,
-    canvases_router,
-    lines_router,
     library_router,
+    workspaces_router,
     agents_router,
 )
 
@@ -42,13 +40,9 @@ app.add_middleware(
 # REST Routers
 app.include_router(auth_router)
 app.include_router(problems_router)
-app.include_router(canvases_router)
-app.include_router(lines_router)
 app.include_router(library_router)
+app.include_router(workspaces_router)
 app.include_router(agents_router)
-
-# WebSocket Router
-app.include_router(ws_router)
 
 
 @app.get("/")
@@ -59,4 +53,3 @@ async def root():
 @app.get("/health")
 async def health():
     return {"status": "ok"}
-

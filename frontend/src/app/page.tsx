@@ -72,7 +72,7 @@ export default function LandingPage() {
         <div className="max-w-6xl mx-auto px-6">
           <div className="text-center mb-16">
             <h2 className="text-xl font-medium tracking-tight mb-3">Structured Reasoning Environment</h2>
-            <p className="text-sm text-neutral-500">Separation of exploration (Canvas) and verification (Library).</p>
+            <p className="text-sm text-neutral-500">Separation of exploration (Lab) and verification (Library).</p>
           </div>
 
           {/* Abstract Interface */}
@@ -111,13 +111,13 @@ export default function LandingPage() {
               </div>
             </div>
 
-            {/* Main Canvas */}
+            {/* Main Notebook */}
             <div className="flex-1 relative bg-white bg-[radial-gradient(#e5e5e5_1px,transparent_1px)] [background-size:20px_20px]">
               <div className="absolute top-4 left-4 inline-flex items-center gap-2 bg-white border border-neutral-200 px-3 py-1.5 rounded-md shadow-sm">
                 <svg className="w-4 h-4 text-neutral-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                 </svg>
-                <span className="text-xs font-medium text-neutral-700">Canvas 3: Main approach</span>
+                <span className="text-xs font-medium text-neutral-700">Notebook 3: Main approach</span>
               </div>
 
               {/* Node 1 */}

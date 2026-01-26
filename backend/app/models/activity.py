@@ -9,11 +9,11 @@ from app.database import Base
 
 
 class ActivityType(str, Enum):
-    CREATED_PROBLEM = "created_problem"
-    CREATED_CANVAS = "created_canvas"
-    PUBLISHED_LIBRARY = "published_library"
-    FOLLOWED_USER = "followed_user"
-    FORKED_PROBLEM = "forked_problem"
+    CREATED_PROBLEM = "CREATED_PROBLEM"
+    CREATED_WORKSPACE_FILE = "CREATED_WORKSPACE_FILE"
+    PUBLISHED_LIBRARY = "PUBLISHED_LIBRARY"
+    FOLLOWED_USER = "FOLLOWED_USER"
+    FORKED_PROBLEM = "FORKED_PROBLEM"
 
 
 class Activity(Base):

@@ -57,7 +57,6 @@ export default function DashboardPage() {
 				<WorkspaceHeader
 					breadcrumbs={[{ label: "Dashboard" }]}
 					status={null}
-					showControls={false}
 				/>
 
 				<div className="flex-1 overflow-y-auto bg-[var(--bg-secondary)]">
@@ -75,7 +74,7 @@ export default function DashboardPage() {
 						{/* Quick actions */}
 						<div className="grid md:grid-cols-3 gap-4 mb-16">
 							<Link
-								href="/problems/new"
+								href="/workspaces/new"
 								className="bg-[var(--bg-primary)] border border-[var(--border-primary)] rounded-xl p-6 hover:border-[var(--border-secondary)] hover:shadow-[var(--shadow-lg)] transition-all group"
 							>
 								<div className="w-10 h-10 border border-[var(--border-primary)] rounded-lg flex items-center justify-center mb-4 group-hover:border-[var(--border-secondary)] group-hover:bg-[var(--bg-tertiary)] transition-colors">
@@ -83,8 +82,8 @@ export default function DashboardPage() {
 										<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 4.5v15m7.5-7.5h-15" />
 									</svg>
 								</div>
-								<h3 className="text-sm font-medium text-[var(--text-primary)] mb-1">New Workspace</h3>
-								<p className="text-xs text-[var(--text-muted)]">Start a new mathematical exploration</p>
+								<h3 className="text-sm font-medium text-[var(--text-primary)] mb-1">New Workspace File</h3>
+								<p className="text-xs text-[var(--text-muted)]">Create a file inside an existing problem</p>
 							</Link>
 
 							<Link
@@ -110,15 +109,15 @@ export default function DashboardPage() {
 									</svg>
 								</div>
 								<h3 className="text-sm font-medium text-[var(--text-primary)] mb-1">Refresh</h3>
-								<p className="text-xs text-[var(--text-muted)]">Reload your workspaces</p>
+								<p className="text-xs text-[var(--text-muted)]">Reload your problems</p>
 							</button>
 						</div>
 
-						{/* Recent Workspaces */}
+						{/* Recent Problems */}
 						<div>
 							<div className="flex items-center justify-between mb-4">
 								<h2 className="text-lg font-medium tracking-tight text-[var(--text-primary)]">
-									Your Workspaces
+									Your Problems
 								</h2>
 								<span className="text-xs text-[var(--text-faint)]">{problems.length} total</span>
 							</div>
@@ -135,13 +134,13 @@ export default function DashboardPage() {
 								</div>
 							) : problems.length === 0 ? (
 								<div className="bg-[var(--bg-primary)] border border-[var(--border-primary)] rounded-xl p-12 text-center">
-									<h3 className="text-sm font-medium text-[var(--text-primary)] mb-2">No workspaces yet</h3>
-									<p className="text-xs text-[var(--text-muted)] mb-4">Create your first workspace to get started</p>
+									<h3 className="text-sm font-medium text-[var(--text-primary)] mb-2">No problems yet</h3>
+									<p className="text-xs text-[var(--text-muted)] mb-4">Create your first problem space to get started</p>
 									<Link href="/problems/new" className="btn btn-primary">
 										<svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 											<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.5v15m7.5-7.5h-15" />
 										</svg>
-										Create Workspace
+										Create Problem
 									</Link>
 								</div>
 							) : (
@@ -161,7 +160,7 @@ export default function DashboardPage() {
 												<div>
 													<h3 className="text-sm font-medium text-[var(--text-primary)]">{problem.title}</h3>
 													<p className="text-xs text-[var(--text-faint)]">
-														{problem.canvas_count} canvases · {problem.library_item_count} items ·{" "}
+														{problem.library_item_count} items ·{" "}
 														{new Date(problem.updated_at).toLocaleDateString()}
 													</p>
 												</div>

@@ -1,14 +1,13 @@
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, func
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select, inspect
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models.problem import Problem, ProblemVisibility
+from app.models.problem import Problem, ProblemVisibility, ProblemDifficulty
+from app.models.workspace_file import WorkspaceFile, WorkspaceFileType
 from app.models.user import User
-from app.models.canvas import Canvas
-from app.models.library_item import LibraryItem
 from app.api.deps import get_current_user, get_current_user_optional
 from app.schemas.problem import (
     ProblemCreate,
@@ -20,9 +19,28 @@ from app.schemas.problem import (
 
 router = APIRouter(prefix="/api/problems", tags=["problems"])
 
+def build_workspace_markdown(title: str, description: str | None = None) -> str:
+    summary = (description or "").strip()
+    summary_block = summary if summary else "Describe the problem and its goals here."
+    return f"""# {title}
+
+{summary_block}
+
+## Workspace
+- Objectives
+- Known results
+- Open questions
+
+## Notes
+"""
+
 
 def problem_to_response(problem: Problem) -> ProblemResponse:
     """Convert Problem model to response with counts"""
+    state = inspect(problem)
+    library_count = 0
+    if "library_items" not in state.unloaded:
+        library_count = len(problem.library_items)
     return ProblemResponse(
         id=problem.id,
         title=problem.title,
@@ -37,8 +55,7 @@ def problem_to_response(problem: Problem) -> ProblemResponse:
             username=problem.author.username,
             avatar_url=problem.author.avatar_url,
         ),
-        canvas_count=len(problem.canvases) if problem.canvases else 0,
-        library_item_count=len(problem.library_items) if problem.library_items else 0,
+        library_item_count=library_count,
     )
 
 
@@ -52,7 +69,6 @@ async def list_problems(
     """List problems - public ones or user's own"""
     query = select(Problem).options(
         selectinload(Problem.author),
-        selectinload(Problem.canvases),
         selectinload(Problem.library_items),
     )
     
@@ -96,6 +112,18 @@ async def create_problem(
         tags=data.tags or [],
     )
     db.add(problem)
+    await db.flush()
+
+    workspace_doc = WorkspaceFile(
+        problem_id=problem.id,
+        path="workspace.md",
+        parent_path="",
+        type=WorkspaceFileType.FILE,
+        content=build_workspace_markdown(problem.title, problem.description),
+        format="markdown",
+        mimetype="text/markdown",
+    )
+    db.add(workspace_doc)
     await db.commit()
     
     # Reload with relationships
@@ -109,6 +137,76 @@ async def create_problem(
     return problem_to_response(problem)
 
 
+@router.post("/seed", response_model=ProblemListResponse)
+async def seed_problems(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Create a couple of public sample problems for the current user."""
+    templates = [
+        {
+            "title": "Cyclic Quadrilateral Concurrency",
+            "description": (
+                "Study a cyclic quadrilateral with auxiliary circle intersections and "
+                "a concurrency condition to prove a similarity statement."
+            ),
+            "difficulty": ProblemDifficulty.HARD,
+            "tags": ["geometry", "olympiad", "concurrency"],
+        },
+        {
+            "title": "Polynomial Root Preserver",
+            "description": (
+                "Characterize additive maps on integer polynomials that preserve the "
+                "existence of integer roots."
+            ),
+            "difficulty": ProblemDifficulty.MEDIUM,
+            "tags": ["algebra", "polynomials", "functions"],
+        },
+    ]
+
+    created: list[Problem] = []
+    for template in templates:
+        exists = await db.execute(
+            select(Problem).where(
+                Problem.author_id == current_user.id,
+                Problem.title == template["title"],
+            )
+        )
+        if exists.scalar_one_or_none():
+            continue
+
+        problem = Problem(
+            title=template["title"],
+            description=template["description"],
+            author_id=current_user.id,
+            visibility=ProblemVisibility.PUBLIC,
+            difficulty=template["difficulty"],
+            tags=template["tags"],
+        )
+        problem.author = current_user
+        db.add(problem)
+        await db.flush()
+
+        workspace_doc = WorkspaceFile(
+            problem_id=problem.id,
+            path="workspace.md",
+            parent_path="",
+            type=WorkspaceFileType.FILE,
+            content=build_workspace_markdown(problem.title, problem.description),
+            format="markdown",
+            mimetype="text/markdown",
+        )
+        db.add(workspace_doc)
+        created.append(problem)
+
+    if created:
+        await db.commit()
+    return ProblemListResponse(
+        problems=[problem_to_response(p) for p in created],
+        total=len(created),
+    )
+
+
 @router.get("/{problem_id}", response_model=ProblemResponse)
 async def get_problem(
     problem_id: UUID,
@@ -120,7 +218,6 @@ async def get_problem(
         select(Problem)
         .options(
             selectinload(Problem.author),
-            selectinload(Problem.canvases),
             selectinload(Problem.library_items),
         )
         .where(Problem.id == problem_id)
@@ -150,7 +247,6 @@ async def update_problem(
         select(Problem)
         .options(
             selectinload(Problem.author),
-            selectinload(Problem.canvases),
             selectinload(Problem.library_items),
         )
         .where(Problem.id == problem_id)

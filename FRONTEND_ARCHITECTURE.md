@@ -1,6 +1,6 @@
 # Frontend Architecture & Component Guide
 
-This document describes the technical architecture of the ProofMesh frontend (Next.js 14 App Router).
+This document describes the technical architecture of the ProofMesh frontend (Next.js App Router).
 
 ## 1. Directory Structure
 
@@ -8,59 +8,36 @@ This document describes the technical architecture of the ProofMesh frontend (Ne
 src/app/
 ├── (dashboard)/        # Root layout group (Home, Dashboard)
 ├── problems/[id]/      # Nested layout group for Workspace context
-│   ├── layout.tsx      # Provides ProblemSidebar + Flex Wrapper
-│   ├── page.tsx        # Problem Home (Overview)
-│   └── canvas/
-│       └── [canvasId]/ # Canvas Editor with ToolsPanel
+│   ├── layout.tsx      # Flex wrapper for workspace pages
+│   ├── page.tsx        # Workspace overview
+│   └── lab/            # Markdown workspace (Milkdown Crepe)
 ```
 
 ## 2. Layout Strategy
 
-### Global Layout vs Problem Layout
-We use a nested layout strategy to separate the "Global" context (Dashboard) from the "Deep Work" context (Problem/Workspace).
+### Global Layout vs Workspace Layout
+We use a nested layout strategy to separate the "Global" context (Dashboard) from the "Deep Work" context (Workspace/Lab).
 
-- **Global Context**: Uses `WorkspaceSidebar` (to be renamed `DashboardSidebar` in future refactors). Focuses on navigation between problems.
-- **Problem Context**: Uses `ProblemSidebar`. Focuses on navigation *within* a problem (Canvases, Library).
+- **Global Context**: Uses `WorkspaceSidebar`. Focuses on navigation between workspaces.
+- **Workspace Context**: A lightweight wrapper around the markdown workspace surface.
 
-### Problem Layout (`problems/[id]/layout.tsx`)
-This server component wraps the problem context. It renders:
-1. `ProblemSidebar`: A client component fetching problem-specific data (canvases list).
-2. `children`: The main content area (Canvas Editor or Problem Home).
+### Workspace Layout (`problems/[id]/layout.tsx`)
+This layout wraps workspace pages with a simple flex container. The main work surface is the workspace editor.
 
 ## 3. Key Components
 
-### ProblemSidebar (`components/layout/ProblemSidebar.tsx`)
-- **Responsibility**: Contextual navigation.
-- **Data**: Fetches `Problem`, `Canvases`, and `LibraryItems`.
-- **Style**: Minimalist, Notion-inspired "Drafts" list.
-- **Actions**: "New Canvas", "Back to Dashboard".
+### WorkspaceHeader (`components/layout/WorkspaceHeader.tsx`)
+- **Responsibility**: Breadcrumbs + workspace context.
 
-### ToolsPanel (`components/layout/ToolsPanel.tsx`)
-- **Responsibility**: Auxiliary tools and AI assistance.
-- **State**: Manages Tabs (`assist` | `tools`).
-- **Tabs**:
-    - **Assist**: Renders `OrchestrationPanel` (Chat & Agent Status).
-    - **Tools**: Renders `SymbolsPalette` and `DetectedObjects` (Library preview).
-
-### OrchestrationPanel (`components/agents/OrchestrationPanel.tsx`)
-- **Responsibility**: Chat interface for Backend Agents.
-- **Modes**:
-    - `embedded=true`: Minimal UI, fits inside `ToolsPanel`.
-    - `embedded=false`: Standalone sidebar (legacy mode).
-
-### CanvasPage (`problems/[id]/canvas/[canvasId]/page.tsx`)
-- **Responsibility**: The main editor interface.
-- **Layout**: CSS Grid/Flex.
-    - Left: `ProblemSidebar` (from parent layout).
-    - Center: Editor/Preview Split.
-    - Right: `ToolsPanel`.
+### LabPage (`problems/[id]/lab/page.tsx`)
+- **Responsibility**: Renders the ProofMesh workspace UI and Milkdown Crepe editor.
+- **Integration**: Stores markdown in the workspace contents API (`workspace.md`).
 
 ## 4. State Management
 
 - **Server State**: React Server Components (fetching Problem metadata).
 - **Client State**:
-    - `useState`: Local UI state (tabs, view modes, inputs).
-    - `useWebSocket`: Real-time agent communication and logs.
+    - `useState`: Local UI state.
     - `useAuth`: User session.
 
 ## 5. Styling System
@@ -71,6 +48,6 @@ This server component wraps the problem context. It renders:
 
 ### Critical Theme Variables
 - `--bg-secondary`: Sidebar backgrounds.
-- `--bg-primary`: Main editor background.
+- `--bg-primary`: Main workspace background.
 - `--border-primary`: Subtle dividers.
 - `--text-faint`: Low contrast labels.

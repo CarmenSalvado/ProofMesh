@@ -41,7 +41,6 @@ uvicorn app.main:app --reload
 - `GET /` - API info
 - `GET /health` - Health check
 - `POST/GET /api/problems` - Problems CRUD
-- `POST/GET /api/problems/{id}/canvases` - Canvases CRUD
-- `POST/GET/PUT/DELETE /api/canvases/{id}/lines` - Canvas lines CRUD
+- `GET/POST /api/workspaces/{id}/contents` - Workspace contents (markdown file store)
+- `GET/PUT/PATCH/DELETE /api/workspaces/{id}/contents/{path}` - Files and notebooks
 - `POST/GET /api/problems/{id}/library` - Library items
-- `POST/GET /api/canvases/{id}/agents/runs` - Agent runs

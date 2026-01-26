@@ -3,10 +3,8 @@ from app.models.user import User
 from app.models.follow import Follow
 from app.models.activity import Activity
 from app.models.problem import Problem
-from app.models.canvas import Canvas
-from app.models.canvas_line import CanvasLine
 from app.models.library_item import LibraryItem
-from app.models.agent_run import AgentRun
+from app.models.workspace_file import WorkspaceFile
 
 __all__ = [
     "Base",
@@ -14,8 +12,6 @@ __all__ = [
     "Follow",
     "Activity", 
     "Problem",
-    "Canvas",
-    "CanvasLine",
     "LibraryItem",
-    "AgentRun",
+    "WorkspaceFile",
 ]

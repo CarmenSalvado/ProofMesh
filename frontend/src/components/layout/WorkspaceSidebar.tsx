@@ -63,8 +63,8 @@ export function WorkspaceSidebar() {
 					</Link>
 
 					<Link
-						href="/problems/new"
-						className={`w-full flex items-center gap-3 px-2 py-1.5 rounded-md text-xs font-medium transition-colors ${pathname === "/problems/new"
+						href="/workspaces/new"
+						className={`w-full flex items-center gap-3 px-2 py-1.5 rounded-md text-xs font-medium transition-colors ${pathname === "/workspaces/new"
 								? "text-[var(--text-primary)] bg-[var(--bg-primary)] shadow-sm border border-[var(--border-primary)]"
 								: "text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
 							}`}
@@ -72,14 +72,14 @@ export function WorkspaceSidebar() {
 						<svg className="w-4 h-4 text-[var(--text-faint)]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 							<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d={iconPaths.plus} />
 						</svg>
-						New Workspace
+						New Workspace File
 					</Link>
 				</nav>
 
-				{/* Workspaces */}
+				{/* Problems */}
 				<div className="mt-8">
 					<p className="px-2 text-[10px] font-medium text-[var(--text-faint)] uppercase tracking-widest mb-2">
-						Recent Workspaces
+						Recent Problems
 					</p>
 					<nav className="space-y-1">
 						{loading ? (
@@ -90,7 +90,7 @@ export function WorkspaceSidebar() {
 								</div>
 							</div>
 						) : problems.length === 0 ? (
-							<p className="px-2 py-2 text-[11px] text-[var(--text-faint)]">No workspaces yet</p>
+							<p className="px-2 py-2 text-[11px] text-[var(--text-faint)]">No problems yet</p>
 						) : (
 							problems.map((problem) => (
 								<Link

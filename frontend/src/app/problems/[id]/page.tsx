@@ -1,10 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { use, useEffect, useState, useCallback, useMemo } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
-import { getProblem, getCanvases, getLibraryItems, createCanvas, Problem, Canvas, LibraryItem } from "@/lib/api";
+import { getProblem, getLibraryItems, Problem, LibraryItem } from "@/lib/api";
 import { WorkspaceHeader } from "@/components/layout/WorkspaceHeader";
 
 interface PageProps {
@@ -12,57 +11,69 @@ interface PageProps {
 }
 
 export default function ProblemPage({ params }: PageProps) {
-	const { user, isLoading: authLoading } = useAuth();
-	const router = useRouter();
-	const [problemId, setProblemId] = useState<string>("");
+	const { isLoading: authLoading } = useAuth();
+	const { id: problemId } = use(params);
 	const [problem, setProblem] = useState<Problem | null>(null);
-	const [canvases, setCanvases] = useState<Canvas[]>([]);
 	const [libraryItems, setLibraryItems] = useState<LibraryItem[]>([]);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
-	const [creatingCanvas, setCreatingCanvas] = useState(false);
+	const groupedItems = useMemo(() => {
+		const groups = {
+			resources: [] as LibraryItem[],
+			ideas: [] as LibraryItem[],
+			lemmas: [] as LibraryItem[],
+			contents: [] as LibraryItem[],
+		};
+		libraryItems.forEach((item) => {
+			if (item.kind === "resource") {
+				groups.resources.push(item);
+			} else if (item.kind === "idea") {
+				groups.ideas.push(item);
+			} else if (["lemma", "theorem", "claim", "counterexample"].includes(item.kind)) {
+				groups.lemmas.push(item);
+			} else {
+				groups.contents.push(item);
+			}
+		});
+		return groups;
+	}, [libraryItems]);
+	const kindStyles: Record<string, string> = {
+		resource: "text-slate-500",
+		idea: "text-fuchsia-500",
+		content: "text-cyan-500",
+		lemma: "text-emerald-500",
+		claim: "text-blue-500",
+		definition: "text-indigo-500",
+		theorem: "text-amber-500",
+		counterexample: "text-red-500",
+		computation: "text-purple-500",
+		note: "text-zinc-500",
+	};
 
-	useEffect(() => {
-		params.then((p) => setProblemId(p.id));
-	}, [params]);
+	const loadData = useCallback(async () => {
+		try {
+			setLoading(true);
+			setError(null);
+
+			const [problemData, libraryData] = await Promise.all([
+				getProblem(problemId),
+				getLibraryItems(problemId),
+			]);
+
+			setProblem(problemData);
+			setLibraryItems(libraryData.items);
+		} catch (err) {
+			setError(err instanceof Error ? err.message : "Failed to load problem");
+		} finally {
+			setLoading(false);
+		}
+	}, [problemId]);
 
 	useEffect(() => {
 		if (problemId) {
 			loadData();
 		}
-	}, [problemId]);
-
-	async function loadData() {
-		try {
-			setLoading(true);
-			setError(null);
-
-			const [problemData, canvasesData, libraryData] = await Promise.all([
-				getProblem(problemId),
-				getCanvases(problemId),
-				getLibraryItems(problemId),
-			]);
-
-			setProblem(problemData);
-			setCanvases(canvasesData.canvases);
-			setLibraryItems(libraryData.items);
-		} catch (err) {
-			setError(err instanceof Error ? err.message : "Failed to load workspace");
-		} finally {
-			setLoading(false);
-		}
-	}
-
-	async function handleCreateCanvas() {
-		try {
-			setCreatingCanvas(true);
-			const canvas = await createCanvas(problemId, { title: "Untitled Canvas" });
-			router.push(`/problems/${problemId}/canvas/${canvas.id}`);
-		} catch (err) {
-			setError(err instanceof Error ? err.message : "Failed to create canvas");
-			setCreatingCanvas(false);
-		}
-	}
+	}, [problemId, loadData]);
 
 	if (authLoading || loading) {
 		return (
@@ -88,17 +99,14 @@ export default function ProblemPage({ params }: PageProps) {
 
 	if (!problem) return null;
 
-	const isOwner = user?.id === problem.author.id;
-
 	return (
 		<main className="flex-1 flex flex-col h-full overflow-hidden">
 			<WorkspaceHeader
 				breadcrumbs={[
-					{ label: "Workspaces", href: "/dashboard" },
+					{ label: "Problems", href: "/dashboard" },
 					{ label: problem.title },
 				]}
 				status={null}
-				showControls={false}
 			/>
 
 			<div className="flex-1 overflow-y-auto bg-[var(--bg-secondary)]">
@@ -127,8 +135,6 @@ export default function ProblemPage({ params }: PageProps) {
 								{problem.author.username}
 							</span>
 							<span>·</span>
-							<span>{problem.canvas_count} canvases</span>
-							<span>·</span>
 							<span>{problem.library_item_count} library items</span>
 							<span>·</span>
 							<span className={`badge ${problem.visibility === "public" ? "badge-public" : "badge-private"} ml-2`}>
@@ -145,98 +151,80 @@ export default function ProblemPage({ params }: PageProps) {
 								))}
 							</div>
 						)}
-					</div>
 
-					{/* Canvases */}
-					<div className="mb-10">
-						<div className="flex items-center justify-between mb-4">
-							<h2 className="text-lg font-medium tracking-tight text-[var(--text-primary)]">
-								Canvases
-							</h2>
-							{isOwner && (
-								<button
-									onClick={handleCreateCanvas}
-									disabled={creatingCanvas}
-									className="btn btn-primary disabled:opacity-50"
-								>
-									{creatingCanvas ? (
-										<div className="animate-spin rounded-full h-3 w-3 border border-[var(--bg-primary)] border-t-transparent" />
-									) : (
-										<svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-											<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.5v15m7.5-7.5h-15" />
-										</svg>
-									)}
-									New Canvas
-								</button>
-							)}
+						<div className="mt-6 flex flex-wrap gap-3">
+							<Link href={`/problems/${problemId}/lab`} className="btn btn-primary">
+								Open Workspace Files
+							</Link>
 						</div>
-
-						{canvases.length === 0 ? (
-							<div className="border border-[var(--border-primary)] rounded-xl p-8 text-center bg-[var(--bg-primary)]">
-								<p className="text-sm text-[var(--text-muted)] mb-4">No canvases yet</p>
-								{isOwner && (
-									<button onClick={handleCreateCanvas} className="btn btn-secondary">
-										Create your first canvas
-									</button>
-								)}
-							</div>
-						) : (
-							<div className="grid gap-3">
-								{canvases.map((canvas) => (
-									<Link
-										key={canvas.id}
-										href={`/problems/${problemId}/canvas/${canvas.id}`}
-										className="flex items-center justify-between p-4 border border-[var(--border-primary)] rounded-xl hover:border-[var(--border-secondary)] hover:bg-[var(--bg-hover)] transition-all group bg-[var(--bg-primary)]"
-									>
-										<div className="flex items-center gap-4">
-											<div className="w-10 h-10 bg-[var(--bg-tertiary)] rounded-lg flex items-center justify-center text-[var(--text-muted)] group-hover:bg-[var(--bg-hover)] transition-colors">
-												<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-													<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
-												</svg>
-											</div>
-											<div>
-												<h3 className="text-sm font-medium text-[var(--text-primary)] mb-0.5">{canvas.title}</h3>
-												<p className="text-xs text-[var(--text-faint)]">
-													Updated {new Date(canvas.updated_at).toLocaleDateString()}
-												</p>
-											</div>
-										</div>
-										<div className="flex items-center gap-3">
-											<span className={`badge badge-verified`}>
-												{canvas.status}
-											</span>
-											<svg className="w-4 h-4 text-[var(--text-faint)] group-hover:text-[var(--text-muted)] transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-												<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-											</svg>
-										</div>
-									</Link>
-								))}
-							</div>
-						)}
 					</div>
 
-					{/* Library Preview */}
+					{/* Problem Space */}
 					<div>
 						<div className="flex items-center justify-between mb-4">
 							<h2 className="text-lg font-medium tracking-tight text-[var(--text-primary)]">
-								Library
+								Problem Space
 							</h2>
-							<span className="text-xs text-[var(--text-faint)]">{libraryItems.length} items</span>
+							<span className="text-xs text-[var(--text-faint)]">{libraryItems.length} total</span>
 						</div>
 
 						{libraryItems.length === 0 ? (
 							<div className="border border-[var(--border-primary)] rounded-lg p-8 text-center bg-[var(--bg-primary)]">
-								<p className="text-sm text-[var(--text-muted)]">No library items yet</p>
+								<p className="text-sm text-[var(--text-muted)]">No shared items yet</p>
 							</div>
 						) : (
+							<div className="grid md:grid-cols-2 gap-4">
+								{[
+									{ key: "resources", label: "Resources" },
+									{ key: "ideas", label: "Ideas" },
+									{ key: "lemmas", label: "Lemmas" },
+									{ key: "contents", label: "Contents" },
+								].map((section) => {
+									const items = groupedItems[section.key as keyof typeof groupedItems];
+									return (
+										<div
+											key={section.key}
+											className="border border-[var(--border-primary)] rounded-lg p-4 bg-[var(--bg-primary)]"
+										>
+											<div className="flex items-center justify-between mb-3">
+												<h3 className="text-sm font-medium text-[var(--text-primary)]">{section.label}</h3>
+												<span className="text-xs text-[var(--text-faint)]">{items.length}</span>
+											</div>
+											{items.length === 0 ? (
+												<p className="text-xs text-[var(--text-muted)]">No items yet</p>
+											) : (
+												<div className="space-y-2">
+													{items.slice(0, 3).map((item) => (
+														<div key={item.id} className="flex items-center justify-between text-xs">
+															<span className="truncate text-[var(--text-secondary)]">{item.title}</span>
+															<span className={`text-[10px] uppercase ${kindStyles[item.kind] || "text-[var(--text-faint)]"}`}>
+																{item.kind}
+															</span>
+														</div>
+													))}
+												</div>
+											)}
+										</div>
+									);
+								})}
+							</div>
+						)}
+					</div>
+
+					{/* Recent Items */}
+					{libraryItems.length > 0 && (
+						<div className="mt-10">
+							<div className="flex items-center justify-between mb-4">
+								<h2 className="text-lg font-medium tracking-tight text-[var(--text-primary)]">
+									Recent Updates
+								</h2>
+								<span className="text-xs text-[var(--text-faint)]">{libraryItems.length} items</span>
+							</div>
 							<div className="grid md:grid-cols-3 gap-3">
 								{libraryItems.slice(0, 6).map((item) => (
 									<div key={item.id} className="border border-[var(--border-primary)] rounded-lg p-4 hover:border-[var(--border-secondary)] transition-colors bg-[var(--bg-primary)]">
 										<div className="flex items-center justify-between mb-2">
-											<span className={`text-[10px] font-semibold uppercase tracking-widest ${item.kind === "lemma" ? "text-emerald-500" :
-												item.kind === "definition" ? "text-indigo-500" :
-													item.kind === "theorem" ? "text-amber-500" : "text-blue-500"
-												}`}>
+											<span className={`text-[10px] font-semibold uppercase tracking-widest ${kindStyles[item.kind] || "text-[var(--text-faint)]"}`}>
 												{item.kind}
 											</span>
 											<span className="text-[10px] font-mono text-[var(--text-faint)]">
@@ -255,8 +243,8 @@ export default function ProblemPage({ params }: PageProps) {
 									</div>
 								))}
 							</div>
-						)}
-					</div>
+						</div>
+					)}
 				</div>
 			</div>
 		</main>

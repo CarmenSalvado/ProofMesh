@@ -1,1 +1,1 @@
-export { OrchestrationPanel } from "./OrchestrationPanel";
+export { AgentStudioPanel } from "./AgentStudioPanel";

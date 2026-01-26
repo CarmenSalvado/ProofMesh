@@ -51,7 +51,6 @@ class ProblemResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     author: AuthorInfo
-    canvas_count: int = 0
     library_item_count: int = 0
 
 
