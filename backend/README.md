@@ -36,6 +36,13 @@ alembic upgrade head
 uvicorn app.main:app --reload
 ```
 
+## Seeding
+
+Seed social graph demo data (run from `backend/`):
+```bash
+python scripts/seed_social.py
+```
+
 ## API Endpoints
 
 - `GET /` - API info

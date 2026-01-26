@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.problem import Problem, ProblemVisibility
 from app.models.library_item import LibraryItem, LibraryItemStatus, LibraryItemKind
+from app.models.activity import Activity, ActivityType
 from app.models.user import User
 from app.api.deps import get_current_user, get_current_user_optional
 from app.schemas.library_item import (
@@ -77,7 +78,9 @@ async def create_library_item(
     current_user: User = Depends(get_current_user),
 ):
     """Publish a new item to the library"""
-    await verify_problem_access(problem_id, db, current_user, require_owner=True)
+    problem = await verify_problem_access(problem_id, db, current_user, require_owner=False)
+    if problem.visibility == ProblemVisibility.PRIVATE and problem.author_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized")
     
     # Add current user as author if not specified
     authors = [a.model_dump() for a in data.authors]
@@ -96,6 +99,19 @@ async def create_library_item(
         dependencies=data.dependencies,
     )
     db.add(item)
+    await db.flush()
+    db.add(
+        Activity(
+            user_id=current_user.id,
+            type=ActivityType.PUBLISHED_LIBRARY,
+            target_id=item.id,
+            extra_data={
+                "problem_id": str(problem_id),
+                "problem_title": problem.title,
+                "item_title": item.title,
+            },
+        )
+    )
     await db.commit()
     await db.refresh(item)
     return item
@@ -160,6 +176,8 @@ async def update_library_item(
         item.status = data.status
     if data.verification is not None:
         item.verification = data.verification.model_dump()
+    if data.dependencies is not None:
+        item.dependencies = [str(dep) for dep in data.dependencies]
     
     await db.commit()
     await db.refresh(item)

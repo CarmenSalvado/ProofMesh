@@ -11,9 +11,57 @@ from app.database import get_db
 from app.models.problem import Problem, ProblemVisibility
 from app.models.user import User
 from app.api.deps import get_current_user_optional
-from app.schemas.agent import AgentRunRequest, AgentRunResponse, AgentProposal
+from app.schemas.agent import AgentRunRequest, AgentRunResponse, AgentProposal, AgentProfile, AgentListResponse
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
+
+
+AGENT_PROFILES: list[AgentProfile] = [
+    AgentProfile(
+        id="explorer",
+        name="Explorer",
+        task="propose",
+        description="Generate candidate results or directions from the context.",
+    ),
+    AgentProfile(
+        id="refiner",
+        name="Refiner",
+        task="extract",
+        description="Extract structure, definitions, and math statements.",
+    ),
+    AgentProfile(
+        id="verifier",
+        name="Verifier",
+        task="code",
+        description="Propose a verification or computation scaffold.",
+    ),
+    AgentProfile(
+        id="archivist",
+        name="Archivist",
+        task="summarize",
+        description="Summarize the current notes into a clean digest.",
+    ),
+    AgentProfile(
+        id="skeptic",
+        name="Skeptic",
+        task="critique",
+        description="Highlight gaps, risks, or unclear assumptions.",
+    ),
+    AgentProfile(
+        id="mapper",
+        name="Mapper",
+        task="map",
+        description="Outline next steps and dependencies.",
+    ),
+]
+
+
+def resolve_agent(agent_id: str | None, task: str | None) -> AgentProfile | None:
+    if agent_id:
+        return next((agent for agent in AGENT_PROFILES if agent.id == agent_id), None)
+    if task:
+        return next((agent for agent in AGENT_PROFILES if agent.task == task), None)
+    return None
 
 
 async def verify_problem_access(
@@ -47,6 +95,11 @@ def extract_latex_snippets(text: str) -> list[str]:
     return snippets[:3]
 
 
+@router.get("", response_model=AgentListResponse)
+async def list_agents():
+    return AgentListResponse(agents=AGENT_PROFILES)
+
+
 @router.post("/run", response_model=AgentRunResponse)
 async def run_agent(
     data: AgentRunRequest,
@@ -58,22 +111,30 @@ async def run_agent(
     context = (data.context or "").strip()
     snippet = context[:600] if context else ""
     proposals: list[AgentProposal] = []
+    agent_profile = resolve_agent(data.agent_id, data.task)
+    agent_id = agent_profile.id if agent_profile else data.agent_id
+    agent_name = agent_profile.name if agent_profile else None
+    task = (data.task or (agent_profile.task if agent_profile else "propose")).lower()
 
-    if snippet:
+    if snippet and task in {"propose", "summarize"}:
         proposals.append(
             AgentProposal(
                 id=str(uuid.uuid4()),
-                title="Context summary",
+                agent_id=agent_id,
+                agent_name=agent_name,
+                title="Context summary" if task == "propose" else "Summary",
                 kind="analysis",
                 content_markdown=f"**Context**\\n\\n{snippet}",
                 cell_type="markdown",
             )
         )
 
-    if data.task == "code" or "import" in context or "def " in context:
+    if task == "code" or "import" in context or "def " in context:
         proposals.append(
             AgentProposal(
                 id=str(uuid.uuid4()),
+                agent_id=agent_id,
+                agent_name=agent_name,
                 title="Computation scaffold",
                 kind="code",
                 content_markdown=(
@@ -87,15 +148,52 @@ async def run_agent(
             )
         )
 
-    latex = extract_latex_snippets(context)
-    if latex:
-        content = "\\n\\n".join([f"$$\\n{expr}\\n$$" for expr in latex])
+    if task in {"extract", "map"}:
+        latex = extract_latex_snippets(context)
+        if latex:
+            content = "\\n\\n".join([f"$$\\n{expr}\\n$$" for expr in latex])
+            proposals.append(
+                AgentProposal(
+                    id=str(uuid.uuid4()),
+                    agent_id=agent_id,
+                    agent_name=agent_name,
+                    title="Extracted math",
+                    kind="math",
+                    content_markdown=content,
+                    cell_type="markdown",
+                )
+            )
+
+    if task == "critique" and snippet:
         proposals.append(
             AgentProposal(
                 id=str(uuid.uuid4()),
-                title="Extracted math",
-                kind="math",
-                content_markdown=content,
+                agent_id=agent_id,
+                agent_name=agent_name,
+                title="Potential gaps",
+                kind="analysis",
+                content_markdown=(
+                    "- Clarify assumptions for each step.\\n"
+                    "- Identify dependencies on external results.\\n"
+                    "- Note any unverified claims."
+                ),
+                cell_type="markdown",
+            )
+        )
+
+    if task == "map" and snippet:
+        proposals.append(
+            AgentProposal(
+                id=str(uuid.uuid4()),
+                agent_id=agent_id,
+                agent_name=agent_name,
+                title="Next steps",
+                kind="analysis",
+                content_markdown=(
+                    "1. Formalize the goal statement.\\n"
+                    "2. List known lemmas and missing links.\\n"
+                    "3. Choose a verification path."
+                ),
                 cell_type="markdown",
             )
         )
@@ -104,6 +202,8 @@ async def run_agent(
         proposals.append(
             AgentProposal(
                 id=str(uuid.uuid4()),
+                agent_id=agent_id,
+                agent_name=agent_name,
                 title="Blank proposal",
                 kind="analysis",
                 content_markdown="No context available. Add a cell and try again.",

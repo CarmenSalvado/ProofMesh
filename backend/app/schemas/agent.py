@@ -9,16 +9,26 @@ class AgentRunRequest(BaseModel):
     file_path: str | None = None
     cell_id: str | None = None
     context: str | None = None
-    task: str
+    task: str = "propose"
     instructions: str | None = None
+    agent_id: str | None = None
 
 
 class AgentProposal(BaseModel):
     id: str
+    agent_id: str | None = None
+    agent_name: str | None = None
     title: str
     kind: str
     content_markdown: str
     cell_type: str
+
+
+class AgentProfile(BaseModel):
+    id: str
+    name: str
+    task: str
+    description: str
 
 
 class AgentRunResponse(BaseModel):
@@ -26,3 +36,7 @@ class AgentRunResponse(BaseModel):
     status: str
     summary: str
     proposals: list[AgentProposal]
+
+
+class AgentListResponse(BaseModel):
+    agents: list[AgentProfile]

@@ -9,6 +9,8 @@ from app.api import (
     library_router,
     workspaces_router,
     agents_router,
+    social_router,
+    realtime_router,
 )
 
 settings = get_settings()
@@ -43,6 +45,10 @@ app.include_router(problems_router)
 app.include_router(library_router)
 app.include_router(workspaces_router)
 app.include_router(agents_router)
+app.include_router(social_router)
+
+# WebSocket Router
+app.include_router(realtime_router)
 
 
 @app.get("/")

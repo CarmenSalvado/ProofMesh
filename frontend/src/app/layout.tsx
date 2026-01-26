@@ -1,12 +1,12 @@
 import type { Metadata } from "next";
-import { Hanken_Grotesk, JetBrains_Mono, Newsreader } from "next/font/google";
+import { Inter, JetBrains_Mono, Newsreader } from "next/font/google";
 import "@milkdown/crepe/theme/common/style.css";
 import "@milkdown/crepe/theme/frame.css";
 import "./globals.css";
 import { AuthProvider } from "@/lib/auth";
 import { ThemeProvider } from "@/hooks/useTheme";
 
-const inter = Hanken_Grotesk({
+const inter = Inter({
   variable: "--font-inter",
   subsets: ["latin"],
   weight: ["300", "400", "500", "600"],
@@ -25,8 +25,8 @@ const newsreader = Newsreader({
 });
 
 export const metadata: Metadata = {
-  title: "ProofMesh | Collaborative Formal Reasoning",
-  description: "Human-controlled reasoning workspace for mathematics",
+  title: "ProofMesh | Collaborative Logic",
+  description: "The infinite canvas for collaborative logic. Prove complex theorems together with AI assistance.",
 };
 
 export default function RootLayout({

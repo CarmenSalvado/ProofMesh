@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.problem import Problem, ProblemVisibility
 from app.models.workspace_file import WorkspaceFile, WorkspaceFileType
+from app.models.activity import Activity, ActivityType
 from app.models.user import User
 from app.api.deps import get_current_user, get_current_user_optional
 from app.schemas.contents import ContentsCreate, ContentsUpdate
@@ -211,7 +212,7 @@ async def put_contents(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    await verify_problem_access(problem_id, db, current_user, require_owner=True)
+    problem = await verify_problem_access(problem_id, db, current_user, require_owner=True)
     normalized = normalize_path(path)
     if normalized == "":
         raise HTTPException(status_code=400, detail="Path required")
@@ -247,6 +248,7 @@ async def put_contents(
     if fmt == "json" and content is not None and not isinstance(content, str):
         content = json.dumps(content)
 
+    is_new = file is None
     if file:
         file.type = file_type
         file.content = content or ""
@@ -261,6 +263,21 @@ async def put_contents(
             format=fmt or ("json" if file_type == WorkspaceFileType.NOTEBOOK else "text"),
         )
         db.add(file)
+
+    if is_new and file_type != WorkspaceFileType.DIRECTORY:
+        await db.flush()
+        db.add(
+            Activity(
+                user_id=current_user.id,
+                type=ActivityType.CREATED_WORKSPACE_FILE,
+                target_id=file.id,
+                extra_data={
+                    "problem_id": str(problem_id),
+                    "problem_title": problem.title,
+                    "file_path": file.path,
+                },
+            )
+        )
 
     await db.commit()
     await db.refresh(file)

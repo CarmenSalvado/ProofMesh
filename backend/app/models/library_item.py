@@ -9,22 +9,22 @@ from app.database import Base
 
 
 class LibraryItemKind(str, Enum):
-    RESOURCE = "resource"
-    IDEA = "idea"
-    CONTENT = "content"
-    LEMMA = "lemma"
-    CLAIM = "claim"
-    DEFINITION = "definition"
-    THEOREM = "theorem"
-    COUNTEREXAMPLE = "counterexample"
-    COMPUTATION = "computation"
-    NOTE = "note"
+    RESOURCE = "RESOURCE"
+    IDEA = "IDEA"
+    CONTENT = "CONTENT"
+    LEMMA = "LEMMA"
+    CLAIM = "CLAIM"
+    DEFINITION = "DEFINITION"
+    THEOREM = "THEOREM"
+    COUNTEREXAMPLE = "COUNTEREXAMPLE"
+    COMPUTATION = "COMPUTATION"
+    NOTE = "NOTE"
 
 
 class LibraryItemStatus(str, Enum):
-    PROPOSED = "proposed"
-    VERIFIED = "verified"
-    REJECTED = "rejected"
+    PROPOSED = "PROPOSED"
+    VERIFIED = "VERIFIED"
+    REJECTED = "REJECTED"
 
 
 class LibraryItem(Base):

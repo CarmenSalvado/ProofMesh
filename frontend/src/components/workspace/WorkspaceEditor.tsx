@@ -2,7 +2,7 @@
 
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import { Crepe } from "@milkdown/crepe";
-import { insert } from "@milkdown/utils";
+import { replaceAll } from "@milkdown/utils";
 
 interface WorkspaceEditorProps {
   initialMarkdown: string;
@@ -24,6 +24,7 @@ export const WorkspaceEditor = forwardRef<WorkspaceEditorHandle, WorkspaceEditor
   const crepeRef = useRef<Crepe | null>(null);
   const onChangeRef = useRef(onChange);
   const initialMarkdownRef = useRef(initialMarkdown);
+  const lastKnownMarkdownRef = useRef(initialMarkdown);
   const readyRef = useRef(false);
   const pendingInsertsRef = useRef<string[]>([]);
 
@@ -39,7 +40,11 @@ export const WorkspaceEditor = forwardRef<WorkspaceEditorHandle, WorkspaceEditor
           pendingInsertsRef.current.push(markdown);
           return;
         }
-        crepeRef.current.editor.action(insert(markdown));
+        const current = crepeRef.current.getMarkdown() || "";
+        const next = `${current}${markdown}`;
+        crepeRef.current.editor.action(replaceAll(next));
+        lastKnownMarkdownRef.current = next;
+        onChangeRef.current(next);
       },
       getMarkdown: () => {
         if (!crepeRef.current || !readyRef.current) {
@@ -61,6 +66,7 @@ export const WorkspaceEditor = forwardRef<WorkspaceEditorHandle, WorkspaceEditor
     });
     crepe.on((listener) => {
       listener.markdownUpdated((_, markdown) => {
+        lastKnownMarkdownRef.current = markdown;
         onChangeRef.current(markdown);
       });
     });
@@ -68,9 +74,11 @@ export const WorkspaceEditor = forwardRef<WorkspaceEditorHandle, WorkspaceEditor
     crepe.create().then(() => {
       readyRef.current = true;
       if (pendingInsertsRef.current.length > 0) {
-        pendingInsertsRef.current.forEach((markdown) => {
-          crepe.editor.action(insert(markdown));
-        });
+        const current = crepe.getMarkdown() || "";
+        const combined = `${current}${pendingInsertsRef.current.join("")}`;
+        crepe.editor.action(replaceAll(combined));
+        lastKnownMarkdownRef.current = combined;
+        onChangeRef.current(combined);
         pendingInsertsRef.current = [];
       }
     });
@@ -87,6 +95,14 @@ export const WorkspaceEditor = forwardRef<WorkspaceEditorHandle, WorkspaceEditor
       }
     };
   }, []);
+
+  useEffect(() => {
+    initialMarkdownRef.current = initialMarkdown;
+    if (!crepeRef.current || !readyRef.current) return;
+    if (initialMarkdown === lastKnownMarkdownRef.current) return;
+    crepeRef.current.editor.action(replaceAll(initialMarkdown));
+    lastKnownMarkdownRef.current = initialMarkdown;
+  }, [initialMarkdown]);
 
   useEffect(() => {
     if (!crepeRef.current) return;

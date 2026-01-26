@@ -5,22 +5,22 @@ from enum import Enum
 
 
 class LibraryItemKind(str, Enum):
-    RESOURCE = "resource"
-    IDEA = "idea"
-    CONTENT = "content"
-    LEMMA = "lemma"
-    CLAIM = "claim"
-    DEFINITION = "definition"
-    THEOREM = "theorem"
-    COUNTEREXAMPLE = "counterexample"
-    COMPUTATION = "computation"
-    NOTE = "note"
+    RESOURCE = "RESOURCE"
+    IDEA = "IDEA"
+    CONTENT = "CONTENT"
+    LEMMA = "LEMMA"
+    CLAIM = "CLAIM"
+    DEFINITION = "DEFINITION"
+    THEOREM = "THEOREM"
+    COUNTEREXAMPLE = "COUNTEREXAMPLE"
+    COMPUTATION = "COMPUTATION"
+    NOTE = "NOTE"
 
 
 class LibraryItemStatus(str, Enum):
-    PROPOSED = "proposed"
-    VERIFIED = "verified"
-    REJECTED = "rejected"
+    PROPOSED = "PROPOSED"
+    VERIFIED = "VERIFIED"
+    REJECTED = "REJECTED"
 
 
 class AuthorInfo(BaseModel):
@@ -57,6 +57,7 @@ class LibraryItemUpdate(BaseModel):
     formula: str | None = None
     status: LibraryItemStatus | None = None
     verification: VerificationInfo | None = None
+    dependencies: list[UUID] | None = None
 
 
 class LibraryItemResponse(BaseModel):

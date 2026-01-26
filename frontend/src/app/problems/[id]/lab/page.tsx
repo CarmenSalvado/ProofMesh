@@ -16,14 +16,23 @@ import {
   FolderPlus,
   FileText,
   Hash,
-  MoreHorizontal,
   Pencil,
   RefreshCw,
   Trash2,
   Users,
+  Wifi,
+  WifiOff,
 } from "lucide-react";
 import { WorkspaceEditor, WorkspaceEditorHandle } from "@/components/workspace/WorkspaceEditor";
 import { AgentStudioPanel } from "@/components/agents/AgentStudioPanel";
+import {
+  CollaborationProvider,
+  useOptionalCollaboration,
+  PresenceAvatars,
+  CollaborativeCursors,
+  CollaborativeEditor,
+  CollaborativeEditorHandle,
+} from "@/components/collaboration";
 import {
   getProblem,
   getLibraryItems,
@@ -75,7 +84,7 @@ function formatRelativeTime(iso: string | null | undefined): string {
 
 export default function LabPage({ params }: PageProps) {
   const { id: problemId } = use(params);
-  const { user } = useAuth();
+  const { user, getToken } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
   const [problem, setProblem] = useState<Problem | null>(null);
@@ -91,8 +100,10 @@ export default function LabPage({ params }: PageProps) {
   const [workspacePath, setWorkspacePath] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
-  const editorRef = useRef<WorkspaceEditorHandle | null>(null);
+  const [shareStatus, setShareStatus] = useState<"idle" | "copied" | "error">("idle");
+  const editorRef = useRef<CollaborativeEditorHandle | null>(null);
   const lastSavedRef = useRef<string | null>(null);
+  const shareTimeoutRef = useRef<number | null>(null);
 
   const loadWorkspace = useCallback(async () => {
     setLoading(true);
@@ -301,6 +312,12 @@ export default function LabPage({ params }: PageProps) {
     return !!user && !!problem && problem.author.id === user.id;
   }, [user, problem]);
 
+  useEffect(() => {
+    if (canEdit && !docWritable) {
+      setDocWritable(true);
+    }
+  }, [canEdit, docWritable]);
+
   const handleInsertMarkdown = useCallback(
     (markdown: string) => {
       if (!docWritable) return;
@@ -312,6 +329,47 @@ export default function LabPage({ params }: PageProps) {
     },
     [docWritable]
   );
+
+  const handleShare = useCallback(async () => {
+    const path = `/problems/${problemId}/lab`;
+    const fileQuery = workspacePath ? `?file=${encodeURIComponent(workspacePath)}` : "";
+    const url =
+      typeof window !== "undefined" ? `${window.location.origin}${path}${fileQuery}` : `${path}${fileQuery}`;
+
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url);
+      } else {
+        const textarea = document.createElement("textarea");
+        textarea.value = url;
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textarea);
+      }
+      setShareStatus("copied");
+    } catch (err) {
+      console.error("Failed to copy share link:", err);
+      setShareStatus("error");
+    }
+
+    if (shareTimeoutRef.current) {
+      window.clearTimeout(shareTimeoutRef.current);
+    }
+    shareTimeoutRef.current = window.setTimeout(() => {
+      setShareStatus("idle");
+    }, 2000);
+  }, [problemId, workspacePath]);
+
+  useEffect(() => {
+    return () => {
+      if (shareTimeoutRef.current) {
+        window.clearTimeout(shareTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const handleSelectFile = useCallback(
     (path: string) => {
@@ -647,6 +705,16 @@ export default function LabPage({ params }: PageProps) {
     ]
   );
 
+  // Collaboration handlers
+  const handleRemoteDocSync = useCallback((path: string, content: string, fromUser: number) => {
+    if (path === workspacePath && fromUser !== Number(user?.id)) {
+      setDoc(content);
+      lastSavedRef.current = content;
+    }
+  }, [workspacePath, user?.id]);
+
+  const token = useMemo(() => getToken(), [getToken]);
+
   if (loading && !problem) {
     return (
       <div className="flex-1 flex items-center justify-center bg-black text-neutral-500">
@@ -656,6 +724,11 @@ export default function LabPage({ params }: PageProps) {
   }
 
   return (
+    <CollaborationProvider
+      problemId={problemId}
+      token={token}
+      onDocumentSync={handleRemoteDocSync}
+    >
     <main className="workspace-shell h-screen w-screen overflow-hidden flex flex-col text-sm selection:bg-indigo-500/30 selection:text-indigo-200">
       <header className="h-12 border-b border-neutral-800 flex items-center justify-between px-4 shrink-0 glass-panel z-20">
         <div className="flex items-center gap-6">
@@ -675,13 +748,24 @@ export default function LabPage({ params }: PageProps) {
         </div>
 
         <div className="flex items-center gap-3">
+          <PresenceAvatars maxDisplay={4} />
           <div className="flex items-center gap-1.5 text-xs text-neutral-400">
             <Users size={14} />
             <span>{contributorCount} contributors</span>
           </div>
-          <button className="bg-neutral-100 text-black px-3 py-1 rounded text-xs font-medium hover:bg-neutral-300 transition-colors flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={handleShare}
+            className={`px-3 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1.5 ${
+              shareStatus === "copied"
+                ? "bg-emerald-200 text-emerald-900"
+                : shareStatus === "error"
+                ? "bg-red-200 text-red-900"
+                : "bg-neutral-100 text-black hover:bg-neutral-300"
+            }`}
+          >
             <Share2 size={12} />
-            Share
+            {shareStatus === "copied" ? "Copied" : shareStatus === "error" ? "Copy failed" : "Share"}
           </button>
         </div>
       </header>
@@ -782,7 +866,7 @@ export default function LabPage({ params }: PageProps) {
                       filteredItems.slice(0, 6).map((item) => (
                         <li
                           key={item.id}
-                          className="px-2 py-1.5 rounded hover:bg-neutral-900/50 text-neutral-400 hover:text-neutral-200 flex items-center gap-2 cursor-pointer transition-colors"
+                          className="px-2 py-1.5 rounded text-neutral-400 flex items-center gap-2"
                         >
                           <Icon className={section.accent} size={14} />
                           <span className="truncate">{item.title}</span>
@@ -840,11 +924,12 @@ export default function LabPage({ params }: PageProps) {
                 Loading editor...
               </div>
             ) : (
-              <WorkspaceEditor
+              <CollaborativeEditor
                 ref={editorRef}
                 initialMarkdown={doc}
                 onChange={handleMarkdownChange}
                 readOnly={!docWritable}
+                filePath={workspacePath}
               />
             )}
           </div>
@@ -860,13 +945,7 @@ export default function LabPage({ params }: PageProps) {
         />
       </div>
 
-      <button
-        className="fixed bottom-6 right-6 md:hidden bg-neutral-900/80 border border-neutral-700 text-neutral-200 px-3 py-2 rounded-full shadow-lg flex items-center gap-2"
-        type="button"
-      >
-        <MoreHorizontal size={16} />
-        Panels
-      </button>
     </main>
+    </CollaborationProvider>
   );
 }

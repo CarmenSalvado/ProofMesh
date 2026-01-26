@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.problem import Problem, ProblemVisibility, ProblemDifficulty
+from app.models.activity import Activity, ActivityType
 from app.models.workspace_file import WorkspaceFile, WorkspaceFileType
 from app.models.user import User
 from app.api.deps import get_current_user, get_current_user_optional
@@ -124,6 +125,14 @@ async def create_problem(
         mimetype="text/markdown",
     )
     db.add(workspace_doc)
+    db.add(
+        Activity(
+            user_id=current_user.id,
+            type=ActivityType.CREATED_PROBLEM,
+            target_id=problem.id,
+            extra_data={"problem_id": str(problem.id), "problem_title": problem.title},
+        )
+    )
     await db.commit()
     
     # Reload with relationships
@@ -197,6 +206,14 @@ async def seed_problems(
             mimetype="text/markdown",
         )
         db.add(workspace_doc)
+        db.add(
+            Activity(
+                user_id=current_user.id,
+                type=ActivityType.CREATED_PROBLEM,
+                target_id=problem.id,
+                extra_data={"problem_id": str(problem.id), "problem_title": problem.title},
+            )
+        )
         created.append(problem)
 
     if created:

@@ -204,7 +204,7 @@ export function ProblemSidebar({ problemId }: ProblemSidebarProps) {
 						</div>
 						<div className="px-2 space-y-[1px]">
 							{libraryItems.slice(0, 10).map(item => (
-								<div key={item.id} className="flex items-center gap-2 px-2 py-1 text-[12px] text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-secondary)] rounded cursor-pointer">
+								<div key={item.id} className="flex items-center gap-2 px-2 py-1 text-[12px] text-[var(--text-muted)] rounded">
 									<div className={`w-1.5 h-1.5 rounded-full ${item.kind === "lemma" ? "bg-emerald-500" :
 										item.kind === "theorem" ? "bg-amber-500" : "bg-blue-500"
 										}`} />
