@@ -6,6 +6,8 @@ This is NOT an agent. This is Python control logic.
 from typing import Optional, List, Any, Dict
 from dataclasses import dataclass, field
 import asyncio
+import uuid
+import os
 
 from .adk_runtime import Runtime
 from .tools.lean_runner import LeanRunner, run_lean
@@ -19,6 +21,9 @@ from .models.types import (
     FormalizationResult,
     CriticResult
 )
+
+# Hard threshold - don't proceed with garbage
+MIN_CONFIDENCE_THRESHOLD = 0.3
 
 
 @dataclass
@@ -39,7 +44,6 @@ class Canvas:
     
     def create(self, content: str) -> str:
         """Create a new block and return its ID."""
-        import uuid
         block_id = str(uuid.uuid4())[:8]
         self.blocks[block_id] = content
         return block_id
@@ -83,7 +87,6 @@ class Orchestrator:
         self.facts = fact_store or FactStore()
         
         # Configure LeanRunner to use mesh_project if available
-        import os
         project_path = os.path.join(os.getcwd(), "mesh_project")
         if lean_runner:
             self.lean = lean_runner
@@ -118,7 +121,8 @@ class Orchestrator:
         
         result = await self.adk.run("explore_loop", {
             "block": block_content,
-            "memory": memory
+            "memory": memory,
+            "max_iterations": max_iterations
         })
         
         return result
@@ -207,7 +211,7 @@ class Orchestrator:
         Returns:
             The saved Fact
         """
-        import uuid
+
         
         fact = Fact(
             id=str(uuid.uuid4()),
@@ -238,8 +242,13 @@ class Orchestrator:
         """
         exploration = await self.explore(block_id)
         
+        # Filter out blocked/invalid proposals BEFORE critiquing
+        valid_proposals = [p for p in exploration.proposals if p.is_valid()]
+        if not valid_proposals:
+            return []
+        
         results = []
-        for proposal in exploration.proposals:
+        for proposal in valid_proposals:
             critique = await self.critique(proposal.content)
             results.append((proposal, critique))
         
@@ -280,6 +289,12 @@ class Orchestrator:
         
         # 3. Formalize
         formalization = await self.formalize(best_proposal.content)
+        
+        # Hard rule: Don't verify garbage
+        if formalization.confidence < MIN_CONFIDENCE_THRESHOLD:
+            return None
+        if not formalization.lean_code.strip():
+            return None
         
         # 4. Verify
         verification = await self.verify(formalization.lean_code)

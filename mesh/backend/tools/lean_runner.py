@@ -7,6 +7,7 @@ import subprocess
 import tempfile
 import os
 import time
+import shutil
 from pathlib import Path
 from typing import Optional
 
@@ -18,14 +19,16 @@ class LeanRunner:
     
     def __init__(
         self,
-        lean_path: str = "lean",
-        lake_path: str = "/home/n3m/.elan/bin/lake", 
+        lean_path: Optional[str] = None,
+        lake_path: Optional[str] = None, 
         timeout_seconds: int = 60,
         workspace_dir: Optional[str] = None,
         use_project_context: bool = True
     ):
-        self.lean_path = lean_path
-        self.lake_path = lake_path
+        # Try to find executables if not provided
+        self.lean_path = lean_path or shutil.which("lean") or "lean"
+        self.lake_path = lake_path or shutil.which("lake") or "lake"
+        
         self.timeout = timeout_seconds
         self.workspace_dir = workspace_dir
         self.use_project_context = use_project_context # If True, uses 'lake env lean'

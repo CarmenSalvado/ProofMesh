@@ -45,7 +45,8 @@ class FormalizerAgent:
             model=model,
             system_prompt=FORMALIZER_SYSTEM_PROMPT,
             temperature=temperature,
-            max_tokens=8192  # Lean code can be long
+            max_tokens=8192,  # Lean code can be long
+            timeout=120  # Increased timeout for complex formalization
         )
     
     async def formalize(
@@ -97,41 +98,70 @@ class FormalizerAgent:
     def _parse_response(self, response: AgentResponse) -> FormalizationResult:
         """Parse the agent response into a FormalizationResult."""
         if not response.success:
+            # DEBUG: Print the actual error
+            print(f"  [DEBUG] Formalizer failed: {response.content}")
             return FormalizationResult(
-                lean_code=f"-- Error: {response.content}",
-                confidence=0.0
+                lean_code="", 
+                confidence=0.0,
+                axioms_used=[]
             )
         
         content = response.content
         
-        # Extract JSON from markdown code blocks if present
-        json_pattern = r'```(?:json)?\s*\n(.*?)```'
-        json_matches = re.findall(json_pattern, content, re.DOTALL)
-        if json_matches:
-            content = json_matches[0].strip()
-        
-        try:
-            # Try to parse as JSON
-            data = json.loads(content)
+        # Helper to try parsing JSON
+        def try_parse(text: str) -> Optional[dict]:
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError:
+                return None
+
+        # Helper to extract code from JSON data
+        def result_from_data(data: dict) -> FormalizationResult:
             lean_code = data.get("lean_code", "")
-            
-            # Clean lean_code if it's also wrapped in markdown
-            if lean_code.startswith("```"):
+            # Clean lean_code if it's wrapped in markdown
+            if lean_code.strip().startswith("```"):
                 lean_code = self._extract_code(lean_code)
             
             return FormalizationResult(
                 lean_code=lean_code,
                 imports=data.get("imports", []),
                 axioms_used=data.get("axioms_used", []),
-                confidence=data.get("confidence", 0.5)
+                confidence=float(data.get("confidence", 0.5))
             )
-        except json.JSONDecodeError:
-            # Extract code blocks if not JSON
-            lean_code = self._extract_code(response.content)
-            return FormalizationResult(
-                lean_code=lean_code,
-                confidence=0.3  # Lower confidence for unparsed response
-            )
+
+        # 1. Try parsing full content as JSON directly
+        data = try_parse(content)
+        if data:
+            return result_from_data(data)
+
+        # 2. Try extracting from Markdown code blocks
+        # Look for ```json ... ``` or just ``` ... ``` containing JSON
+        json_pattern = r'```(?:json)?\s*(.*?)```'
+        matches = re.findall(json_pattern, content, re.DOTALL)
+        for match in matches:
+            data = try_parse(match.strip())
+            if data:
+                return result_from_data(data)
+        
+        # 3. Manual bracket search (fallback)
+        try:
+            start = content.find('{')
+            end = content.rfind('}')
+            if start != -1 and end != -1:
+                data = try_parse(content[start:end+1])
+                if data:
+                    return result_from_data(data)
+        except:
+            pass
+            
+        # 4. Fallback: Assume the whole response is just code? 
+        # Or try to extract code block directly if JSON failed completely
+        print("  [DEBUG] Formalizer JSON parse failed, falling back to raw code extraction")
+        lean_code = self._extract_code(content)
+        return FormalizationResult(
+            lean_code=lean_code,
+            confidence=0.3
+        )
     
     def _extract_code(self, text: str) -> str:
         """Extract Lean code from markdown or plain text."""

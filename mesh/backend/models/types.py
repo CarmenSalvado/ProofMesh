@@ -9,6 +9,13 @@ from datetime import datetime
 from enum import Enum
 
 
+class ModelContentBlockedError(Exception):
+    """Raised when model content is blocked or empty."""
+    def __init__(self, reason: str = "Content blocked"):
+        self.reason = reason
+        super().__init__(reason)
+
+
 class LeanResult(BaseModel):
     """Result from running Lean 4 code."""
     success: bool
@@ -21,10 +28,22 @@ class LeanResult(BaseModel):
 class Proposal(BaseModel):
     """A mathematical proposal from the explorer agent."""
     id: str
-    content: str
+    content: Optional[str] = None  # None if blocked
     reasoning: str = ""
     score: float = Field(default=0.0, ge=0.0, le=1.0)
     iteration: int = 0
+    blocked: bool = False
+    block_reason: Optional[str] = None
+
+    def is_valid(self) -> bool:
+        """Check if this proposal contains valid mathematical content."""
+        if self.blocked or self.content is None:
+            return False
+        if self.content.startswith("Error:"):
+            return False
+        if len(self.content.strip()) < 10:
+            return False
+        return True
 
 
 class Fact(BaseModel):

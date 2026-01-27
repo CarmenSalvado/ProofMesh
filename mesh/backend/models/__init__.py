@@ -1,6 +1,7 @@
 """Models and types for the agent architecture."""
 
 from .types import (
+    ModelContentBlockedError,
     LeanResult,
     Proposal,
     Fact,
@@ -12,6 +13,7 @@ from .types import (
 )
 
 __all__ = [
+    "ModelContentBlockedError",
     "LeanResult",
     "Proposal", 
     "Fact",
@@ -21,3 +23,4 @@ __all__ = [
     "FormalizationResult",
     "CriticResult",
 ]
+

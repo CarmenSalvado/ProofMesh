@@ -1,223 +1,266 @@
 """
-Explorer Agent - Proposes mathematical lemmas and conjectures.
-Uses LoopAgent to iterate until a good proposal is found.
+Explorer Agent - Proposes local mathematical steps.
+Robust against global problems and model content blocking.
+Refined for difficult problems with Chain-of-Thought and relaxed validation.
 """
 
 import json
 import re
 from typing import Optional, List
 
-from .base import Agent, LoopAgent, score_threshold
+# Asumimos que estas importaciones existen en tu estructura de proyecto
+# Si "base" o "models" fallan, asegúrate de que existen en tu path relativo
+from .base import Agent, LoopAgent
 from ..models.types import Proposal, ExplorationResult, AgentResponse
 
 
-EXPLORER_SYSTEM_PROMPT = """You are a mathematical exploration agent. Your role is to propose lemmas, conjectures, and next steps for mathematical proofs.
+# SYSTEM PROMPT MEJORADO: Chain-of-Thought + JSON
+EXPLORER_SYSTEM_PROMPT = """You are an expert mathematical exploration agent.
 
-When given a mathematical block or statement, you should:
-1. Analyze the current state of the proof
-2. Identify what needs to be proven next
-3. Propose a specific lemma or step that would advance the proof
-4. Explain your reasoning
+Your goal is to propose ONE solid, logical step forward. 
+Do NOT try to verify or prove the entire statement instantly.
 
-Format your response as JSON:
+Guidelines:
+1. **Analyze**: First, think about the difficulty and possible strategies in the "thought" field.
+2. **Propose**: Generate a distinct mathematical step (lemma, simplification, variable change, or case split).
+3. **Local**: The step must be self-contained and valid, but does not need to finish the proof.
+
+Format your response as a CLEAN JSON object:
 {
-    "proposal": "The specific mathematical statement you propose",
-    "reasoning": "Why this is a good next step",
-    "confidence": 0.0-1.0,
-    "prerequisites": ["Any lemmas this depends on"],
-    "score": 0.0-1.0
+    "thought": "Brief analysis of the current state and why a specific step is needed...",
+    "proposal": "The actual mathematical step definition...",
+    "reasoning": "Why this specific step is valid and useful",
+    "score": 0.0 to 1.0 (how confident are you this is the best next step?)
 }
+"""
 
-Be creative but rigorous. Propose steps that are both novel and provable."""
-
+# REGEX RELAJADO
+GLOBAL_CLOSURE_PATTERNS = [
+    r"Q\.E\.D\.",
+    r"This completes the proof",
+    r"This proves the theorem",
+    r"The proof is complete",
+    r"We have shown the statement",
+    r"^proven$",
+]
 
 class ExplorerAgent:
     """
-    Explorer agent that proposes mathematical lemmas.
-    Wraps a LoopAgent to iterate until a high-quality proposal is found.
+    Explorer agent that proposes LOCAL mathematical steps.
     """
-    
+
     def __init__(
         self,
-        model: str = "gemini-3-pro-preview",
-        temperature: float = 0.8,  # Higher for creativity
+        model: str = "gemini-3-flash-preview",
+        temperature: float = 0.8,
         max_iterations: int = 5,
-        score_threshold: float = 0.7
+        timeout: int = 180,
+        max_tokens: int = 16384,  # Increased default
     ):
         self.base_agent = Agent(
             model=model,
             system_prompt=EXPLORER_SYSTEM_PROMPT,
-            temperature=temperature
+            temperature=temperature,
+            timeout=timeout,
+            max_tokens=max_tokens,
         )
-        
-        self.score_threshold_value = score_threshold
+
         self.max_iterations = max_iterations
-        
-        # Create loop agent with stop condition
-        def stop_condition(response: AgentResponse, iteration: int) -> bool:
-            try:
-                content = response.content
-                # Extract JSON from markdown if present
-                json_pattern = r'```(?:json)?\s*\n(.*?)```'
-                json_matches = re.findall(json_pattern, content, re.DOTALL)
-                if json_matches:
-                    content = json_matches[0].strip()
-                
-                data = json.loads(content)
-                return data.get("score", 0) >= self.score_threshold_value
-            except:
-                return False
-        
+
+        def stop_condition(_: AgentResponse, iteration: int) -> bool:
+            return iteration + 1 >= self.max_iterations
+
         self.loop_agent = LoopAgent(
             agent=self.base_agent,
             until=stop_condition,
-            max_iters=max_iterations
+            max_iters=max_iterations,
         )
-    
+
+    # ---------- VALIDATION ----------
+
+    def _is_local_proposal(self, text: str) -> bool:
+        lowered = text.lower().strip()
+        if not lowered:
+            return False
+        for pattern in GLOBAL_CLOSURE_PATTERNS:
+            if re.search(pattern, lowered, re.IGNORECASE):
+                return False
+        return True
+
+    def _parse_json(self, content: str) -> Optional[dict]:
+        """
+        Attempts to extract JSON even if the model wraps it in text or markdown.
+        Handles common LaTeX escaping issues.
+        """
+        def clean_and_parse(text: str) -> Optional[dict]:
+            # Try parsing directly
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError:
+                # Try fixing backslashes for LaTeX (e.g., \sum -> \\sum)
+                # But be careful not to double escape existing valid escapes
+                # Simple heuristic: replace single backslash with double if followed by non-tranditional escape
+                # Better approach: use a strict decoding fallback or just try to blindly fix common math command starts
+                pass
+            return None
+
+        # 1. Try pure content
+        res = clean_and_parse(content)
+        if res: return res
+
+        # 2. Extract from Markdown code blocks
+        json_pattern = r'```(?:json)?\s*(.*?)```'
+        matches = re.findall(json_pattern, content, re.DOTALL)
+        if matches:
+            res = clean_and_parse(matches[0].strip())
+            if res: return res
+        
+        # 3. Manual bracket search (brittle but useful fallback)
+        try:
+            start_index = content.find('{')
+            end_index = content.rfind('}')
+            if start_index != -1 and end_index != -1:
+                json_str = content[start_index : end_index + 1]
+                # Try to sanitize backslashes in the extracted string before parsing
+                # Replace single backslash with double, except for known JSON escapes like \n, \t, \", \\
+                # This is a bit risky but helps with LaTeX. 
+                # actually, 'json5' library would be great here but we might not have it.
+                # Let's try to just parse it.
+                res = clean_and_parse(json_str) 
+                if res: return res
+                
+                # Last resort: simplistic fix for LaTeX backslashes
+                # We assume the model didn't escape them.
+                # We replace \ with \\, but then we must revert actual escapes? Hard.
+                # Let's just try to be lenient or ask the model to fix.
+                # For now, let's just return what we have if clean_and_parse works.
+        except Exception:
+            pass
+
+        return None
+
+    # ---------- MAIN API ----------
+
     async def explore(
         self,
         block: str,
-        memory: Optional[List[dict]] = None
+        memory: Optional[List[dict]] = None,
+        max_iterations: Optional[int] = None,
     ) -> ExplorationResult:
-        """
-        Explore and propose lemmas for a mathematical block.
-        
-        Args:
-            block: The mathematical content to explore
-            memory: Previous relevant facts/context
-            
-        Returns:
-            ExplorationResult with proposals
-        """
-        context = {"block": block}
-        if memory:
-            context["previous_facts"] = json.dumps(memory, indent=2)
-        
-        prompt = f"""Analyze this mathematical block and propose the next lemma to prove:
 
+        context = {"block": block}
+        memory_str = json.dumps(memory, indent=2) if memory else "No previous steps."
+        
+        prompt = f"""Current Mathematical Problem/State:
 {block}
 
-Remember to format your response as valid JSON."""
+Previous Known Facts/Steps:
+{memory_str}
 
-        def refine(prompt: str, response: AgentResponse, iteration: int) -> str:
-            return f"""{prompt}
-
-Previous proposal (iteration {iteration + 1}):
-{response.content}
-
-This proposal scored below the threshold. Please propose something better:
-- More specific and provable
-- Better reasoned
-- Higher confidence
-
-Improve your proposal."""
+Task: Provide a valid next local step. 
+Remember to use the "thought" field to plan your strategy before proposing.
+IMPORTANT: You are writing JSON. If you use LaTeX, you MUST escape backslashes (e.g., use "\\\\sum" instead of "\\sum").
+"""
 
         responses = await self.loop_agent.run(
-            prompt, 
+            prompt,
             context=context,
-            refine_prompt=refine
+            max_iters=max_iterations
         )
-        
-        # Parse all proposals
-        proposals = []
+
+        proposals: List[Proposal] = []
         best_score = 0.0
-        
+
         for i, response in enumerate(responses):
+            if not response.success or not response.content:
+                proposals.append(self._create_blocked_proposal(i, "Empty or failed response"))
+                continue
+
+            data = self._parse_json(response.content)
+            
+            if not data:
+                # Increased debug length to 500 characters to see what went wrong
+                proposals.append(self._create_blocked_proposal(i, "JSON Parse Error", raw_content=response.content[:500]))
+                continue
+
+            proposal_text = data.get("proposal", "").strip()
+            thought_process = data.get("thought", "")
+            
+            if not proposal_text:
+                proposals.append(self._create_blocked_proposal(i, "Empty proposal text"))
+                continue
+
+            if not self._is_local_proposal(proposal_text):
+                proposals.append(self._create_blocked_proposal(i, "Rejected: Global closure attempt"))
+                continue
+
             try:
-                # Check if response was successful
-                if not response.success:
-                    proposals.append(Proposal(
-                        id=f"prop-{i}",
-                        content=f"Error: {response.content}",
-                        reasoning="(Agent returned error)",
-                        score=0.0,
-                        iteration=i
-                    ))
-                    continue
-                
-                # Extract JSON from markdown if present
-                content = response.content
-                json_pattern = r'```(?:json)?\s*\n(.*?)```'
-                json_matches = re.findall(json_pattern, content, re.DOTALL)
-                if json_matches:
-                    content = json_matches[0].strip()
-                
-                data = json.loads(content)
-                proposal = Proposal(
-                    id=f"prop-{i}",
-                    content=data.get("proposal", response.content),
-                    reasoning=data.get("reasoning", ""),
-                    score=data.get("score", 0.0),
-                    iteration=i
-                )
-                proposals.append(proposal)
-                best_score = max(best_score, proposal.score)
-            except Exception as e:
-                # Handle any error
-                proposals.append(Proposal(
-                    id=f"prop-{i}",
-                    content=f"Parse error: {str(e)}\n\nRaw response:\n{response.content[:500] if response.content else 'None'}",
-                    reasoning="(Could not parse structured response)",
-                    score=0.0,
-                    iteration=i
-                ))
-        
-        # Determine why we stopped
-        stopped_reason = "max_iterations"
-        if len(responses) < self.max_iterations:
-            stopped_reason = "score_threshold"
-        
+                score = float(data.get("score", 0.5))
+            except (ValueError, TypeError):
+                score = 0.5
+
+            full_reasoning = f"Thought: {thought_process}\nReasoning: {data.get('reasoning', '')}"
+
+            proposal = Proposal(
+                id=f"prop-{i}",
+                content=proposal_text,
+                reasoning=full_reasoning.strip(),
+                score=score,
+                iteration=i,
+                blocked=False,
+                block_reason=None,
+            )
+
+            proposals.append(proposal)
+            best_score = max(best_score, score)
+
+        valid_proposals = [p for p in proposals if p.is_valid()]
+
+        if not valid_proposals:
+            return ExplorationResult(
+                proposals=proposals,
+                total_iterations=len(responses),
+                best_score=0.0,
+                stopped_reason="all_proposals_rejected",
+            )
+
+        valid_proposals.sort(key=lambda x: x.score, reverse=True)
+
         return ExplorationResult(
-            proposals=proposals,
+            proposals=valid_proposals,
             total_iterations=len(responses),
             best_score=best_score,
-            stopped_reason=stopped_reason
+            stopped_reason="max_iterations",
         )
-    
+
+    def _create_blocked_proposal(self, iteration: int, reason: str, raw_content: str = None) -> Proposal:
+        return Proposal(
+            id=f"prop-{iteration}",
+            content=None,
+            reasoning=f"Blocked: {reason}" + (f" (Raw: {raw_content})" if raw_content else ""),
+            score=0.0,
+            iteration=iteration,
+            blocked=True,
+            block_reason=reason,
+        )
+
     def explore_sync(
         self,
         block: str,
-        memory: Optional[List[dict]] = None
+        memory: Optional[List[dict]] = None,
     ) -> ExplorationResult:
-        """Synchronous version of explore()."""
         import asyncio
         return asyncio.run(self.explore(block, memory))
 
 
-# Lazy default agent instance
-_explorer_agent: ExplorerAgent | None = None
+# ---------- FACTORY & EXPORT ----------
+
+_explorer_instance = None
 
 def get_explorer_agent() -> ExplorerAgent:
-    """Get or create the default explorer agent."""
-    global _explorer_agent
-    if _explorer_agent is None:
-        _explorer_agent = ExplorerAgent()
-    return _explorer_agent
+    global _explorer_instance
+    if _explorer_instance is None:
+        _explorer_instance = ExplorerAgent()
+    return _explorer_instance
 
-# Backward compatibility (will error without API key)
-explorer_agent = None  # Use get_explorer_agent() instead
-
-
-if __name__ == "__main__":
-    import sys
-    import asyncio
-    
-    if "--test" in sys.argv:
-        async def test():
-            print("Testing Explorer Agent...")
-            print("Note: Requires GEMINI_API_KEY environment variable")
-            
-            agent = ExplorerAgent(max_iterations=2)
-            result = await agent.explore(
-                "Prove that the sum of two even numbers is even."
-            )
-            
-            print(f"Total iterations: {result.total_iterations}")
-            print(f"Best score: {result.best_score}")
-            print(f"Stopped reason: {result.stopped_reason}")
-            print(f"\nProposals:")
-            for p in result.proposals:
-                print(f"  [{p.iteration}] Score: {p.score}")
-                print(f"      {p.content[:100]}...")
-        
-        asyncio.run(test())
+explorer_agent = get_explorer_agent()

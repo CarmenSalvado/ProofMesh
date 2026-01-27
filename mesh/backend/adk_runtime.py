@@ -106,7 +106,8 @@ class Runtime:
         """Run explorer agent."""
         block = params.get("block", "")
         memory = params.get("memory", [])
-        return await self.explorer.explore(block, memory)
+        max_iterations = params.get("max_iterations")
+        return await self.explorer.explore(block, memory, max_iterations=max_iterations)
     
     async def _run_formalizer(self, params: Dict[str, Any]) -> FormalizationResult:
         """Run formalizer agent."""
