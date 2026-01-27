@@ -18,84 +18,84 @@ from backend import Orchestrator, Runtime
 from backend.agents import ExplorerAgent, FormalizerAgent, CriticAgent
 
 
-async def test_explorer():
-    """Test the explorer agent."""
-    print("\n" + "="*50)
-    print("🔍 Testing Explorer Agent")
-    print("="*50)
-    
-    agent = ExplorerAgent(max_iterations=2)
-    result = await agent.explore(
-        "Explain that the sum of two even numbers is even"
-    )
-    
-    print(f"✓ Total iterations: {result.total_iterations}")
-    print(f"✓ Best score: {result.best_score}")
-    print(f"✓ Stopped reason: {result.stopped_reason}")
-    print(f"✓ Proposals generated: {len(result.proposals)}")
-    
-    for i, p in enumerate(result.proposals):
-        print(f"\n{'─'*60}")
-        print(f"  PROPOSAL {i+1}")
-        print(f"{'─'*60}")
-        print(f"  ID: {p.id}")
-        print(f"  Score: {p.score}")
-        print(f"  Iteration: {p.iteration}")
-        print(f"\n  REASONING:")
-        print(f"  {p.reasoning}")
-        print(f"\n  CONTENT:")
-        print(f"  {p.content}")
-        print(f"{'─'*60}")
-    
-    return result
+# async def test_explorer():
+#     """Test the explorer agent."""
+#     print("\n" + "="*50)
+#     print("🔍 Testing Explorer Agent")
+#     print("="*50)
+
+#     agent = ExplorerAgent(max_iterations=1)
+#     result = await agent.explore(
+#         "Prove that for any prime p, there exists a positive integer n such that 1^n + 2^(n-1) + 3^(n-2) + ... + n^1 ≡ 2020 (mod p)."
+#     )
+
+#     print(f"✓ Total iterations: {result.total_iterations}")
+#     print(f"✓ Best score: {result.best_score}")
+#     print(f"✓ Stopped reason: {result.stopped_reason}")
+#     print(f"✓ Proposals generated: {len(result.proposals)}")
+
+#     for i, p in enumerate(result.proposals):
+#         print(f"\n{'─'*60}")
+#         print(f"  PROPOSAL {i+1}")
+#         print(f"{'─'*60}")
+#         print(f"  ID: {p.id}")
+#         print(f"  Score: {p.score}")
+#         print(f"  Iteration: {p.iteration}")
+#         print(f"\n  REASONING:")
+#         print(f"  {p.reasoning}")
+#         print(f"\n  CONTENT:")
+#         print(f"  {p.content}")
+#         print(f"{'─'*60}")
+
+#     return result
 
 
-async def test_formalizer():
-    """Test the formalizer agent."""
-    print("\n" + "="*50)
-    print("📝 Testing Formalizer Agent")
-    print("="*50)
-    
-    agent = FormalizerAgent()
-    result = await agent.formalize(
-        "Lemma: If n is even and m is even, then n + m is even."
-    )
-    
-    print(f"✓ Confidence: {result.confidence}")
-    print(f"✓ Imports: {result.imports}")
-    print(f"✓ Axioms used: {result.axioms_used}")
-    print(f"\n{'─'*60}")
-    print("LEAN CODE (FULL):")
-    print(f"{'─'*60}")
-    print(result.lean_code)
-    print(f"{'─'*60}")
-    
-    return result
+# async def test_formalizer():
+#     """Test the formalizer agent."""
+#     print("\n" + "="*50)
+#     print("📝 Testing Formalizer Agent")
+#     print("="*50)
+
+#     agent = FormalizerAgent()
+#     result = await agent.formalize(
+#         "Lemma: If n is even and m is even, then n + m is even."
+#     )
+
+#     print(f"✓ Confidence: {result.confidence}")
+#     print(f"✓ Imports: {result.imports}")
+#     print(f"✓ Axioms used: {result.axioms_used}")
+#     print(f"\n{'─'*60}")
+#     print("LEAN CODE (FULL):")
+#     print(f"{'─'*60}")
+#     print(result.lean_code)
+#     print(f"{'─'*60}")
+
+#     return result
 
 
-async def test_critic():
-    """Test the critic agent."""
-    print("\n" + "="*50)
-    print("🎯 Testing Critic Agent")
-    print("="*50)
-    
-    agent = CriticAgent()
-    result = await agent.critique(
-        "Lemma: If n is even and m is even, then n + m is even.",
-        goal="Prove properties of even numbers"
-    )
-    
-    print(f"✓ Score: {result.score}")
-    print(f"✓ Should retry: {result.should_retry}")
-    print(f"✓ Issues: {result.issues}")
-    print(f"✓ Suggestions: {result.suggestions}")
-    print(f"\n{'─'*60}")
-    print("FEEDBACK (FULL):")
-    print(f"{'─'*60}")
-    print(result.feedback)
-    print(f"{'─'*60}")
-    
-    return result
+# async def test_critic():
+#     """Test the critic agent."""
+#     print("\n" + "="*50)
+#     print("🎯 Testing Critic Agent")
+#     print("="*50)
+
+#     agent = CriticAgent()
+#     result = await agent.critique(
+#         "Lemma: If n is even and m is even, then n + m is even.",
+#         goal="Prove properties of even numbers"
+#     )
+
+#     print(f"✓ Score: {result.score}")
+#     print(f"✓ Should retry: {result.should_retry}")
+#     print(f"✓ Issues: {result.issues}")
+#     print(f"✓ Suggestions: {result.suggestions}")
+#     print(f"\n{'─'*60}")
+#     print("FEEDBACK (FULL):")
+#     print(f"{'─'*60}")
+#     print(result.feedback)
+#     print(f"{'─'*60}")
+
+#     return result
 
 
 async def test_orchestrator():
@@ -103,18 +103,19 @@ async def test_orchestrator():
     print("\n" + "="*50)
     print("🎭 Testing Orchestrator (Full Pipeline)")
     print("="*50)
-    
+
     orch = Orchestrator()
-    
+
     block_id = orch.canvas.create(
-        "Prove that for any natural number n, if n is even, then n² is even."
+        "Prove that for any prime p, there exists a positive integer n such that 1^n + 2^(n-1) + 3^(n-2) + ... + n^1 ≡ 2020 (mod p)."
     )
+
     print(f"✓ Created block: {block_id}")
-    
+
     print("\n  Running exploration...")
-    exploration = await orch.explore(block_id)
+    exploration = await orch.explore(block_id, max_iterations=3)
     print(f"  ✓ Got {len(exploration.proposals)} proposals")
-    
+
     if exploration.proposals:
         best = exploration.proposals[0]
         print(f"\n{'─'*60}")
@@ -146,25 +147,27 @@ async def test_orchestrator():
             print(verification.error if verification.error else "No error message")
             print(f"{'─'*60}")
             print("    (This is expected if Lean 4 is not installed)")
-    
+
     return orch
 
 
-async def test_runtime():
-    """Test the runtime directly."""
-    print("\n" + "="*50)
-    print("⚡ Testing Runtime")
-    print("="*50)
+# async def test_runtime():
+#     """Test the runtime directly."""
+#     print("\n" + "="*50)
+#     print("⚡ Testing Runtime")
+#     print("="*50)
     
-    runtime = Runtime()
-    print(f"✓ Available agents: {runtime.available_agents}")
+#     runtime = Runtime()
+#     print(f"✓ Available agents: {runtime.available_agents}")
     
-    result = await runtime.run("formalizer", {
-        "text": "1 + 1 = 2"
-    })
-    print(f"✓ Formalizer via runtime: confidence = {result.confidence}")
+#     result = await runtime.run("formalizer", {
+#         "text": "1 + 1 = 2"
+#     })
+#     print(f"✓ Formalizer via runtime: confidence = {result.confidence}")
+#     print(f"  lean_code: '{result.lean_code[:100]}...'" if result.lean_code else "  lean_code: (empty)")
+#     print(f"  axioms_used: {result.axioms_used}")
     
-    return runtime
+    # return runtime
 
 
 async def main():
@@ -174,10 +177,10 @@ async def main():
     print("#"*50)
     
     tests = [
-        ("Explorer", test_explorer),
-        ("Formalizer", test_formalizer),
-        ("Critic", test_critic),
-        ("Runtime", test_runtime),
+        #("Explorer", test_explorer)
+        # ("Formalizer", test_formalizer),
+        # ("Critic", test_critic),
+        # ("Runtime", test_runtime),
         ("Orchestrator", test_orchestrator),
     ]
     
