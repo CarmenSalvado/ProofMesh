@@ -5,6 +5,7 @@ from app.models.activity import Activity
 from app.models.problem import Problem
 from app.models.library_item import LibraryItem
 from app.models.workspace_file import WorkspaceFile
+from app.models.doc_section import DocSection, DocAnchor
 from app.models.discussion import Discussion
 from app.models.comment import Comment
 from app.models.star import Star, StarTargetType
@@ -19,6 +20,8 @@ __all__ = [
     "Problem",
     "LibraryItem",
     "WorkspaceFile",
+    "DocSection",
+    "DocAnchor",
     "Discussion",
     "Comment",
     "Star",

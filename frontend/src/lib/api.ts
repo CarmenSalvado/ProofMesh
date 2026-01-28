@@ -29,10 +29,10 @@ export interface LibraryItem {
 	id: string;
 	problem_id: string;
 	title: string;
-	kind: "resource" | "idea" | "content" | "lemma" | "claim" | "definition" | "theorem" | "counterexample" | "computation" | "note";
+	kind: "RESOURCE" | "IDEA" | "CONTENT" | "LEMMA" | "CLAIM" | "DEFINITION" | "THEOREM" | "COUNTEREXAMPLE" | "COMPUTATION" | "NOTE";
 	content: string;
 	formula: string | null;
-	status: "proposed" | "verified" | "rejected";
+	status: "PROPOSED" | "VERIFIED" | "REJECTED";
 	authors: Array<{ type: string; id: string; name?: string }>;
 	source: { file_path?: string; cell_id?: string; agent_run_id?: string } | null;
 	dependencies: string[];
@@ -310,6 +310,13 @@ function getAuthHeaders(): HeadersInit {
 	return { Authorization: `Bearer ${token}` };
 }
 
+// Check if user is authenticated
+export function isAuthenticated(): boolean {
+	if (typeof window === "undefined") return false;
+	const token = localStorage.getItem("access_token");
+	return !!token;
+}
+
 function encodePath(path: string): string {
 	return path
 		.split("/")
@@ -323,27 +330,86 @@ async function apiFetch<T>(
 	options: RequestInit = {}
 ): Promise<T> {
 	const url = `${API_BASE_URL}/api${endpoint}`;
+	const authHeaders = getAuthHeaders();
+	
+	// Build headers properly
 	const headers: HeadersInit = {
 		"Content-Type": "application/json",
-		...getAuthHeaders(),
-		...options.headers,
 	};
-
-	const response = await fetch(url, {
-		...options,
-		headers,
-	});
-
-	if (!response.ok) {
-		const error = await response.json().catch(() => ({ detail: "Unknown error" }));
-		throw new Error(error.detail || `API Error: ${response.status}`);
+	
+	// Add auth headers if present
+	if (authHeaders && typeof authHeaders === 'object' && 'Authorization' in authHeaders) {
+		(headers as Record<string, string>)["Authorization"] = authHeaders.Authorization;
+	}
+	
+	// Add additional headers from options
+	if (options.headers) {
+		if (typeof options.headers === 'object' && !Array.isArray(options.headers)) {
+			Object.assign(headers, options.headers);
+		}
 	}
 
-	if (response.status === 204) {
-		return null as T;
-	}
+	// Check if we have auth
+	const hasAuth = typeof authHeaders === 'object' && 'Authorization' in authHeaders;
 
-	return response.json();
+	try {
+		const response = await fetch(url, {
+			...options,
+			headers,
+		});
+
+		if (!response.ok) {
+			let errorDetail = "Unknown error";
+			let errorData: any = {};
+			
+			try {
+				errorData = await response.json();
+				errorDetail = errorData.detail || errorData.message || `API Error: ${response.status}`;
+			} catch {
+				errorDetail = response.statusText || `API Error: ${response.status}`;
+			}
+
+			// Enhanced error logging
+			console.error("API Request Failed:", {
+				url,
+				method: options.method || "GET",
+				status: response.status,
+				statusText: response.statusText,
+				error: errorData,
+				errorDetail,
+				hasAuth,
+			});
+
+			// Check for authentication errors
+			if (response.status === 401 || response.status === 403) {
+				console.error("Authentication failed. Token may be invalid or expired.");
+				// Clear invalid token
+				if (typeof window !== "undefined") {
+					localStorage.removeItem("access_token");
+				}
+			}
+
+			throw new Error(errorDetail);
+		}
+
+		if (response.status === 204) {
+			return null as T;
+		}
+
+		return response.json();
+	} catch (error) {
+		// Log network errors
+		if (error instanceof TypeError && error.message === "Failed to fetch") {
+			console.error("Network Error - Failed to fetch:", {
+				url,
+				method: options.method || "GET",
+				hasAuth,
+				message: "Unable to connect to the server. Please check if the backend is running.",
+			});
+			throw new Error("Network error: Unable to connect to the server. Please check if the backend is running.");
+		}
+		throw error;
+	}
 }
 
 // ============ Problems API ============
@@ -832,3 +898,329 @@ export async function getPlatformStats(): Promise<PlatformStats> {
 	return apiFetch("/social/stats");
 }
 
+
+// ============ Orchestration API (Real AI Agents) ============
+
+export interface OrchestrationProposal {
+	id: string;
+	content: string;
+	reasoning: string;
+	score: number;
+	iteration: number;
+}
+
+export interface ExploreResponse {
+	run_id: string;
+	status: string;
+	proposals: OrchestrationProposal[];
+	best_score: number;
+	total_iterations: number;
+}
+
+export interface FormalizeResponse {
+	run_id: string;
+	status: string;
+	lean_code: string;
+	imports: string[];
+	confidence: number;
+}
+
+export interface CritiqueResponse {
+	run_id: string;
+	status: string;
+	score: number;
+	feedback: string;
+	suggestions: string[];
+	issues: string[];
+}
+
+export interface VerifyResponse {
+	run_id: string;
+	status: string;
+	success: boolean;
+	log: string;
+	error?: string | null;
+}
+
+export interface PipelineStage {
+	status: string;
+	[key: string]: unknown;
+}
+
+export interface PipelineResponse {
+	run_id: string;
+	status: string;
+	stages: Record<string, PipelineStage>;
+	library_item_id?: string | null;
+	message: string;
+}
+
+export interface OrchestrationStatus {
+	available: boolean;
+	agents?: string[];
+	tools?: string[];
+	reason?: string;
+}
+
+export interface StreamEvent {
+	event: string;
+	stage?: string;
+	status?: string;
+	message?: string;
+	data?: Record<string, unknown>;
+}
+
+export async function getOrchestrationStatus(): Promise<OrchestrationStatus> {
+	return apiFetch("/orchestration/status");
+}
+
+export async function exploreContext(data: {
+	problem_id: string;
+	context: string;
+	max_iterations?: number;
+}): Promise<ExploreResponse> {
+	return apiFetch("/orchestration/explore", {
+		method: "POST",
+		body: JSON.stringify(data),
+	});
+}
+
+export async function formalizeText(data: {
+	problem_id: string;
+	text: string;
+	hints?: string[];
+}): Promise<FormalizeResponse> {
+	return apiFetch("/orchestration/formalize", {
+		method: "POST",
+		body: JSON.stringify(data),
+	});
+}
+
+export async function critiqueProposal(data: {
+	problem_id: string;
+	proposal: string;
+	context?: string;
+	goal?: string;
+}): Promise<CritiqueResponse> {
+	return apiFetch("/orchestration/critique", {
+		method: "POST",
+		body: JSON.stringify(data),
+	});
+}
+
+export async function verifyLeanCode(data: {
+	problem_id: string;
+	lean_code: string;
+}): Promise<VerifyResponse> {
+	return apiFetch("/orchestration/verify", {
+		method: "POST",
+		body: JSON.stringify(data),
+	});
+}
+
+export async function runFullPipeline(data: {
+	problem_id: string;
+	context: string;
+	auto_publish?: boolean;
+}): Promise<PipelineResponse> {
+	return apiFetch("/orchestration/pipeline", {
+		method: "POST",
+		body: JSON.stringify(data),
+	});
+}
+
+export function streamPipeline(
+	data: { problem_id: string; context: string; auto_publish?: boolean },
+	onEvent: (event: StreamEvent) => void,
+	onError?: (error: Error) => void,
+): AbortController {
+	const controller = new AbortController();
+	const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
+	
+	fetch(`${API_BASE_URL}/api/orchestration/pipeline/stream`, {
+		method: "POST",
+		headers: {
+			"Content-Type": "application/json",
+			...(token ? { Authorization: `Bearer ${token}` } : {}),
+		},
+		body: JSON.stringify(data),
+		signal: controller.signal,
+	})
+		.then(async (response) => {
+			if (!response.ok) {
+				throw new Error(`Stream failed: ${response.status}`);
+			}
+			
+			const reader = response.body?.getReader();
+			if (!reader) {
+				throw new Error("No response body");
+			}
+			
+			const decoder = new TextDecoder();
+			let buffer = "";
+			
+			while (true) {
+				const { done, value } = await reader.read();
+				if (done) break;
+				
+				buffer += decoder.decode(value, { stream: true });
+				const lines = buffer.split("\n");
+				buffer = lines.pop() || "";
+				
+				for (const line of lines) {
+					if (line.startsWith("data: ")) {
+						try {
+							const event = JSON.parse(line.slice(6));
+							onEvent(event);
+						} catch (e) {
+							// Skip invalid JSON
+						}
+					}
+				}
+			}
+		})
+		.catch((error) => {
+			if (error.name !== "AbortError") {
+				onError?.(error);
+			}
+		});
+	
+	return controller;
+}
+
+// ============ Document Section Types ============
+export interface DocSection {
+	id: string;
+	workspace_file_id: string;
+	slug: string;
+	title: string;
+	level: number;
+	order_index: number;
+	content_preview: string | null;
+	created_at: string;
+	updated_at: string;
+	anchor_count?: number;
+}
+
+export interface DocAnchor {
+	id: string;
+	section_id: string;
+	library_item_id: string;
+	library_item_updated_at: string;
+	is_stale: boolean;
+	position_hint: string | null;
+	created_at: string;
+	library_item?: LibraryItem;
+}
+
+export interface CommitToDocumentRequest {
+	node_ids: string[];
+	workspace_file_id?: string;
+	workspace_file_path?: string;
+	section_title: string;
+	format?: "markdown" | "latex";
+}
+
+export interface CommitToDocumentResponse {
+	section: DocSection;
+	anchors: DocAnchor[];
+	generated_content: string;
+}
+
+// ============ Document Section Functions ============
+
+export async function getDocumentSections(workspaceFileId: string): Promise<DocSection[]> {
+	return apiFetch(`/documents/files/${workspaceFileId}/sections`);
+}
+
+export async function createDocumentSection(data: {
+	workspace_file_id: string;
+	slug?: string;
+	title: string;
+	level?: number;
+	order_index?: number;
+	content_preview?: string;
+}): Promise<DocSection> {
+	return apiFetch("/documents/sections", {
+		method: "POST",
+		body: JSON.stringify(data),
+	});
+}
+
+export async function updateDocumentSection(
+	sectionId: string,
+	data: {
+		slug?: string;
+		title?: string;
+		level?: number;
+		order_index?: number;
+		content_preview?: string;
+	}
+): Promise<DocSection> {
+	return apiFetch(`/documents/sections/${sectionId}`, {
+		method: "PATCH",
+		body: JSON.stringify(data),
+	});
+}
+
+export async function deleteDocumentSection(sectionId: string): Promise<void> {
+	return apiFetch(`/documents/sections/${sectionId}`, {
+		method: "DELETE",
+	});
+}
+
+// ============ Document Anchor Functions ============
+
+export async function getSectionAnchors(sectionId: string): Promise<DocAnchor[]> {
+	return apiFetch(`/documents/sections/${sectionId}/anchors`);
+}
+
+export async function getNodeAnchors(libraryItemId: string): Promise<DocAnchor[]> {
+	return apiFetch(`/documents/nodes/${libraryItemId}/anchors`);
+}
+
+export async function createDocAnchor(data: {
+	section_id: string;
+	library_item_id: string;
+	position_hint?: string;
+}): Promise<DocAnchor> {
+	return apiFetch("/documents/anchors", {
+		method: "POST",
+		body: JSON.stringify(data),
+	});
+}
+
+export async function deleteDocAnchor(anchorId: string): Promise<void> {
+	return apiFetch(`/documents/anchors/${anchorId}`, {
+		method: "DELETE",
+	});
+}
+
+export async function refreshAnchor(anchorId: string): Promise<DocAnchor> {
+	return apiFetch(`/documents/anchors/${anchorId}/refresh`, {
+		method: "POST",
+	});
+}
+
+// ============ Commit to Document ============
+
+export async function commitToDocument(
+	problemId: string,
+	data: CommitToDocumentRequest
+): Promise<CommitToDocumentResponse> {
+	return apiFetch(`/documents/problems/${problemId}/commit-to-document`, {
+		method: "POST",
+		body: JSON.stringify(data),
+	});
+}
+
+export async function getNodeAnchorStatus(nodeIds: string[]): Promise<{
+	node_id: string;
+	has_anchors: boolean;
+	is_stale: boolean;
+	anchor_count: number;
+}[]> {
+	const params = new URLSearchParams();
+	nodeIds.forEach(id => params.append("node_ids", id));
+	return apiFetch(`/documents/nodes/anchor-status?${params.toString()}`);
+}

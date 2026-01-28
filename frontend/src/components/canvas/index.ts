@@ -9,6 +9,11 @@ export { CanvasSidebar } from "./CanvasSidebar";
 export { AgentIntelligencePanel } from "./AgentIntelligencePanel";
 export { AddNodeModal, type NewNodeData } from "./AddNodeModal";
 export { EditNodeModal } from "./EditNodeModal";
+export { NodeDetailPanel } from "./NodeDetailPanel";
+export { CanvasAIOverlay } from "./CanvasAIOverlay";
+export { InlineNodeEditor, type QuickNodeData } from "./InlineNodeEditor";
+export { CanvasContextMenu } from "./CanvasContextMenu";
+export { CommitToDocumentModal } from "./CommitToDocumentModal";
 
 // Types
 export * from "./types";

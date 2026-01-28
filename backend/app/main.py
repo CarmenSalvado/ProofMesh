@@ -12,6 +12,8 @@ from app.api import (
     social_router,
     realtime_router,
 )
+from app.api.orchestration import router as orchestration_router
+from app.api.documents import router as documents_router
 
 settings = get_settings()
 
@@ -46,6 +48,8 @@ app.include_router(library_router)
 app.include_router(workspaces_router)
 app.include_router(agents_router)
 app.include_router(social_router)
+app.include_router(orchestration_router)
+app.include_router(documents_router, prefix="/api/documents", tags=["documents"])
 
 # WebSocket Router
 app.include_router(realtime_router)

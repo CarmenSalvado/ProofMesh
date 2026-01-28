@@ -7,6 +7,7 @@ interface TooltipProps {
   children: ReactNode;
   position?: "top" | "bottom" | "left" | "right";
   delay?: number;
+  flip?: boolean;
 }
 
 export function Tooltip({
@@ -14,9 +15,11 @@ export function Tooltip({
   children,
   position = "top",
   delay = 200,
+  flip = true,
 }: TooltipProps) {
   const [isVisible, setIsVisible] = useState(false);
   const [coords, setCoords] = useState({ x: 0, y: 0 });
+  const [actualPosition, setActualPosition] = useState<"top" | "bottom" | "left" | "right">(position);
   const triggerRef = useRef<HTMLDivElement>(null);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -37,10 +40,21 @@ export function Tooltip({
     if (!isVisible || !triggerRef.current) return;
 
     const rect = triggerRef.current.getBoundingClientRect();
+    const padding = 8;
+    const edgeBuffer = 32;
+    let finalPosition: "top" | "bottom" | "left" | "right" = position;
+
+    if (flip) {
+      if (position === "top" && rect.top < edgeBuffer) finalPosition = "bottom";
+      if (position === "bottom" && rect.bottom > window.innerHeight - edgeBuffer) finalPosition = "top";
+      if (position === "left" && rect.left < edgeBuffer) finalPosition = "right";
+      if (position === "right" && rect.right > window.innerWidth - edgeBuffer) finalPosition = "left";
+    }
+
     let x = 0;
     let y = 0;
 
-    switch (position) {
+    switch (finalPosition) {
       case "top":
         x = rect.left + rect.width / 2;
         y = rect.top - 8;
@@ -59,14 +73,19 @@ export function Tooltip({
         break;
     }
 
+    // Clamp to viewport bounds
+    x = Math.max(padding, Math.min(x, window.innerWidth - padding));
+    y = Math.max(padding, Math.min(y, window.innerHeight - padding));
+
+    setActualPosition(finalPosition);
     setCoords({ x, y });
-  }, [isVisible, position]);
+  }, [isVisible, position, flip]);
 
   const tooltipStyle: React.CSSProperties = {
     position: "fixed",
     left: coords.x,
     top: coords.y,
-    transform: getTransform(position),
+    transform: getTransform(actualPosition),
     zIndex: 9999,
   };
 
@@ -90,7 +109,7 @@ export function Tooltip({
         >
           {content}
           <div
-            className={`absolute w-2 h-2 bg-neutral-900 rotate-45 ${getArrowPosition(position)}`}
+            className={`absolute w-2 h-2 bg-neutral-900 rotate-45 ${getArrowPosition(actualPosition)}`}
           />
         </div>
       )}

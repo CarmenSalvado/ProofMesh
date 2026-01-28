@@ -4,136 +4,124 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
 import { useTheme } from "@/hooks/useTheme";
-import { WorkspaceSidebar } from "@/components/layout/WorkspaceSidebar";
-import { WorkspaceHeader } from "@/components/layout/WorkspaceHeader";
+import { DashboardNavbar } from "@/components/layout/DashboardNavbar";
 
 export default function SettingsPage() {
-	const { user, isLoading, logout } = useAuth();
-	const { theme, setTheme } = useTheme();
-	const router = useRouter();
-	const [username, setUsername] = useState("");
-	const [email, setEmail] = useState("");
+  const { user, isLoading, logout } = useAuth();
+  const { theme, setTheme } = useTheme();
+  const router = useRouter();
+  const [username, setUsername] = useState("");
+  const [email, setEmail] = useState("");
 
-	useEffect(() => {
-		if (!isLoading && !user) {
-			router.push("/login");
-		}
-		if (user) {
-			setUsername(user.username);
-			setEmail(user.email);
-		}
+  useEffect(() => {
+    if (!isLoading && !user) {
+      router.push("/login");
+    }
+    if (user) {
+      setUsername(user.username);
+      setEmail(user.email);
+    }
+  }, [isLoading, user, router]);
 
-	}, [isLoading, user, router]);
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-neutral-50">
+        <div className="animate-spin rounded-full h-6 w-6 border-2 border-neutral-900 border-t-transparent" />
+      </div>
+    );
+  }
 
-	if (isLoading) {
-		return (
-			<div className="min-h-screen flex items-center justify-center bg-[var(--bg-primary)]">
-				<div className="animate-spin rounded-full h-6 w-6 border-2 border-[var(--text-primary)] border-t-transparent" />
-			</div>
-		);
-	}
+  if (!user) return null;
 
-	if (!user) return null;
+  return (
+    <div className="min-h-screen bg-neutral-50 text-neutral-900 flex flex-col">
+      <DashboardNavbar />
 
-	return (
-		<div className="flex h-screen overflow-hidden bg-[var(--bg-primary)]">
-			<WorkspaceSidebar />
+      <div className="flex-1 overflow-y-auto">
+        <div className="max-w-2xl mx-auto px-8 py-12">
+          <div className="mb-8">
+            <h1 className="text-2xl font-semibold text-neutral-900 mb-2">
+              Settings
+            </h1>
+            <p className="text-sm text-neutral-500">
+              Manage your account preferences
+            </p>
+          </div>
 
-			<main className="flex-1 flex flex-col h-full">
-				<WorkspaceHeader
-					breadcrumbs={[
-						{ label: "Dashboard", href: "/dashboard" },
-						{ label: "Settings" },
-					]}
-					status={null}
-				/>
+          {/* Profile Section */}
+          <div className="bg-white border border-neutral-200 rounded-xl p-6 mb-6 shadow-sm">
+            <h2 className="text-sm font-medium text-neutral-900 mb-4">Profile</h2>
 
-				<div className="flex-1 overflow-y-auto bg-[var(--bg-secondary)]">
-					<div className="max-w-2xl mx-auto px-8 py-12">
-						<div className="mb-8">
-							<h1 className="text-2xl font-medium tracking-tight text-[var(--text-primary)] mb-2">
-								Settings
-							</h1>
-							<p className="text-sm text-[var(--text-muted)]">
-								Manage your account preferences
-							</p>
-						</div>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-neutral-600 mb-2">
+                  Username
+                </label>
+                <input
+                  type="text"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg border border-neutral-200 bg-neutral-50 text-sm text-neutral-900 opacity-60 cursor-not-allowed"
+                  disabled
+                />
+                <p className="text-[10px] text-neutral-400 mt-1">Username cannot be changed</p>
+              </div>
 
-						{/* Profile Section */}
-						<div className="bg-[var(--bg-primary)] border border-[var(--border-primary)] rounded-xl p-6 mb-6">
-							<h2 className="text-sm font-medium text-[var(--text-primary)] mb-4">Profile</h2>
+              <div>
+                <label className="block text-xs font-medium text-neutral-600 mb-2">
+                  Email
+                </label>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg border border-neutral-200 bg-neutral-50 text-sm text-neutral-900 opacity-60 cursor-not-allowed"
+                  disabled
+                />
+              </div>
+            </div>
+          </div>
 
-							<div className="space-y-4">
-								<div>
-									<label className="block text-xs font-medium text-[var(--text-secondary)] mb-2">
-										Username
-									</label>
-									<input
-										type="text"
-										value={username}
-										onChange={(e) => setUsername(e.target.value)}
-										className="w-full opacity-60 cursor-not-allowed"
-										disabled
-									/>
-									<p className="text-[10px] text-[var(--text-faint)] mt-1">Username cannot be changed</p>
-								</div>
+          {/* Appearance Section */}
+          <div className="bg-white border border-neutral-200 rounded-xl p-6 mb-6 shadow-sm">
+            <h2 className="text-sm font-medium text-neutral-900 mb-4">Appearance</h2>
 
-								<div>
-									<label className="block text-xs font-medium text-[var(--text-secondary)] mb-2">
-										Email
-									</label>
-									<input
-										type="email"
-										value={email}
-										onChange={(e) => setEmail(e.target.value)}
-										className="w-full opacity-60 cursor-not-allowed"
-										disabled
-									/>
-								</div>
-							</div>
-						</div>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-neutral-700">Theme</p>
+                <p className="text-xs text-neutral-400">Select your preferred theme</p>
+              </div>
+              <select
+                value={theme}
+                onChange={(e) => setTheme(e.target.value as "light" | "dark" | "system")}
+                className="text-sm px-3 py-2 rounded-lg border border-neutral-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+              >
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+                <option value="system">System</option>
+              </select>
+            </div>
+          </div>
 
-						{/* Appearance Section */}
-						<div className="bg-[var(--bg-primary)] border border-[var(--border-primary)] rounded-xl p-6 mb-6">
-							<h2 className="text-sm font-medium text-[var(--text-primary)] mb-4">Appearance</h2>
+          {/* Danger Zone */}
+          <div className="bg-white border border-red-200 rounded-xl p-6 shadow-sm">
+            <h2 className="text-sm font-medium text-red-600 mb-4">Danger Zone</h2>
 
-							<div className="flex items-center justify-between">
-								<div>
-									<p className="text-sm text-[var(--text-secondary)]">Theme</p>
-									<p className="text-xs text-[var(--text-faint)]">Select your preferred theme</p>
-								</div>
-								<select
-									value={theme}
-									onChange={(e) => setTheme(e.target.value as "light" | "dark" | "system")}
-									className="text-sm w-auto"
-								>
-									<option value="light">Light</option>
-									<option value="dark">Dark</option>
-									<option value="system">System</option>
-								</select>
-							</div>
-						</div>
-
-						{/* Danger Zone */}
-						<div className="bg-[var(--bg-primary)] border border-[var(--error)] rounded-xl p-6">
-							<h2 className="text-sm font-medium text-[var(--error)] mb-4">Danger Zone</h2>
-
-							<div className="flex items-center justify-between">
-								<div>
-									<p className="text-sm text-[var(--text-secondary)]">Sign Out</p>
-									<p className="text-xs text-[var(--text-faint)]">Sign out of your account</p>
-								</div>
-								<button
-									onClick={logout}
-									className="px-3 py-1.5 bg-[var(--error-bg)] text-[var(--error)] text-xs font-medium rounded hover:opacity-80 transition-opacity"
-								>
-									Sign Out
-								</button>
-							</div>
-						</div>
-					</div>
-				</div>
-			</main>
-		</div>
-	);
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-neutral-700">Sign Out</p>
+                <p className="text-xs text-neutral-400">Sign out of your account</p>
+              </div>
+              <button
+                onClick={logout}
+                className="px-4 py-2 bg-red-50 text-red-600 text-sm font-medium rounded-lg hover:bg-red-100 transition-colors"
+              >
+                Sign Out
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }

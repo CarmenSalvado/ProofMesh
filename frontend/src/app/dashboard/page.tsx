@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth";
@@ -46,6 +46,10 @@ import {
   Sparkles,
   Filter,
   RefreshCw,
+  User,
+  Settings,
+  HelpCircle,
+  LogOut,
 } from "lucide-react";
 
 const FEED_META: Record<string, { label: string; color: string }> = {
@@ -80,8 +84,10 @@ function getInitials(name: string) {
 }
 
 export default function DashboardPage() {
-  const { user, isLoading: authLoading } = useAuth();
+  const { user, isLoading: authLoading, logout } = useAuth();
   const router = useRouter();
+  const [userDropdownOpen, setUserDropdownOpen] = useState(false);
+  const userDropdownRef = useRef<HTMLDivElement>(null);
   const [problems, setProblems] = useState<Problem[]>([]);
   const [feedItems, setFeedItems] = useState<SocialFeedItem[]>([]);
   const [suggestions, setSuggestions] = useState<SocialUser[]>([]);
@@ -98,6 +104,16 @@ export default function DashboardPage() {
       router.push("/login");
     }
   }, [authLoading, user, router]);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (userDropdownRef.current && !userDropdownRef.current.contains(event.target as Node)) {
+        setUserDropdownOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   const loadData = useCallback(async () => {
     if (!user) return;
@@ -205,12 +221,62 @@ export default function DashboardPage() {
           <div className="flex items-center gap-3">
             <NotificationsDropdown />
             <div className="h-4 w-px bg-neutral-200 mx-1" />
-            <button className="flex items-center gap-2 group">
-              <div className="w-6 h-6 rounded-full bg-indigo-100 border border-neutral-200 group-hover:border-indigo-500 transition-colors flex items-center justify-center text-[10px] font-bold text-indigo-700">
-                {getInitials(user.username)}
-              </div>
-              <ChevronDown className="w-3 h-3 text-neutral-400" />
-            </button>
+            <div className="relative" ref={userDropdownRef}>
+              <button
+                onClick={() => setUserDropdownOpen(!userDropdownOpen)}
+                className="flex items-center gap-2 group p-1 hover:bg-neutral-50 rounded-md transition-colors"
+              >
+                <div className="w-6 h-6 rounded-full bg-indigo-100 border border-neutral-200 group-hover:border-indigo-500 transition-colors flex items-center justify-center text-[10px] font-bold text-indigo-700">
+                  {getInitials(user.username)}
+                </div>
+                <ChevronDown className={`w-3 h-3 text-neutral-400 transition-transform ${userDropdownOpen ? "rotate-180" : ""}`} />
+              </button>
+
+              {userDropdownOpen && (
+                <div className="absolute right-0 mt-2 w-56 bg-white border border-neutral-200 rounded-lg shadow-lg py-1 z-50">
+                  <div className="px-3 py-2 border-b border-neutral-100">
+                    <p className="text-sm font-medium text-neutral-900">{user.username}</p>
+                    <p className="text-xs text-neutral-500">@{user.username.toLowerCase()}</p>
+                  </div>
+                  <Link
+                    href="/profile"
+                    className="flex items-center gap-2 px-3 py-2 text-sm text-neutral-700 hover:bg-neutral-50 transition-colors"
+                    onClick={() => setUserDropdownOpen(false)}
+                  >
+                    <User className="w-4 h-4 text-neutral-400" />
+                    Your Profile
+                  </Link>
+                  <Link
+                    href="/settings"
+                    className="flex items-center gap-2 px-3 py-2 text-sm text-neutral-700 hover:bg-neutral-50 transition-colors"
+                    onClick={() => setUserDropdownOpen(false)}
+                  >
+                    <Settings className="w-4 h-4 text-neutral-400" />
+                    Settings
+                  </Link>
+                  <Link
+                    href="/help"
+                    className="flex items-center gap-2 px-3 py-2 text-sm text-neutral-700 hover:bg-neutral-50 transition-colors"
+                    onClick={() => setUserDropdownOpen(false)}
+                  >
+                    <HelpCircle className="w-4 h-4 text-neutral-400" />
+                    Help & Docs
+                  </Link>
+                  <div className="border-t border-neutral-100 mt-1 pt-1">
+                    <button
+                      onClick={() => {
+                        setUserDropdownOpen(false);
+                        logout();
+                      }}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors"
+                    >
+                      <LogOut className="w-4 h-4" />
+                      Sign out
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </nav>

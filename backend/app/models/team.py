@@ -74,7 +74,12 @@ class TeamMember(Base):
     )
     
     role: Mapped[TeamRole] = mapped_column(
-        ENUM(TeamRole, name="team_role", create_type=True),
+        ENUM(
+            TeamRole,
+            name="team_role",
+            create_type=True,
+            values_callable=lambda enum_cls: [e.value for e in enum_cls],
+        ),
         nullable=False,
         default=TeamRole.MEMBER
     )

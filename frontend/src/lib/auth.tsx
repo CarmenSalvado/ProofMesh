@@ -110,7 +110,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 		router.push("/");
 	};
 
-	const getToken = () => localStorage.getItem("access_token");
+	const getToken = () => {
+		if (typeof window !== "undefined") {
+			return localStorage.getItem("access_token");
+		}
+		return null;
+	};
 
 	return (
 		<AuthContext.Provider

@@ -39,7 +39,12 @@ class Star(Base):
     
     # Target type and ID (polymorphic)
     target_type: Mapped[StarTargetType] = mapped_column(
-        ENUM(StarTargetType, name="star_target_type", create_type=True),
+        ENUM(
+            StarTargetType,
+            name="star_target_type",
+            create_type=True,
+            values_callable=lambda enum_cls: [e.value for e in enum_cls],
+        ),
         nullable=False
     )
     target_id: Mapped[uuid.UUID] = mapped_column(

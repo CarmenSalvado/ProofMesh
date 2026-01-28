@@ -56,7 +56,12 @@ class Notification(Base):
     
     # Notification type
     type: Mapped[NotificationType] = mapped_column(
-        ENUM(NotificationType, name="notification_type", create_type=True),
+        ENUM(
+            NotificationType,
+            name="notification_type",
+            create_type=True,
+            values_callable=lambda enum_cls: [e.value for e in enum_cls],
+        ),
         nullable=False
     )
     

@@ -66,3 +66,4 @@ class LibraryItem(Base):
     
     # Relationships
     problem: Mapped["Problem"] = relationship("Problem", back_populates="library_items")
+    doc_anchors: Mapped[list["DocAnchor"]] = relationship("DocAnchor", back_populates="library_item", cascade="all, delete-orphan")

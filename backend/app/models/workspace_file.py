@@ -51,3 +51,4 @@ class WorkspaceFile(Base):
     )
 
     problem: Mapped["Problem"] = relationship("Problem", back_populates="workspace_files")
+    sections: Mapped[list["DocSection"]] = relationship("DocSection", back_populates="workspace_file", cascade="all, delete-orphan")

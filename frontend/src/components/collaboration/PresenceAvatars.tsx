@@ -1,7 +1,6 @@
 "use client";
 
 import { useOptionalCollaboration, UserPresence } from "./CollaborationProvider";
-import { Tooltip } from "@/components/ui/Tooltip";
 
 interface PresenceAvatarsProps {
   maxDisplay?: number;
@@ -69,15 +68,16 @@ interface UserAvatarProps {
 
 function UserAvatar({ user, showName = false }: UserAvatarProps) {
   const initials = getInitials(user.display_name || user.username);
+  const displayName = user.display_name || user.username;
   
   return (
-    <Tooltip content={user.display_name || user.username}>
-      <div className="relative group">
-        <div
-          className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium text-white border-2 border-white transition-transform hover:scale-110 hover:z-10 cursor-default"
-          style={{ backgroundColor: user.avatar_color }}
-        >
-          {initials}
+    <div className="relative group">
+      <div
+        className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium text-white border-2 border-white cursor-default"
+        style={{ backgroundColor: user.avatar_color }}
+        title={displayName}
+      >
+        {initials}
         </div>
         
         {/* Active file indicator */}
@@ -87,11 +87,10 @@ function UserAvatar({ user, showName = false }: UserAvatarProps) {
         
         {showName && (
           <span className="ml-2 text-sm text-neutral-700">
-            {user.display_name || user.username}
+            {displayName}
           </span>
         )}
       </div>
-    </Tooltip>
   );
 }
 

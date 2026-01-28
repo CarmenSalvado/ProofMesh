@@ -1,30 +1,44 @@
 "use client";
 
 import { useCallback } from "react";
-import { Bot, MessageSquare, Link2 } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Bot, MessageSquare, Link2, ExternalLink, FileText, AlertCircle } from "lucide-react";
 import { CanvasNode, NODE_TYPE_CONFIG, STATUS_CONFIG } from "./types";
 
 interface CanvasNodeItemProps {
   node: CanvasNode;
   isSelected: boolean;
+  isMultiSelected?: boolean;
   isDragging?: boolean;
   isConnecting?: boolean;
+  problemId?: string;
+  anchorStatus?: { hasAnchors: boolean; isStale: boolean; count: number };
   onMouseDown: (e: React.MouseEvent) => void;
   onMouseUp: (e: React.MouseEvent) => void;
   onDoubleClick?: (e: React.MouseEvent) => void;
   onConnectionStart?: (e: React.MouseEvent) => void;
+  onContextMenu?: (e: React.MouseEvent) => void;
+  onOpenInEditor?: (node: CanvasNode) => void;
+  onOpenComments?: (nodeId: string) => void;
 }
 
 export function CanvasNodeItem({
   node,
   isSelected,
+  isMultiSelected = false,
   isDragging = false,
   isConnecting = false,
+  problemId,
+  anchorStatus,
   onMouseDown,
   onMouseUp,
   onDoubleClick,
   onConnectionStart,
+  onContextMenu,
+  onOpenInEditor,
+  onOpenComments,
 }: CanvasNodeItemProps) {
+  const router = useRouter();
   const typeConfig = NODE_TYPE_CONFIG[node.type] || NODE_TYPE_CONFIG.NOTE;
   const statusConfig = STATUS_CONFIG[node.status] || STATUS_CONFIG.DRAFT;
 
@@ -39,13 +53,25 @@ export function CanvasNodeItem({
     onConnectionStart?.(e);
   }, [onConnectionStart]);
 
+  const handleOpenInEditor = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (onOpenInEditor) {
+      onOpenInEditor(node);
+    } else if (problemId) {
+      // Deep link to lab view with this node's content
+      router.push(`/problems/${problemId}/lab?nodeId=${node.id}`);
+    }
+  }, [node, problemId, router, onOpenInEditor]);
+
   return (
     <div
       data-node-id={node.id}
-      className={`absolute rounded-xl border-2 shadow-sm cursor-pointer group select-none
+      className={`absolute rounded-xl border cursor-pointer group select-none
         ${typeConfig.bgColor} ${typeConfig.borderColor}
-        ${isSelected ? "ring-2 ring-indigo-500 ring-offset-2 shadow-lg scale-[1.02]" : "hover:shadow-md"}
-        ${isDragging ? "shadow-xl scale-[1.03] cursor-grabbing z-50" : ""}
+        ${isSelected ? "ring-2 ring-indigo-500 ring-offset-1 shadow-lg z-40" : "hover:shadow-md"}
+        ${isMultiSelected ? "ring-2 ring-emerald-500 ring-offset-1 z-30" : ""}
+        ${isDragging ? "shadow-xl cursor-grabbing z-50" : ""}
         ${isConnecting ? "ring-2 ring-emerald-500" : ""}
       `}
       style={{
@@ -59,17 +85,41 @@ export function CanvasNodeItem({
       }}
       onMouseDown={handleMouseDown}
       onMouseUp={onMouseUp}
-      onDoubleClick={onDoubleClick}
+      onDoubleClick={(e) => {
+        e.stopPropagation();
+        onDoubleClick?.(e);
+      }}
+      onClick={(e) => e.stopPropagation()}
+      onContextMenu={onContextMenu}
       draggable={false}
     >
+      {/* Document Anchor Badge */}
+      {anchorStatus?.hasAnchors && (
+        <div 
+          className={`absolute -top-2 -right-2 z-50 flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium shadow-sm ${
+            anchorStatus.isStale 
+              ? "bg-amber-100 text-amber-700 border border-amber-300" 
+              : "bg-emerald-100 text-emerald-700 border border-emerald-300"
+          }`}
+          title={anchorStatus.isStale ? "Document anchor is outdated" : `Linked to ${anchorStatus.count} document section(s)`}
+        >
+          {anchorStatus.isStale ? (
+            <AlertCircle className="w-3 h-3" />
+          ) : (
+            <FileText className="w-3 h-3" />
+          )}
+          <span>{anchorStatus.count}</span>
+        </div>
+      )}
+      
       {/* Node Header */}
-      <div className={`px-4 py-3 border-b ${typeConfig.borderColor} flex items-center justify-between`}>
+      <div className={`px-4 py-2.5 border-b ${typeConfig.borderColor} flex items-center justify-between rounded-t-xl`}>
         <div className="flex items-center gap-2">
           <span className={`text-[10px] font-bold uppercase tracking-wider ${typeConfig.color}`}>
             {typeConfig.label}
           </span>
           {node.id && (
-            <span className="text-[9px] font-mono text-neutral-400">
+            <span className="text-[9px] font-mono text-neutral-400/80">
               #{node.id.slice(0, 6)}
             </span>
           )}
@@ -106,11 +156,11 @@ export function CanvasNodeItem({
       </div>
 
       {/* Node Footer */}
-      <div className={`px-4 py-2 border-t ${typeConfig.borderColor} flex items-center justify-between bg-white/30`}>
+      <div className={`px-4 py-2 border-t ${typeConfig.borderColor} flex items-center justify-between rounded-b-xl`}>
         <div className="flex items-center gap-2">
           {/* Agent Badge */}
           {node.agentId && (
-            <div className="flex items-center gap-1 text-[10px] text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded">
+            <div className="flex items-center gap-1 text-[10px] text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded-full">
               <Bot className="w-3 h-3" />
               <span className="font-medium">Agent</span>
             </div>
@@ -127,15 +177,30 @@ export function CanvasNodeItem({
         {/* Dependencies indicator */}
         <div className="flex items-center gap-2">
           {node.dependencies && node.dependencies.length > 0 && (
-            <div className="flex items-center gap-1 text-[10px] text-neutral-400">
+            <div className="flex items-center gap-1 text-[10px] text-neutral-400 bg-white/50 px-1.5 py-0.5 rounded-full">
               <Link2 className="w-3 h-3" />
               <span>{node.dependencies.length}</span>
             </div>
           )}
           
           {/* Actions on hover */}
-          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-            <button className="p-1 text-neutral-400 hover:text-neutral-600 hover:bg-white/50 rounded">
+          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100">
+            <button 
+              className="p-1.5 text-neutral-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+              onClick={handleOpenInEditor}
+              title="Open in Editor"
+            >
+              <ExternalLink className="w-3 h-3" />
+            </button>
+            <button 
+              className="p-1.5 text-neutral-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onOpenComments?.(node.id);
+              }}
+              title="Comments"
+            >
               <MessageSquare className="w-3 h-3" />
             </button>
           </div>
@@ -144,14 +209,14 @@ export function CanvasNodeItem({
 
       {/* Connection Handle - Bottom */}
       <div 
-        className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-4 h-4 bg-white border-2 border-neutral-300 rounded-full opacity-0 group-hover:opacity-100 transition-opacity cursor-crosshair hover:border-indigo-500 hover:bg-indigo-50 hover:scale-125 z-10"
+        className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-4 h-4 bg-white border-2 border-neutral-300 rounded-full opacity-0 group-hover:opacity-100 cursor-crosshair hover:border-emerald-500 hover:bg-emerald-50 z-10"
         title="Drag to connect"
         onMouseDown={handleConnectionHandleMouseDown}
       />
       
       {/* Connection Handle - Top */}
       <div 
-        className="absolute -top-2 left-1/2 -translate-x-1/2 w-4 h-4 bg-white border-2 border-neutral-300 rounded-full opacity-0 group-hover:opacity-100 transition-opacity cursor-crosshair hover:border-indigo-500 hover:bg-indigo-50 hover:scale-125 z-10"
+        className="absolute -top-2 left-1/2 -translate-x-1/2 w-4 h-4 bg-white border-2 border-neutral-300 rounded-full opacity-0 group-hover:opacity-100 cursor-crosshair hover:border-emerald-500 hover:bg-emerald-50 z-10"
         title="Connect from here"
         onMouseDown={handleConnectionHandleMouseDown}
       />

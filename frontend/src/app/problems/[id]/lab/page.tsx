@@ -265,6 +265,16 @@ export default function LabPage({ params }: PageProps) {
     loadFileTree();
   }, [loadWorkspace, loadFileTree]);
 
+  // Handle deep link from canvas - nodeId query param
+  useEffect(() => {
+    const nodeId = searchParams.get("nodeId");
+    if (nodeId && doc !== null && editorRef.current) {
+      // Scroll to top and show a toast/notification about the incoming context
+      // The editor is already focused when ready, so we just need to ensure visibility
+      console.log("Deep link from canvas, nodeId:", nodeId);
+    }
+  }, [searchParams, doc]);
+
   useEffect(() => {
     if (!fileTree || workspacePath) return;
     const requested = searchParams.get("file");
