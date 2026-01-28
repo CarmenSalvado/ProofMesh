@@ -1,11 +1,14 @@
 .PHONY: dev up down logs migrate shell-backend shell-frontend clean
 
-# Start all services in development mode
-dev: up migrate
+# Start all services in development mode (migrations run automatically via entrypoint)
+dev: up
 	@echo "ProofMesh is running!"
 	@echo "  Frontend: http://localhost:3000"
 	@echo "  Backend:  http://localhost:8080"
 	@echo "  API Docs: http://localhost:8080/docs"
+	@echo ""
+	@echo "Migrations run automatically on backend startup."
+	@echo "Check logs with: make logs-backend"
 
 # Start containers
 up:
@@ -25,9 +28,14 @@ logs-backend:
 logs-frontend:
 	docker compose logs -f frontend
 
-# Run database migrations
+# Run database migrations (also runs automatically on backend start)
 migrate:
 	docker compose exec backend alembic upgrade head
+
+# Check migration status
+migrate-status:
+	docker compose exec backend alembic current
+	docker compose exec backend alembic heads
 
 # Generate new migration
 migration:

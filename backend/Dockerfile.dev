@@ -20,8 +20,12 @@ COPY alembic/ alembic/
 # Copy app code (will be overwritten by volume mount)
 COPY app/ app/
 
+# Copy and setup entrypoint script
+COPY scripts/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
 # Expose port
 EXPOSE 8000
 
-# Run with hot-reload
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+# Run entrypoint (handles migrations + app start)
+CMD ["/entrypoint.sh"]
