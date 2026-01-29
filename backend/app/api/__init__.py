@@ -4,6 +4,7 @@ from app.api.workspaces import router as workspaces_router
 from app.api.agents import router as agents_router
 from app.api.social import router as social_router
 from app.api.realtime import router as realtime_router
+from app.api.latex import router as latex_router
 
 __all__ = [
     "problems_router",
@@ -12,4 +13,5 @@ __all__ = [
     "agents_router",
     "social_router",
     "realtime_router",
+    "latex_router",
 ]

@@ -302,6 +302,42 @@ export interface WorkspaceContent {
 	content: string | WorkspaceContent[] | null;
 }
 
+// ============ LaTeX API ============
+
+export interface LatexFileInfo {
+	path: string;
+	size?: number | null;
+	last_modified?: string | null;
+	content_type?: string | null;
+}
+
+export interface LatexFileListResponse {
+	files: LatexFileInfo[];
+}
+
+export interface LatexFileResponse {
+	path: string;
+	content?: string | null;
+	content_base64?: string | null;
+	content_type?: string | null;
+	is_binary: boolean;
+}
+
+export interface LatexFileWrite {
+	content?: string | null;
+	content_base64?: string | null;
+	content_type?: string | null;
+}
+
+export interface LatexCompileResponse {
+	status: string;
+	log: string;
+	pdf_key?: string | null;
+	log_key?: string | null;
+	meta_key?: string | null;
+	duration_ms?: number | null;
+}
+
 // Helper to get auth headers
 function getAuthHeaders(): HeadersInit {
 	if (typeof window === "undefined") return {};
@@ -652,6 +688,88 @@ export async function deleteWorkspaceContent(
 	return apiFetch(`/workspaces/${problemId}/contents/${encodePath(path)}`, {
 		method: "DELETE",
 	});
+}
+
+// ============ LaTeX Workspace API ============
+
+export async function listLatexFiles(problemId: string): Promise<LatexFileListResponse> {
+	return apiFetch(`/latex/${problemId}/files`);
+}
+
+export async function getLatexFile(
+	problemId: string,
+	path: string
+): Promise<LatexFileResponse> {
+	return apiFetch(`/latex/${problemId}/files/${encodePath(path)}`);
+}
+
+export async function putLatexFile(
+	problemId: string,
+	path: string,
+	payload: LatexFileWrite
+): Promise<LatexFileResponse> {
+	return apiFetch(`/latex/${problemId}/files/${encodePath(path)}`, {
+		method: "PUT",
+		body: JSON.stringify(payload),
+	});
+}
+
+export async function deleteLatexFile(problemId: string, path: string): Promise<void> {
+	return apiFetch(`/latex/${problemId}/files/${encodePath(path)}`, {
+		method: "DELETE",
+	});
+}
+
+export async function deleteLatexPath(
+	problemId: string,
+	path: string,
+	recursive = false
+): Promise<void> {
+	const query = recursive ? "?recursive=true" : "";
+	return apiFetch(`/latex/${problemId}/files/${encodePath(path)}${query}`, {
+		method: "DELETE",
+	});
+}
+
+export async function renameLatexPath(
+	problemId: string,
+	fromPath: string,
+	toPath: string
+): Promise<void> {
+	return apiFetch(`/latex/${problemId}/rename`, {
+		method: "POST",
+		body: JSON.stringify({ from_path: fromPath, to_path: toPath }),
+	});
+}
+
+export async function compileLatexProject(
+	problemId: string,
+	main = "main.tex"
+): Promise<LatexCompileResponse> {
+	return apiFetch(`/latex/${problemId}/compile`, {
+		method: "POST",
+		body: JSON.stringify({ main }),
+	});
+}
+
+export async function fetchLatexOutputPdf(problemId: string): Promise<Blob> {
+	const url = `${API_BASE_URL}/api/latex/${problemId}/output.pdf`;
+	const headers = getAuthHeaders();
+	const response = await fetch(url, { headers });
+	if (!response.ok) {
+		throw new Error(await response.text());
+	}
+	return response.blob();
+}
+
+export async function fetchLatexOutputLog(problemId: string): Promise<string> {
+	const url = `${API_BASE_URL}/api/latex/${problemId}/output.log`;
+	const headers = getAuthHeaders();
+	const response = await fetch(url, { headers });
+	if (!response.ok) {
+		throw new Error(await response.text());
+	}
+	return response.text();
 }
 
 // ============ Discussions API ============

@@ -33,6 +33,21 @@ services:
       timeout: 5s
       retries: 5
 
+  # MinIO (S3-compatible storage)
+  minio:
+    image: minio/minio:latest
+    container_name: proofmesh-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: proofmesh
+      MINIO_ROOT_PASSWORD: proofmesh
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+
   # Backend API (development mode with hot-reload)
   backend:
     build:
@@ -51,11 +66,40 @@ services:
       REDIS_URL: redis://redis:6379
       DEBUG: "true"
       CORS_ORIGINS: '["http://localhost:3000","http://127.0.0.1:3000"]'
+      S3_ENDPOINT: http://minio:9000
+      S3_ACCESS_KEY: proofmesh
+      S3_SECRET_KEY: proofmesh
+      S3_BUCKET: proofmesh
+      S3_REGION: us-east-1
+      S3_SECURE: "false"
+      LATEX_COMPILER_URL: http://texlive-compiler:9009
+      LATEX_COMPILE_TIMEOUT: "60"
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+      minio:
+        condition: service_started
+
+  # TeXLive compiler service
+  texlive-compiler:
+    build:
+      context: ./latex-compiler
+      dockerfile: Dockerfile
+    container_name: proofmesh-texlive-compiler
+    restart: unless-stopped
+    environment:
+      S3_ENDPOINT: http://minio:9000
+      S3_ACCESS_KEY: proofmesh
+      S3_SECRET_KEY: proofmesh
+      S3_BUCKET: proofmesh
+      S3_REGION: us-east-1
+      S3_SECURE: "false"
+      LATEX_COMPILE_TIMEOUT: "60"
+    depends_on:
+      minio:
+        condition: service_started
 
   # Frontend (development mode with hot-reload)
   frontend:
@@ -79,3 +123,4 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  minio_data:

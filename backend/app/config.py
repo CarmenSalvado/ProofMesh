@@ -21,6 +21,18 @@ class Settings(BaseSettings):
     debug: bool = True
     cors_origins: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
 
+    # S3 / MinIO
+    s3_endpoint: str = "http://localhost:9000"
+    s3_access_key: str = "proofmesh"
+    s3_secret_key: str = "proofmesh"
+    s3_bucket: str = "proofmesh"
+    s3_region: str = "us-east-1"
+    s3_secure: bool = False
+
+    # LaTeX
+    latex_compiler_url: str = "http://texlive-compiler:9009"
+    latex_compile_timeout: int = 60
+
     @field_validator("cors_origins", mode="before")
     @classmethod
     def parse_cors_origins(cls, value):

@@ -9,12 +9,15 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@monaco-editor/react": "^4.6.1",
     "@milkdown/crepe": "^7.18.0",
     "@milkdown/plugin-listener": "^7.18.0",
+    "pdfjs-dist": "^4.10.38",
     "@types/katex": "^0.16.8",
     "clsx": "^2.1.1",
     "katex": "^0.16.27",
     "lucide-react": "^0.563.0",
+    "monaco-editor": "^0.52.0",
     "next": "16.1.4",
     "react": "19.2.3",
     "react-dom": "19.2.3",
