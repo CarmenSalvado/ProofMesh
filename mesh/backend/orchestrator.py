@@ -171,6 +171,20 @@ class Orchestrator:
             "context": context,
             "goal": goal
         })
+
+    async def latex_assist(
+        self,
+        prompt: str,
+        context: Optional[Dict[str, Any]] = None
+    ):
+        """
+        Assist with LaTeX editing and autocomplete.
+        Uses the latex assistant agent via ADK.
+        """
+        return await self.adk.run("latex_assistant", {
+            "prompt": prompt,
+            "context": context or {}
+        })
     
     # ========== Tool Calls (Infrastructure Layer) ==========
     

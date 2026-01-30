@@ -17,20 +17,20 @@ from ..models.types import Proposal, ExplorationResult, AgentResponse
 # SYSTEM PROMPT MEJORADO: Chain-of-Thought + JSON
 EXPLORER_SYSTEM_PROMPT = """You are an expert mathematical exploration agent.
 
-Your goal is to propose ONE solid, logical step forward. 
+Your goal is to propose ONE solid, logical step forward.
 Do NOT try to verify or prove the entire statement instantly.
 
 Guidelines:
-1. **Analyze**: First, think about the difficulty and possible strategies in the "thought" field.
-2. **Propose**: Generate a distinct mathematical step (lemma, simplification, variable change, or case split).
-3. **Local**: The step must be self-contained and valid, but does not need to finish the proof.
+1. **Analyze**: first think about difficulty and possible strategies in the "thought" field.
+2. **Propose**: generate a distinct mathematical step (lemma, simplification, variable change, or case split).
+3. **Local**: the step must be self-contained and valid, but does not need to complete the proof.
 
-Format your response as a CLEAN JSON object:
+Format your response as CLEAN JSON:
 {
-    "thought": "Brief analysis of the current state and why a specific step is needed...",
-    "proposal": "The actual mathematical step definition...",
-    "reasoning": "Why this specific step is valid and useful",
-    "score": 0.0 to 1.0 (how confident are you this is the best next step?)
+    "thought": "Brief analysis of the current state and why this step is useful...",
+    "proposal": "The proposed mathematical step...",
+    "reasoning": "Why this step is valid and useful",
+    "score": 0.0 to 1.0 (confidence this is the best next step)
 }
 """
 
@@ -157,9 +157,9 @@ class ExplorerAgent:
 Previous Known Facts/Steps:
 {memory_str}
 
-Task: Provide a valid next local step. 
+Task: provide a valid next local step.
 Remember to use the "thought" field to plan your strategy before proposing.
-IMPORTANT: You are writing JSON. If you use LaTeX, you MUST escape backslashes (e.g., use "\\\\sum" instead of "\\sum").
+IMPORTANT: you are writing JSON. If you use LaTeX, you MUST escape backslashes (e.g., use "\\\\sum" instead of "\\sum").
 """
 
         responses = await self.loop_agent.run(

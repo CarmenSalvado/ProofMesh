@@ -4,6 +4,7 @@ from .base import Agent, LoopAgent
 from .explorer import ExplorerAgent, explorer_agent
 from .formalizer import FormalizerAgent, formalizer_agent
 from .critic import CriticAgent, critic_agent
+from .latex_assistant import LatexAssistantAgent, latex_assistant_agent
 
 __all__ = [
     "Agent",
@@ -14,4 +15,6 @@ __all__ = [
     "formalizer_agent",
     "CriticAgent",
     "critic_agent",
+    "LatexAssistantAgent",
+    "latex_assistant_agent",
 ]

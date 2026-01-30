@@ -6,11 +6,12 @@ This is the bridge between the Orchestrator and the agents.
 from typing import Optional, Any, Dict
 import os
 
-from .agents import ExplorerAgent, FormalizerAgent, CriticAgent
+from .agents import ExplorerAgent, FormalizerAgent, CriticAgent, LatexAssistantAgent
 from .models.types import (
     ExplorationResult,
     FormalizationResult,
-    CriticResult
+    CriticResult,
+    AgentResponse,
 )
 
 
@@ -27,7 +28,8 @@ class Runtime:
     def __init__(
         self,
         api_key: Optional[str] = None,
-        model: str = "gemini-3-pro-preview"
+        reasoning_model: str = "gemini-3-pro-preview",
+        fast_model: str = "gemini-3-flash-preview",
     ):
         """
         Initialize the runtime configuration.
@@ -35,41 +37,51 @@ class Runtime:
         
         Args:
             api_key: Gemini API key (defaults to GEMINI_API_KEY env var)
-            model: Model to use for all agents
+            reasoning_model: Modelo para tareas intensivas en razonamiento
+            fast_model: Modelo para tareas generales y rápidas
         """
         self.api_key = api_key or os.environ.get("GEMINI_API_KEY")
-        self.model = model
+        self.reasoning_model = reasoning_model
+        self.fast_model = fast_model
         
         # Lazy agent storage
         self._explorer: Optional[ExplorerAgent] = None
         self._formalizer: Optional[FormalizerAgent] = None
         self._critic: Optional[CriticAgent] = None
+        self._latex_assistant: Optional[LatexAssistantAgent] = None
     
     @property
     def explorer(self) -> ExplorerAgent:
         """Lazy-load explorer agent."""
         if self._explorer is None:
-            self._explorer = ExplorerAgent(model=self.model)
+            self._explorer = ExplorerAgent(model=self.reasoning_model)
         return self._explorer
     
     @property
     def formalizer(self) -> FormalizerAgent:
         """Lazy-load formalizer agent."""
         if self._formalizer is None:
-            self._formalizer = FormalizerAgent(model=self.model)
+            self._formalizer = FormalizerAgent(model=self.reasoning_model)
         return self._formalizer
     
     @property
     def critic(self) -> CriticAgent:
         """Lazy-load critic agent."""
         if self._critic is None:
-            self._critic = CriticAgent(model=self.model)
+            self._critic = CriticAgent(model=self.reasoning_model)
         return self._critic
+
+    @property
+    def latex_assistant(self) -> LatexAssistantAgent:
+        """Lazy-load latex assistant agent."""
+        if self._latex_assistant is None:
+            self._latex_assistant = LatexAssistantAgent(model=self.fast_model)
+        return self._latex_assistant
     
     @property
     def available_agents(self) -> list[str]:
         """List of available agent names."""
-        return ["explore_loop", "explorer", "formalizer", "critic"]
+        return ["explore_loop", "explorer", "formalizer", "critic", "latex_assistant"]
     
     async def run(
         self, 
@@ -99,6 +111,8 @@ class Runtime:
             return await self._run_formalizer(params)
         elif agent_name == "critic":
             return await self._run_critic(params)
+        elif agent_name == "latex_assistant":
+            return await self._run_latex_assistant(params)
         else:
             raise ValueError(f"No handler for agent: {agent_name}")
     
@@ -121,6 +135,12 @@ class Runtime:
         context = params.get("context")
         goal = params.get("goal")
         return await self.critic.critique(proposal, context, goal)
+
+    async def _run_latex_assistant(self, params: Dict[str, Any]) -> AgentResponse:
+        """Run latex assistant agent."""
+        prompt = params.get("prompt", "")
+        context = params.get("context")
+        return await self.latex_assistant.run(prompt, context=context)
     
     def run_sync(
         self,

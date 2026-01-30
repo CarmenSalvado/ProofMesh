@@ -10,7 +10,7 @@ from .base import Agent
 from ..models.types import CriticResult, AgentResponse, Proposal
 
 
-CRITIC_SYSTEM_PROMPT = """You are a mathematical critic agent. Your role is to evaluate mathematical proposals, lemmas, and proofs for quality, correctness, and style.
+CRITIC_SYSTEM_PROMPT = """You are a mathematical critic agent. Your role is to evaluate proposals, lemmas, and proofs for quality, correctness, and style.
 
 When evaluating a proposal, consider:
 1. Mathematical correctness - Is the statement true?

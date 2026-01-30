@@ -24,7 +24,7 @@ class Agent:
     
     def __init__(
         self,
-        model: str = "gemini-1.5-pro", # Default actualizado a modelo estable
+        model: str = "gemini-3-flash-preview",
         system_prompt: str = "",
         temperature: float = 0.7,
         max_tokens: int = 8192,
