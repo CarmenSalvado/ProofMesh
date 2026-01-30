@@ -177,7 +177,117 @@ export interface StarCreate {
 	target_id: string;
 }
 
-// ============ Notification Types ============
+// ============ LaTeX AI Types ============
+
+export interface LatexSynctexResponse {
+	path: string;
+	line: number;
+	column?: number | null;
+}
+
+export interface LatexChatMessage {
+	role: "user" | "assistant";
+	content: string;
+}
+
+export interface LatexChatResponse {
+	reply: string;
+}
+
+export interface LatexAutocompleteItem {
+	label: string;
+	insert_text: string;
+}
+
+export interface LatexAutocompleteResponse {
+	suggestions: LatexAutocompleteItem[];
+}
+
+export interface LatexAIMemoryResponse {
+	memory: string | null;
+}
+
+export interface LatexAIQuickAction {
+	id: string;
+	label: string;
+	prompt: string;
+	created_at: string;
+}
+
+export interface LatexAIMessageRecord {
+	id: string;
+	role: "user" | "assistant";
+	content: string;
+	run_id?: string | null;
+	created_at: string;
+}
+
+export interface LatexAIRunRecord {
+	id: string;
+	prompt: string;
+	summary?: string | null;
+	status: string;
+	steps: string[];
+	edits: Array<{
+		start: { line: number; column: number };
+		end: { line: number; column: number };
+		text: string;
+	}>;
+	file_path?: string | null;
+	selection?: string | null;
+	created_at: string;
+}
+
+// ...
+
+export async function updateLatexAiRun(
+	problemId: string,
+	runId: string,
+	data: { summary?: string; status?: string }
+): Promise<LatexAIRunRecord> {
+	return apiFetch(`/latex-ai/${problemId}/runs/${runId}`, {
+		method: "PATCH",
+		body: JSON.stringify(data),
+	});
+}
+
+export async function deleteLatexAiRun(problemId: string, runId: string): Promise<void> {
+	return apiFetch(`/latex-ai/${problemId}/runs/${runId}`, {
+		method: "DELETE",
+	});
+}
+
+export async function updateLatexAiRunSummary(
+	problemId: string,
+	runId: string,
+	summary: string
+): Promise<LatexAIRunRecord> {
+	return updateLatexAiRun(problemId, runId, { summary });
+}
+
+export async function appendLatexAiRunStep(
+	problemId: string,
+	runId: string,
+	text: string
+): Promise<LatexAIRunRecord> {
+	return apiFetch(`/latex-ai/${problemId}/runs/${runId}/step`, {
+		method: "POST",
+		body: JSON.stringify({ text }),
+	});
+}
+
+export async function appendLatexAiRunEdit(
+	problemId: string,
+	runId: string,
+	start: { line: number; column: number },
+	end: { line: number; column: number },
+	text: string
+): Promise<LatexAIRunRecord> {
+	return apiFetch(`/latex-ai/${problemId}/runs/${runId}/edit`, {
+		method: "POST",
+		body: JSON.stringify({ start, end, text }),
+	});
+}
 
 export type NotificationType =
 	| "follow"
@@ -367,17 +477,17 @@ async function apiFetch<T>(
 ): Promise<T> {
 	const url = `${API_BASE_URL}/api${endpoint}`;
 	const authHeaders = getAuthHeaders();
-	
+
 	// Build headers properly
 	const headers: HeadersInit = {
 		"Content-Type": "application/json",
 	};
-	
+
 	// Add auth headers if present
 	if (authHeaders && typeof authHeaders === 'object' && 'Authorization' in authHeaders) {
 		(headers as Record<string, string>)["Authorization"] = authHeaders.Authorization;
 	}
-	
+
 	// Add additional headers from options
 	if (options.headers) {
 		if (typeof options.headers === 'object' && !Array.isArray(options.headers)) {
@@ -397,7 +507,7 @@ async function apiFetch<T>(
 		if (!response.ok) {
 			let errorDetail = "Unknown error";
 			let errorData: any = {};
-			
+
 			try {
 				errorData = await response.json();
 				errorDetail = errorData.detail || errorData.message || `API Error: ${response.status}`;
@@ -771,6 +881,140 @@ export async function fetchLatexOutputLog(problemId: string): Promise<string> {
 	}
 	return response.text();
 }
+
+export async function mapLatexPdfToSource(
+	problemId: string,
+	page: number,
+	x: number,
+	y: number
+): Promise<LatexSynctexResponse> {
+	return apiFetch(`/latex/${problemId}/synctex`, {
+		method: "POST",
+		body: JSON.stringify({ page, x, y }),
+	});
+}
+
+export async function chatLatexAi(
+	_problemId: string,
+	payload: {
+		message: string;
+		file_path?: string;
+		selection?: string;
+		context?: string;
+		history?: LatexChatMessage[];
+	}
+): Promise<LatexChatResponse> {
+	const response = await fetch("/api/latex-ai/chat", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(payload),
+	});
+	if (!response.ok) {
+		throw new Error(await response.text());
+	}
+	return response.json();
+}
+
+export async function autocompleteLatexAi(
+	_problemId: string,
+	payload: {
+		file_path?: string;
+		before: string;
+		after: string;
+		max_suggestions?: number;
+	}
+): Promise<LatexAutocompleteResponse> {
+	const response = await fetch("/api/latex-ai/autocomplete", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(payload),
+	});
+	if (!response.ok) {
+		throw new Error(await response.text());
+	}
+	return response.json();
+}
+
+export async function getLatexAiMemory(problemId: string): Promise<LatexAIMemoryResponse> {
+	return apiFetch<LatexAIMemoryResponse>(`/latex-ai/${problemId}/memory`);
+}
+
+export async function updateLatexAiMemory(
+	problemId: string,
+	memory: string | null
+): Promise<LatexAIMemoryResponse> {
+	return apiFetch<LatexAIMemoryResponse>(`/latex-ai/${problemId}/memory`, {
+		method: "PUT",
+		body: JSON.stringify({ memory }),
+	});
+}
+
+export async function listLatexAiActions(problemId: string): Promise<LatexAIQuickAction[]> {
+	return apiFetch<LatexAIQuickAction[]>(`/latex-ai/${problemId}/actions`);
+}
+
+export async function createLatexAiAction(
+	problemId: string,
+	payload: { label: string; prompt: string }
+): Promise<LatexAIQuickAction> {
+	return apiFetch<LatexAIQuickAction>(`/latex-ai/${problemId}/actions`, {
+		method: "POST",
+		body: JSON.stringify(payload),
+	});
+}
+
+export async function deleteLatexAiAction(
+	problemId: string,
+	actionId: string
+): Promise<void> {
+	await apiFetch(`/latex-ai/${problemId}/actions/${actionId}`, { method: "DELETE" });
+}
+
+export async function listLatexAiMessages(
+	problemId: string,
+	limit = 200
+): Promise<LatexAIMessageRecord[]> {
+	return apiFetch<LatexAIMessageRecord[]>(
+		`/latex-ai/${problemId}/messages?limit=${limit}`
+	);
+}
+
+export async function createLatexAiMessage(
+	problemId: string,
+	payload: { role: "user" | "assistant"; content: string; run_id?: string | null }
+): Promise<LatexAIMessageRecord> {
+	return apiFetch<LatexAIMessageRecord>(`/latex-ai/${problemId}/messages`, {
+		method: "POST",
+		body: JSON.stringify(payload),
+	});
+}
+
+export async function deleteLatexAiTempMessages(problemId: string): Promise<void> {
+	return apiFetch(`/latex-ai/${problemId}/messages?scope=temp`, {
+		method: "DELETE",
+	});
+}
+
+export async function listLatexAiRuns(
+	problemId: string,
+	limit = 50,
+	status?: string
+): Promise<LatexAIRunRecord[]> {
+	let url = `/latex-ai/${problemId}/runs?limit=${limit}`;
+	if (status) url += `&status=${status}`;
+	return apiFetch<LatexAIRunRecord[]>(url);
+}
+
+export async function createLatexAiRun(
+	problemId: string,
+	payload: { prompt: string; file_path?: string | null; selection?: string | null }
+): Promise<LatexAIRunRecord> {
+	return apiFetch<LatexAIRunRecord>(`/latex-ai/${problemId}/runs`, {
+		method: "POST",
+		body: JSON.stringify(payload),
+	});
+}
+
 
 // ============ Discussions API ============
 
@@ -1154,7 +1398,7 @@ export function streamPipeline(
 ): AbortController {
 	const controller = new AbortController();
 	const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
-	
+
 	fetch(`${API_BASE_URL}/api/orchestration/pipeline/stream`, {
 		method: "POST",
 		headers: {
@@ -1168,23 +1412,23 @@ export function streamPipeline(
 			if (!response.ok) {
 				throw new Error(`Stream failed: ${response.status}`);
 			}
-			
+
 			const reader = response.body?.getReader();
 			if (!reader) {
 				throw new Error("No response body");
 			}
-			
+
 			const decoder = new TextDecoder();
 			let buffer = "";
-			
+
 			while (true) {
 				const { done, value } = await reader.read();
 				if (done) break;
-				
+
 				buffer += decoder.decode(value, { stream: true });
 				const lines = buffer.split("\n");
 				buffer = lines.pop() || "";
-				
+
 				for (const line of lines) {
 					if (line.startsWith("data: ")) {
 						try {
@@ -1202,7 +1446,7 @@ export function streamPipeline(
 				onError?.(error);
 			}
 		});
-	
+
 	return controller;
 }
 
