@@ -7,7 +7,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     texlive-base \
     texlive-latex-recommended \
     texlive-fonts-recommended \
+    texlive-fonts-extra \
     texlive-science \
+    texlive-lang-spanish \
     latexmk \
     ghostscript \
     && rm -rf /var/lib/apt/lists/*

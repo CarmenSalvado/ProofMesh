@@ -73,8 +73,22 @@ class CompileResponse(BaseModel):
     log: str
     pdf_key: str | None
     log_key: str
+    synctex_key: str | None
     meta_key: str
     duration_ms: int
+
+
+class SynctexRequest(BaseModel):
+    prefix: str = Field(..., description="Project prefix in S3 (e.g. latex/<problem_id>)")
+    page: int = Field(..., ge=1)
+    x: float
+    y: float
+
+
+class SynctexResponse(BaseModel):
+    path: str
+    line: int
+    column: int | None
 
 
 app = FastAPI(title="ProofMesh TeX Compiler", version="0.1.0")
@@ -127,6 +141,7 @@ def compile_project(request: CompileRequest):
         cmd = [
             "latexmk",
             "-pdf",
+            "-synctex=1",
             "-interaction=nonstopmode",
             "-halt-on-error",
             "-file-line-error",
@@ -151,7 +166,9 @@ def compile_project(request: CompileRequest):
         duration_ms = int((time.time() - start) * 1000)
 
         pdf_key = None
+        synctex_key = None
         pdf_path = os.path.join(run_dir, os.path.splitext(run_main)[0] + ".pdf")
+        synctex_path = os.path.join(run_dir, os.path.splitext(run_main)[0] + ".synctex.gz")
         if status == "success" and os.path.exists(pdf_path):
             pdf_key = f"{prefix}/.output/latest.pdf"
             s3_client.upload_file(
@@ -160,6 +177,14 @@ def compile_project(request: CompileRequest):
                 pdf_key,
                 ExtraArgs={"ContentType": "application/pdf"},
             )
+            if os.path.exists(synctex_path):
+                synctex_key = f"{prefix}/.output/latest.synctex.gz"
+                s3_client.upload_file(
+                    synctex_path,
+                    S3_BUCKET,
+                    synctex_key,
+                    ExtraArgs={"ContentType": "application/gzip"},
+                )
         elif status == "success":
             status = "error"
             log += "\nPDF not generated."
@@ -180,6 +205,7 @@ def compile_project(request: CompileRequest):
                     "status": status,
                     "pdf_key": pdf_key,
                     "log_key": log_key,
+                    "synctex_key": synctex_key,
                     "duration_ms": duration_ms,
                     "timestamp": int(time.time()),
                 }
@@ -192,6 +218,71 @@ def compile_project(request: CompileRequest):
             log=log,
             pdf_key=pdf_key,
             log_key=log_key,
+            synctex_key=synctex_key,
             meta_key=meta_key,
             duration_ms=duration_ms,
         )
+
+
+@app.post("/synctex", response_model=SynctexResponse)
+def synctex_lookup(request: SynctexRequest):
+    prefix = sanitize_prefix(request.prefix)
+    pdf_key = f"{prefix}/.output/latest.pdf"
+    synctex_key = f"{prefix}/.output/latest.synctex.gz"
+
+    with TemporaryDirectory() as tmpdir:
+        pdf_path = os.path.join(tmpdir, "document.pdf")
+        synctex_path = os.path.join(tmpdir, "document.synctex.gz")
+
+    try:
+        s3_client.download_file(S3_BUCKET, pdf_key, pdf_path)
+        s3_client.download_file(S3_BUCKET, synctex_key, synctex_path)
+    except ClientError:
+        raise HTTPException(status_code=404, detail="Synctex data not available")
+
+        cmd = [
+            "synctex",
+            "edit",
+            "-o",
+            f"{request.page}:{request.x}:{request.y}:{pdf_path}",
+        ]
+
+        try:
+            result = subprocess.run(
+                cmd,
+                cwd=tmpdir,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=500, detail="synctex binary not found") from exc
+
+        if result.returncode != 0:
+            raise HTTPException(status_code=422, detail="Synctex lookup failed")
+
+        input_path = None
+        line_number = None
+        column_number = None
+
+        for line in (result.stdout or "").splitlines():
+            if line.startswith("Input:"):
+                parts = line.split(":", 2)
+                if len(parts) == 3:
+                    input_path = parts[2].strip()
+            elif line.startswith("Line:"):
+                try:
+                    line_number = int(line.split(":", 1)[1].strip())
+                except ValueError:
+                    line_number = None
+            elif line.startswith("Column:"):
+                try:
+                    column_number = int(line.split(":", 1)[1].strip())
+                except ValueError:
+                    column_number = None
+
+        if not input_path or line_number is None:
+            raise HTTPException(status_code=404, detail="Source location not found")
+
+        rel_path = os.path.relpath(input_path, tmpdir)
+        return SynctexResponse(path=rel_path, line=line_number, column=column_number)
