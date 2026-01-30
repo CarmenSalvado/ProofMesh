@@ -1,13 +1,18 @@
 "use client";
 
-import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { use, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import Link from "next/link";
 import Editor, { type Monaco } from "@monaco-editor/react";
 import { GlobalWorkerOptions, getDocument, type PDFDocumentProxy } from "pdfjs-dist/legacy/build/pdf";
+import { useChat } from "@ai-sdk/react";
 import {
   AlertTriangle,
+  ArrowUp,
+  BrainCircuit,
+  Check,
   CheckCircle,
   ChevronLeft,
+  ChevronUp,
   ChevronDown,
   ChevronRight,
   Download,
@@ -18,34 +23,54 @@ import {
   Folder,
   FolderPlus,
   Infinity,
-  Image,
   Loader,
-  Mic,
+  Paperclip,
+  ImageIcon,
   Play,
   Pencil,
   RefreshCw,
-  Send,
+  Zap,
   Trash2,
   Upload,
   X,
   ZoomIn,
   ZoomOut,
+  Square, // Added import
 } from "lucide-react";
 import {
   compileLatexProject,
   deleteLatexPath,
+  createLatexAiAction,
+  createLatexAiMessage,
+  createLatexAiRun,
+  deleteLatexAiTempMessages,
+  deleteLatexAiAction,
+  getLatexAiMemory,
   fetchLatexOutputLog,
   fetchLatexOutputPdf,
   getLatexFile,
   getProblem,
+  listLatexAiActions,
+  listLatexAiMessages,
+  listLatexAiRuns,
   listLatexFiles,
+  mapLatexPdfToSource,
+  appendLatexAiRunEdit,
+  appendLatexAiRunStep,
   putLatexFile,
   renameLatexPath,
+  updateLatexAiMemory,
+  updateLatexAiRunSummary,
+  updateLatexAiRun,
   type LatexFileInfo,
   type LatexFileResponse,
   type Problem,
 } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import ReactMarkdown from "react-markdown";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+import "katex/dist/katex.min.css";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -61,8 +86,75 @@ type FileNode = {
 const AUTO_COMPILE_DELAY = 5000;
 const SAVE_DEBOUNCE = 800;
 const DEFAULT_MAIN = "main.tex";
+const DEFAULT_ACTIONS = [
+  { id: "clarity", label: "Improve clarity", prompt: "Improve clarity and flow without changing meaning." },
+  { id: "latex", label: "Fix LaTeX", prompt: "Fix LaTeX errors and improve formatting." },
+  { id: "shorten", label: "Shorten", prompt: "Shorten this text while preserving meaning." },
+  { id: "cite", label: "Add citation", prompt: "Add a citation placeholder where appropriate." },
+];
 
 const LATEX_LANGUAGE_ID = "latex";
+const EDIT_INTENT_PATTERN =
+  /(add|insert|append|update|edit|rewrite|replace|fix|refactor|delete|remove|change|improve|shorten|expand|format|reformat|summarize|summarise|prove|derive|section|subsection|seccion|equation|theorem|lemma|proof|corrig|corrige|corrigir|correg|cambia|modifica|anade|agrega|inserta|borra|elimina|quita|mejor|resume|resumir|acorta|amplia|create|write|draft|paper|article|document|crea|crear|genera|generar|redacta|redactar|escribe|escribir|paper|articulo|documento)/i;
+
+const normalizeInstruction = (value: string) =>
+  value.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+const isEditIntent = (value: string) => EDIT_INTENT_PATTERN.test(normalizeInstruction(value));
+
+const countLines = (value?: string) => (value ? value.split("\n").length : 0);
+
+const estimateRemovedLines = (edit: { start: { line: number; column: number }; end: { line: number; column: number } }) => {
+  const isPoint =
+    edit.start.line === edit.end.line && edit.start.column === edit.end.column;
+  if (isPoint) return 0;
+  return Math.max(1, edit.end.line - edit.start.line + 1);
+};
+
+const makeEditKey = (
+  runId: string | null,
+  filePath: string,
+  edit: { start: { line: number; column: number }; end: { line: number; column: number }; text: string }
+) =>
+  `${runId || "local"}:${filePath}:${edit.start.line}:${edit.start.column}:${edit.end.line}:${edit.end.column}:${edit.text}`;
+
+const getLastAssistantIndex = (
+  messages: Array<{ role?: string | null }>
+) => {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    if (messages[i]?.role === "assistant") return i;
+  }
+  return -1;
+};
+
+const extractMentionQuery = (value: string) => {
+  const match = value.match(/(?:^|\s)@([A-Za-z0-9._\\/-]*)$/);
+  if (!match) return null;
+  return match[1] || "";
+};
+
+const extractMentions = (value: string) => {
+  const mentions = new Set<string>();
+  if (!value) return [];
+  const regex = /@([A-Za-z0-9._\\/-]+)/g;
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(value)) !== null) {
+    mentions.add(match[1]);
+  }
+  return Array.from(mentions);
+};
+
+const AI_MODEL_IDS = {
+  flash: "gemini-3-flash-preview",
+  thinking: "gemini-3-flash-preview-thinking",
+} as const;
+
+const removeMention = (value: string, path: string) => {
+  const escaped = path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const regex = new RegExp(`@${escaped}\\b\\s*`, "g");
+  return value.replace(regex, "").replace(/\s{2,}/g, " ").trimStart();
+};
+
 
 const latexMonarch = {
   tokenizer: {
@@ -197,50 +289,253 @@ export default function LabPage({ params }: PageProps) {
   const [pdfPage, setPdfPage] = useState(1);
   const [pdfZoom, setPdfZoom] = useState(1);
   const [pdfLoading, setPdfLoading] = useState(false);
+  const [pdfSyncNotice, setPdfSyncNotice] = useState<string | null>(null);
   const [autoCompileAt, setAutoCompileAt] = useState<number | null>(null);
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
   const [logOpen, setLogOpen] = useState(true);
-  const [aiOpen, setAiOpen] = useState(true);
+  const [chatOpen, setChatOpen] = useState(true);
   const [leftWidth, setLeftWidth] = useState(260);
+  const [chatWidth, setChatWidth] = useState(360);
   const [rightWidth, setRightWidth] = useState(480);
   const [logHeight, setLogHeight] = useState(160);
-  const [aiHeight, setAiHeight] = useState(240);
   const [aiInput, setAiInput] = useState("");
+  const [aiStatus, setAiStatus] = useState<"idle" | "sending" | "error">("idle");
+  const [aiApplying, setAiApplying] = useState(false);
+  const [aiThoughts, setAiThoughts] = useState<string[]>([]);
+  const [aiMemory, setAiMemory] = useState("");
+  const [aiRuns, setAiRuns] = useState<
+    Array<{
+      id: string;
+      prompt: string;
+      steps: string[];
+      summary?: string;
+      timestamp: string;
+      edits: Array<{
+        start: { line: number; column: number };
+        end: { line: number; column: number };
+        text: string;
+      }>;
+      filePath: string;
+      selection: string;
+    }>
+  >([]);
+  const [aiTab, setAiTab] = useState<"chat" | "context" | "edits" | "history" | "memory">("chat");
+  const [aiContext, setAiContext] = useState<{
+    filePath: string;
+    selection: string;
+    instruction: string;
+  }>({ filePath: "", selection: "", instruction: "" });
   const [aiMessages, setAiMessages] = useState<
-    { id: string; role: "user" | "assistant"; content: string; timestamp: string }[]
-  >(() => [
-      {
-        id: "welcome",
-        role: "assistant",
-        content:
-          "Panel de edición listo. Puedes solicitar revisiones, insertar citas o ajustar el estilo del documento.",
-        timestamp: "Ahora",
-      },
-  ]);
+    Array<{ id: string; role: "user" | "assistant"; content: string; timestamp: string; runId?: string }>
+  >([]);
+  const [customActions, setCustomActions] = useState<Array<{ id: string; label: string; prompt: string }>>(
+    DEFAULT_ACTIONS
+  );
+  const [newActionLabel, setNewActionLabel] = useState("");
+  const [newActionPrompt, setNewActionPrompt] = useState("");
+  const [selectionBox, setSelectionBox] = useState<{ top: number; left: number } | null>(null);
+  const [aiHistory, setAiHistory] = useState<
+    { id: string; timestamp: string; summary: string; content: string }[]
+  >([]);
+  const [aiReviewOpen, setAiReviewOpen] = useState(false);
+  const [leftTab, setLeftTab] = useState<"files" | "chats">("files");
+  const [persistentChats, setPersistentChats] = useState<
+    Array<{
+      id: string;
+      title: string;
+      createdAt: string;
+      messages: Array<{ id: string; role: "user" | "assistant"; content: string; timestamp: string }>;
+    }>
+  >([]);
+  const [activePersistentChatId, setActivePersistentChatId] = useState<string | null>(null);
+  const [tempChatOpen, setTempChatOpen] = useState(false);
+  const [selectionContextLines, setSelectionContextLines] = useState<
+    Array<{ line: number; text: string }>
+  >([]);
+  const [mentionOpen, setMentionOpen] = useState<"temp" | "persistent" | null>(null);
+  const [mentionQuery, setMentionQuery] = useState("");
+  const [mentionIndex, setMentionIndex] = useState(0);
+  const [aiModelMode, setAiModelMode] = useState<"flash" | "thinking">("flash");
+  const [attachedImages, setAttachedImages] = useState<string[]>([]);
+  const selectionRangeLabel = useMemo(() => {
+    if (selectionContextLines.length === 0) return null;
+    const start = selectionContextLines[0]?.line;
+    const end = selectionContextLines[selectionContextLines.length - 1]?.line;
+    if (!start || !end) return null;
+    return start === end ? `Selection L${start}` : `Selection L${start}-L${end}`;
+  }, [selectionContextLines]);
+  const [contextDismissed, setContextDismissed] = useState(false);
+  const [aiChanges, setAiChanges] = useState<
+    Array<{
+      id: string;
+      key: string;
+      edit: { start: { line: number; column: number }; end: { line: number; column: number }; text: string };
+      hasInsert: boolean;
+      hasRemove: boolean;
+      addedLines: number;
+      removedLines: number;
+      summary?: string;
+      filePath: string;
+      runId?: string;
+      status?: "pending" | "accepted" | "rejected";
+    }>
+  >([]);
+  const [aiChangeLog, setAiChangeLog] = useState<Record<string, typeof aiChanges>>({});
+  const [tempMessageRunIds, setTempMessageRunIds] = useState<Record<string, string>>({});
+  const tempPersistedIdsRef = useRef<Set<string>>(new Set());
+  const [aiChangeIndex, setAiChangeIndex] = useState(0);
+  const [pendingSelection, setPendingSelection] = useState<{
+    startLine: number;
+    startColumn: number;
+    endLine: number;
+    endColumn: number;
+  } | null>(null);
 
   const saveTimeoutRef = useRef<number | null>(null);
   const compileTimeoutRef = useRef<number | null>(null);
   const pendingSaveRef = useRef<Promise<void> | null>(null);
   const activeRequestRef = useRef<string | null>(null);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
+  const imageUploadRef = useRef<HTMLInputElement | null>(null);
   const pdfCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const pdfDocRef = useRef<PDFDocumentProxy | null>(null);
+  const pdfViewportRef = useRef<any>(null);
+  const editorRef = useRef<any>(null);
+  const monacoRef = useRef<Monaco | null>(null);
+  const pendingCursorRef = useRef<{ path: string; line: number; column: number } | null>(null);
+  const completionProviderRef = useRef(false);
+  const aiStreamAbortRef = useRef<AbortController | null>(null);
+  const aiRunIdRef = useRef<string | null>(null);
+  const aiPersistRef = useRef(false);
+  const selectionAskRef = useRef<HTMLDivElement | null>(null);
+  const aiMemorySaveRef = useRef<number | null>(null);
+  const aiStoreLoadedRef = useRef(false);
+  const aiDiffDecorationsRef = useRef<string[]>([]);
+  const aiReviewSnapshotRef = useRef<string | null>(null);
+  const aiReviewEditsRef = useRef<number>(0);
+  const aiSeenEditsRef = useRef<Set<string>>(new Set());
   const dragRef = useRef<{
-    type: "left" | "right" | "log" | "ai" | null;
+    type: "left" | "chat" | "right" | "log" | null;
     startX: number;
     startY: number;
     leftWidth: number;
+    chatWidth: number;
     rightWidth: number;
     logHeight: number;
-    aiHeight: number;
   } | null>(null);
 
+  const toLocalTime = useCallback((value?: string | null) => {
+    if (!value) return "";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "";
+    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  }, []);
+
+  const aiModelId = aiModelMode === "thinking" ? AI_MODEL_IDS.thinking : AI_MODEL_IDS.flash;
+  const selectionContextMeta = useMemo(() => {
+    if (!selectionRangeLabel) return "";
+    return `${selectionRangeLabel} (${activePath})`;
+  }, [selectionRangeLabel, activePath]);
+  const activeChat = useMemo(
+    () => persistentChats.find((chat) => chat.id === activePersistentChatId) || null,
+    [persistentChats, activePersistentChatId]
+  );
+  const persistentChatKey = activePersistentChatId ?? "none";
+  const {
+    messages: persistentMessages,
+    setMessages: setPersistentMessages,
+    input: persistentInput,
+    append: appendPersistent,
+    setInput: setPersistentInput,
+    isLoading: persistentLoading,
+  } = useChat({
+    api: "/api/latex-ai/chat",
+    id: persistentChatKey,
+    initialMessages:
+      activeChat?.messages.map((msg) => ({
+        id: msg.id,
+        role: msg.role,
+        content: msg.content,
+        createdAt: new Date(),
+      })) ?? [],
+  });
+
+  const {
+    messages: tempMessages,
+    setMessages: setTempMessages,
+    input: tempInput,
+    append: appendTemp,
+    setInput: setTempInput,
+    isLoading: tempLoading,
+  } = useChat({
+    api: "/api/latex-ai/chat",
+    id: "temp",
+  });
+  const tempMentionFiles = useMemo(() => extractMentions(tempInput), [tempInput]);
+  const persistentMentionFiles = useMemo(() => extractMentions(persistentInput), [persistentInput]);
+  const persistentMentionMeta = useMemo(() => {
+    if (persistentMentionFiles.length === 0) return "";
+    return `Mentioned files: ${persistentMentionFiles.join(", ")}`;
+  }, [persistentMentionFiles]);
+  const tempMentionMeta = useMemo(() => {
+    if (tempMentionFiles.length === 0) return "";
+    return `Mentioned files: ${tempMentionFiles.join(", ")}`;
+  }, [tempMentionFiles]);
+  const attachedImagesMeta = useMemo(() => {
+    if (attachedImages.length === 0) return "";
+    return `Attached images: ${attachedImages.join(", ")}`;
+  }, [attachedImages]);
+  const persistentChatContext = useMemo(
+    () =>
+      [
+        selectionContextMeta,
+        persistentMentionMeta,
+        attachedImagesMeta,
+        editorValue,
+        selectionContextLines.map((item) => `L${item.line}: ${item.text}`).join("\n"),
+      ]
+        .filter(Boolean)
+        .join("\n\n"),
+    [selectionContextMeta, persistentMentionMeta, attachedImagesMeta, editorValue, selectionContextLines]
+  );
+  const tempChatContext = useMemo(
+    () =>
+      [
+        selectionContextMeta,
+        tempMentionMeta,
+        attachedImagesMeta,
+        editorValue,
+        selectionContextLines.map((item) => `L${item.line}: ${item.text}`).join("\n"),
+      ]
+        .filter(Boolean)
+        .join("\n\n"),
+    [selectionContextMeta, tempMentionMeta, attachedImagesMeta, editorValue, selectionContextLines]
+  );
+  const lastTempAssistantIndex = getLastAssistantIndex(tempMessages);
+
+  const handleClearTempChat = useCallback(() => {
+    setTempMessages([]);
+    setTempMessageRunIds({});
+    tempPersistedIdsRef.current = new Set();
+    void deleteLatexAiTempMessages(problemId).catch((error) => {
+      console.warn("Failed to clear temp chat", error);
+    });
+  }, [setTempMessages, problemId]);
+
+  const isUuid = useCallback(
+    (value: string) =>
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+        value
+      ),
+    []
+  );
 
   const canEdit = useMemo(() => {
     if (!user || !problem) return false;
     return user.id === problem.author.id;
   }, [user, problem]);
+
 
   const loadProblem = useCallback(async () => {
     try {
@@ -347,6 +642,7 @@ export default function LabPage({ params }: PageProps) {
       if (!doc || !canvas) return;
       const page = await doc.getPage(pageNumber);
       const viewport = page.getViewport({ scale: zoom });
+      pdfViewportRef.current = viewport;
       const context = canvas.getContext("2d");
       if (!context) return;
       canvas.width = viewport.width;
@@ -481,30 +777,231 @@ export default function LabPage({ params }: PageProps) {
       ],
     });
 
+    if (!completionProviderRef.current) {
+      completionProviderRef.current = true;
+      monaco.languages.registerCompletionItemProvider(LATEX_LANGUAGE_ID, {
+        triggerCharacters: ["\\", "{", "$"],
+        provideCompletionItems: (model, position) => {
+          const word = model.getWordUntilPosition(position);
+          const range = {
+            startLineNumber: position.lineNumber,
+            endLineNumber: position.lineNumber,
+            startColumn: word.startColumn,
+            endColumn: word.endColumn,
+          };
+
+          const snippet = monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet;
+          const kind = monaco.languages.CompletionItemKind;
+
+          const suggestions = [
+            {
+              label: "section",
+              kind: kind.Function,
+              insertText: "\\\\section{${1:Título}}\\n$0",
+              range,
+              insertTextRules: snippet,
+            },
+            {
+              label: "subsection",
+              kind: kind.Function,
+              insertText: "\\\\subsection{${1:Título}}\\n$0",
+              range,
+              insertTextRules: snippet,
+            },
+            {
+              label: "subsubsection",
+              kind: kind.Function,
+              insertText: "\\\\subsubsection{${1:Título}}\\n$0",
+              range,
+              insertTextRules: snippet,
+            },
+            {
+              label: "begin...end",
+              kind: kind.Snippet,
+              insertText: "\\\\begin{${1:env}}\\n  $0\\n\\\\end{${1:env}}",
+              range,
+              insertTextRules: snippet,
+            },
+            {
+              label: "itemize",
+              kind: kind.Snippet,
+              insertText: "\\\\begin{itemize}\\n  \\\\item $0\\n\\\\end{itemize}",
+              range,
+              insertTextRules: snippet,
+            },
+            {
+              label: "enumerate",
+              kind: kind.Snippet,
+              insertText: "\\\\begin{enumerate}\\n  \\\\item $0\\n\\\\end{enumerate}",
+              range,
+              insertTextRules: snippet,
+            },
+            {
+              label: "align",
+              kind: kind.Snippet,
+              insertText: "\\\\begin{align}\\n  $0\\n\\\\end{align}",
+              range,
+              insertTextRules: snippet,
+            },
+            {
+              label: "equation",
+              kind: kind.Snippet,
+              insertText: "\\\\begin{equation}\\n  $0\\n\\\\end{equation}",
+              range,
+              insertTextRules: snippet,
+            },
+            {
+              label: "figure",
+              kind: kind.Snippet,
+              insertText:
+                "\\\\begin{figure}[ht]\\n  \\\\centering\\n  \\\\includegraphics[width=${1:\\\\linewidth}]{${2:figura}}\\n  \\\\caption{${3:Caption}}\\n  \\\\label{fig:${4:label}}\\n\\\\end{figure}",
+              range,
+              insertTextRules: snippet,
+            },
+            {
+              label: "table",
+              kind: kind.Snippet,
+              insertText:
+                "\\\\begin{table}[ht]\\n  \\\\centering\\n  \\\\caption{${1:Caption}}\\n  \\\\label{tab:${2:label}}\\n  \\\\begin{tabular}{${3:c}}\\n    $0\\n  \\\\end{tabular}\\n\\\\end{table}",
+              range,
+              insertTextRules: snippet,
+            },
+            {
+              label: "cite",
+              kind: kind.Function,
+              insertText: "\\\\cite{${1:key}}",
+              range,
+              insertTextRules: snippet,
+            },
+            {
+              label: "ref",
+              kind: kind.Function,
+              insertText: "\\\\ref{${1:label}}",
+              range,
+              insertTextRules: snippet,
+            },
+            {
+              label: "label",
+              kind: kind.Function,
+              insertText: "\\\\label{${1:label}}",
+              range,
+              insertTextRules: snippet,
+            },
+            {
+              label: "inline math",
+              kind: kind.Snippet,
+              insertText: "$${1:}$$",
+              range,
+              insertTextRules: snippet,
+            },
+            {
+              label: "display math",
+              kind: kind.Snippet,
+              insertText: "\\\\[\\n  $0\\n\\\\]",
+              range,
+              insertTextRules: snippet,
+            },
+          ];
+
+          return { suggestions };
+        },
+      });
+    }
+
     monaco.editor.defineTheme("proofmesh-latex", {
       base: "vs-dark",
       inherit: true,
       rules: [
-        { token: "comment", foreground: "6B7280" },
-        { token: "keyword", foreground: "93C5FD" },
-        { token: "string", foreground: "FBBF24" },
-        { token: "delimiter", foreground: "9CA3AF" },
+        { token: "comment", foreground: "525252" },
+        { token: "keyword", foreground: "7dd3fc" },
+        { token: "string", foreground: "fcd34d" },
+        { token: "delimiter", foreground: "737373" },
       ],
       colors: {
-        "editor.background": "#080808",
-        "editorLineNumber.foreground": "#3F3F46",
-        "editorCursor.foreground": "#F5F5F5",
-        "editor.selectionBackground": "#3B82F63A",
+        "editor.background": "#0a0a0a",
+        "editorLineNumber.foreground": "#333333",
+        "editorLineNumber.activeForeground": "#525252",
+        "editorCursor.foreground": "#e5e5e5",
+        "editorCursor.background": "#0a0a0a",
+        "editor.selectionBackground": "rgba(180, 180, 180, 0.18)",
+        "editor.inactiveSelectionBackground": "rgba(140, 140, 140, 0.1)",
+        "editor.selectionHighlightBackground": "rgba(180, 180, 180, 0.12)",
+        "editor.findMatchBackground": "rgba(180, 180, 180, 0.2)",
+        "editor.findMatchHighlightBackground": "rgba(180, 180, 180, 0.12)",
+        "editor.findRangeHighlightBackground": "rgba(180, 180, 180, 0.12)",
+        "editor.wordHighlightBackground": "rgba(140, 140, 140, 0.18)",
+        "editor.wordHighlightStrongBackground": "rgba(140, 140, 140, 0.25)",
+        "editor.wordHighlightTextBackground": "rgba(140, 140, 140, 0.18)",
+        "diffEditor.insertedTextBackground": "rgba(160, 160, 160, 0.12)",
+        "diffEditor.insertedLineBackground": "rgba(160, 160, 160, 0.08)",
+        "diffEditor.removedTextBackground": "rgba(160, 160, 160, 0.12)",
+        "diffEditor.removedLineBackground": "rgba(160, 160, 160, 0.08)",
+        "editor.lineHighlightBackground": "#0a0a0a",
+        "editor.lineHighlightBorder": "#0a0a0a",
+        "editor.rangeHighlightBackground": "#00000000",
+        "editor.symbolHighlightBackground": "#00000000",
+        "editorWhitespace.foreground": "#262626",
+        "editorIndentGuide.background": "#1a1a1a",
+        "editorIndentGuide.activeBackground": "#2a2a2a",
+        "editorError.foreground": "#f87171",
+        "editorError.background": "#00000000",
+        "editorError.border": "#00000000",
+        "editorWarning.foreground": "#fbbf24",
+        "editorWarning.background": "#00000000",
+        "editorWarning.border": "#00000000",
+        "editorInfo.foreground": "#60a5fa",
+        "editorInfo.background": "#00000000",
+        "editorInfo.border": "#00000000",
+        "editorHint.foreground": "#a3a3a3",
+        "editorHint.background": "#00000000",
+        "editorHint.border": "#00000000",
       },
     });
   }, []);
 
   const handleEditorMount = useCallback((editor: any, monaco: Monaco) => {
+    editorRef.current = editor;
+    monacoRef.current = monaco;
     monaco.editor.setTheme("proofmesh-latex");
     const model = editor?.getModel?.();
     if (model) {
       monaco.editor.setModelLanguage(model, LATEX_LANGUAGE_ID);
     }
+
+    editor.onDidChangeCursorSelection(() => {
+      const selection = editor.getSelection();
+      if (!selection || selection.isEmpty()) {
+        setSelectionBox(null);
+        setSelectionContextLines([]);
+        setContextDismissed(true);
+        return;
+      }
+      const endPos = selection.getEndPosition();
+      const coords = editor.getScrolledVisiblePosition(endPos);
+      const domNode = editor.getDomNode();
+      if (!coords || !domNode) return;
+      const rect = domNode.getBoundingClientRect();
+      setSelectionBox({
+        top: rect.top + coords.top - 42,
+        left: rect.left + coords.left - 20,
+      });
+
+      const model = editor.getModel?.();
+      if (!model) return;
+      const startLine = selection.startLineNumber;
+      const endLine = selection.endLineNumber;
+      const lines: Array<{ line: number; text: string }> = [];
+      for (let line = startLine; line <= endLine; line += 1) {
+        const text = model.getLineContent(line).trim();
+        lines.push({ line, text });
+        if (lines.length >= 4) break;
+      }
+      const filtered = lines.filter((item) => item.text.length > 0);
+      if (filtered.length > 0) {
+        setSelectionContextLines(filtered);
+        setContextDismissed(false);
+      }
+    });
   }, []);
 
   const handleSelectFile = useCallback(
@@ -631,6 +1128,12 @@ export default function LabPage({ params }: PageProps) {
     [activePath]
   );
 
+  const handleCloseAllTabs = useCallback(() => {
+    setOpenTabs([DEFAULT_MAIN]);
+    setActivePath(DEFAULT_MAIN);
+    setActivePersistentChatId(null);
+  }, []);
+
   const startRename = useCallback((path: string) => {
     setRenameTarget(path);
     setRenameValue(path);
@@ -661,6 +1164,11 @@ export default function LabPage({ params }: PageProps) {
   const handleUploadClick = useCallback(() => {
     if (!canEdit) return;
     uploadInputRef.current?.click();
+  }, [canEdit]);
+
+  const handleImageUploadClick = useCallback(() => {
+    if (!canEdit) return;
+    imageUploadRef.current?.click();
   }, [canEdit]);
 
   const handleUpload = useCallback(
@@ -695,6 +1203,92 @@ export default function LabPage({ params }: PageProps) {
     [problemId, refreshFiles]
   );
 
+  const insertAtCursor = useCallback((text: string) => {
+    const editor = editorRef.current;
+    const monaco = monacoRef.current;
+    const model = editor?.getModel?.();
+    if (!editor || !monaco || !model) return;
+    const selection = editor.getSelection?.();
+    if (!selection) return;
+    editor.executeEdits(
+      "user-insert",
+      [
+        {
+          range: selection,
+          text,
+          forceMoveMarkers: true,
+        },
+      ]
+    );
+    editor.focus?.();
+  }, []);
+
+  const ensureGraphicxPackage = useCallback(() => {
+    const editor = editorRef.current;
+    const monaco = monacoRef.current;
+    const model = editor?.getModel?.();
+    if (!editor || !monaco || !model) return;
+    const value = model.getValue();
+    if (value.includes("\\usepackage{graphicx}")) return;
+    const lines = value.split("\n");
+    const docClassIndex = lines.findIndex((line) => line.startsWith("\\documentclass"));
+    const insertLine = docClassIndex >= 0 ? docClassIndex + 1 : 0;
+    const range = new monaco.Range(insertLine + 1, 1, insertLine + 1, 1);
+    editor.executeEdits("user-insert", [
+      { range, text: "\\usepackage{graphicx}\n", forceMoveMarkers: true },
+    ]);
+  }, []);
+
+  const handleImageUpload = useCallback(async (file: File) => {
+    if (!file) return;
+    const basePath = "assets";
+    const fullPath = `${basePath}/${file.name}`;
+    const base64 = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = typeof reader.result === "string" ? reader.result : "";
+        const commaIndex = result.indexOf(",");
+        if (commaIndex === -1) {
+          reject(new Error("Failed to read file"));
+          return;
+        }
+        resolve(result.slice(commaIndex + 1));
+      };
+      reader.onerror = () => reject(reader.error || new Error("Failed to read file"));
+      reader.readAsDataURL(file);
+    });
+    await putLatexFile(problemId, fullPath, {
+      content_base64: base64,
+      content_type: file.type || "application/octet-stream",
+    });
+    await refreshFiles();
+    ensureGraphicxPackage();
+    insertAtCursor(`\\includegraphics[width=\\linewidth]{${fullPath}}\n`);
+    setAttachedImages((prev) => (prev.includes(fullPath) ? prev : [...prev, fullPath]));
+  }, [problemId, refreshFiles, ensureGraphicxPackage, insertAtCursor]);
+
+  const getMentionSuggestions = useCallback(
+    (query: string) => {
+      const normalized = query.toLowerCase();
+      return files
+        .map((file) => file.path)
+        .filter((path) => path.toLowerCase().includes(normalized))
+        .slice(0, 8);
+    },
+    [files]
+  );
+
+  const applyMention = useCallback(
+    (value: string, path: string, setValue: (next: string) => void) => {
+      const next = value.replace(/@([A-Za-z0-9._\\/-]*)$/, `@${path} `);
+      setValue(next);
+      setMentionOpen(null);
+      setMentionQuery("");
+      setMentionIndex(0);
+    },
+    []
+  );
+
   const toggleDir = useCallback((path: string) => {
     setExpandedDirs((prev) => {
       const next = new Set(prev);
@@ -727,23 +1321,1341 @@ export default function LabPage({ params }: PageProps) {
     setPdfZoom(1);
   }, []);
 
-  const handleSendAi = useCallback(() => {
-    const trimmed = aiInput.trim();
-    if (!trimmed) return;
-    const now = new Date();
-    const timestamp = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-    setAiMessages((prev) => [
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState<Error | null>(null);
+
+  const handleCreatePersistentChat = useCallback(() => {
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const createdAt = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    const title = `New chat`;
+    setPersistentChats((prev) => [
       ...prev,
-      { id: `${Date.now()}-user`, role: "user", content: trimmed, timestamp },
       {
-        id: `${Date.now()}-assistant`,
-        role: "assistant",
-        content: "Análisis en curso. Puedo proponer cambios y aplicar fixes en el editor.",
-        timestamp,
+        id,
+        title,
+        createdAt,
+        messages: [],
       },
     ]);
-    setAiInput("");
-  }, [aiInput]);
+    setActivePersistentChatId(id);
+    setLeftTab("chats");
+  }, []);
+
+  const parseNdjsonLine = useCallback((line: string) => {
+    try {
+      return JSON.parse(line);
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const normalizeEdits = useCallback(
+    (
+      edits: Array<{ start: { line: number; column: number }; end: { line: number; column: number }; text: string }>,
+      options?: { ignoreSelection?: boolean }
+    ) =>
+      edits
+        .filter((edit) => edit && edit.start && edit.end)
+        .map((edit) => ({
+          ...edit,
+          start: {
+            line: Math.max(1, Number(edit.start.line || 1)),
+            column: Math.max(1, Number(edit.start.column || 1)),
+          },
+          end: {
+            line: Math.max(1, Number(edit.end.line || 1)),
+            column: Math.max(1, Number(edit.end.column || 1)),
+          },
+        }))
+        .filter((edit) => {
+          // DEBUG: Log filtering logic
+          if (options?.ignoreSelection || !pendingSelection) return true;
+          const { startLine, startColumn, endLine, endColumn } = pendingSelection;
+
+          // Safety: If selection is a single point (cursor), ignore it as a constraint
+          if (startLine === endLine && startColumn === endColumn) return true;
+
+          const withinStart =
+            edit.start.line > startLine ||
+            (edit.start.line === startLine && edit.start.column >= startColumn);
+          const withinEnd =
+            edit.end.line < endLine || (edit.end.line === endLine && edit.end.column <= endColumn);
+
+          if (!withinStart || !withinEnd) {
+            console.warn("Edit rejected by selection constraint", { edit, pendingSelection });
+          }
+          return withinStart && withinEnd;
+        })
+        .sort((a, b) => {
+          if (a.start.line !== b.start.line) return b.start.line - a.start.line;
+          return b.start.column - a.start.column;
+        }),
+    [pendingSelection]
+  );
+
+  const renderDiffDecorations = useCallback(
+    (changes: typeof aiChanges, activeIndex: number) => {
+      const editor = editorRef.current;
+      const monaco = monacoRef.current;
+      const model = editor?.getModel?.();
+      if (!editor || !monaco || !model) return;
+      const decorations = changes.flatMap((change, index) => {
+        const isActive = index === activeIndex;
+        const edit = change.edit;
+        const range = new monaco.Range(edit.start.line, edit.start.column, edit.end.line, edit.end.column);
+        const isPureDelete = change.removedLines > 0 && !edit.text;
+        const removed = isPureDelete
+          ? [{
+            range: new monaco.Range(edit.start.line, 1, edit.start.line, 1),
+            options: {
+              className: `pm-diff-removed${isActive ? " pm-diff-active" : ""}`,
+              linesDecorationsClassName: "pm-diff-removed-gutter",
+              isWholeLine: true,
+            },
+          }]
+          : [];
+        const added = edit.text
+          ? (() => {
+            const lines = edit.text.split("\n");
+            const startLine = edit.start.line;
+            const startColumn = edit.start.column;
+            const endLine = startLine + lines.length - 1;
+            const endColumn =
+              lines.length === 1 ? startColumn + lines[0].length : lines[lines.length - 1].length + 1;
+            return [{
+              range: new monaco.Range(startLine, startColumn, endLine, endColumn),
+              options: {
+                className: `pm-diff-added${isActive ? " pm-diff-active" : ""}`,
+                inlineClassName: `pm-diff-added-inline${isActive ? " pm-diff-active" : ""}`,
+                linesDecorationsClassName: "pm-diff-added-gutter",
+              },
+            }];
+          })()
+          : [];
+        return [...removed, ...added];
+      });
+      aiDiffDecorationsRef.current = editor.deltaDecorations(aiDiffDecorationsRef.current, decorations);
+    },
+    []
+  );
+
+  const clearDiffDecorations = useCallback(() => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    aiDiffDecorationsRef.current = editor.deltaDecorations(aiDiffDecorationsRef.current, []);
+  }, []);
+
+  const clearSelectionContext = useCallback(() => {
+    setSelectionContextLines([]);
+    setContextDismissed(true);
+  }, []);
+
+  const applyEdits = useCallback(
+    (edits: Array<{ start: { line: number; column: number }; end: { line: number; column: number }; text: string }>, summary?: string) => {
+      const editor = editorRef.current;
+      const model = editor?.getModel?.();
+      const monaco = monacoRef.current;
+      if (!editor || !model || !monaco || edits.length === 0) return false;
+
+      const safeEdits = normalizeEdits(edits);
+
+      if (safeEdits.length === 0) return false;
+
+      if (!aiReviewSnapshotRef.current) {
+        aiReviewSnapshotRef.current = model.getValue();
+        aiReviewEditsRef.current = 0;
+      }
+
+      const removedLineCounts: number[] = [];
+      const applyNowEdits: typeof safeEdits = [];
+
+      safeEdits.forEach((edit, index) => {
+        const range = new monaco.Range(
+          edit.start.line,
+          edit.start.column,
+          edit.end.line,
+          edit.end.column
+        );
+        const oldText = model.getValueInRange(range);
+        removedLineCounts[index] = countLines(oldText);
+        if (edit.text) {
+          applyNowEdits.push(edit);
+        }
+      });
+
+      if (applyNowEdits.length > 0) {
+        editor.pushUndoStop?.();
+        editor.executeEdits(
+          "ai-edit",
+          applyNowEdits.map((edit) => ({
+            range: new monaco.Range(
+              edit.start.line,
+              edit.start.column,
+              edit.end.line,
+              edit.end.column
+            ),
+            text: edit.text ?? "",
+            forceMoveMarkers: true,
+          }))
+        );
+        editor.pushUndoStop?.();
+      }
+      const changeItems = safeEdits.map((edit, index) => {
+        const addedLines = countLines(edit.text);
+        const removedLines = removedLineCounts[index] || 0;
+        const runId = aiRunIdRef.current;
+        return {
+          id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          key: makeEditKey(runId ?? null, activePath, edit),
+          edit,
+          hasInsert: addedLines > 0,
+          hasRemove: removedLines > 0,
+          addedLines,
+          removedLines,
+          summary,
+          filePath: activePath,
+          runId: runId || undefined,
+          status: "pending" as const,
+        };
+      });
+      setAiChanges((prev) => {
+        const next = [...prev, ...changeItems];
+        setAiChangeIndex(next.length - 1);
+        return next;
+      });
+      if (aiRunIdRef.current) {
+        setAiChangeLog((prev) => {
+          const existing = prev[aiRunIdRef.current!] || [];
+          return { ...prev, [aiRunIdRef.current!]: [...existing, ...changeItems] };
+        });
+      }
+      aiReviewEditsRef.current += safeEdits.length;
+      setAiReviewOpen(true);
+      return true;
+    },
+    [normalizeEdits, activePath]
+  );
+
+  const applyEditsRaw = useCallback(
+    (edits: Array<{ start: { line: number; column: number }; end: { line: number; column: number }; text: string }>) => {
+      const editor = editorRef.current;
+      const model = editor?.getModel?.();
+      const monaco = monacoRef.current;
+      if (!editor || !model || !monaco || edits.length === 0) return false;
+      const safeEdits = normalizeEdits(edits, { ignoreSelection: true });
+      if (safeEdits.length === 0) return false;
+      editor.pushUndoStop?.();
+      editor.executeEdits(
+        "ai-edit",
+        safeEdits.map((edit) => ({
+          range: new monaco.Range(
+            edit.start.line,
+            edit.start.column,
+            edit.end.line,
+            edit.end.column
+          ),
+          text: edit.text ?? "",
+          forceMoveMarkers: true,
+        }))
+      );
+      editor.pushUndoStop?.();
+      return true;
+    },
+    [normalizeEdits]
+  );
+
+  const snapshotVersion = useCallback(() => {
+    const editor = editorRef.current;
+    const model = editor?.getModel?.();
+    if (!model) return;
+    const content = model.getValue();
+    const now = new Date();
+    setAiHistory((prev) => [
+      {
+        id: `${Date.now()}`,
+        timestamp: now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        summary: "AI edit",
+        content,
+      },
+      ...prev,
+    ]);
+  }, []);
+
+  const runEdit = useCallback(
+    async (instruction: string, options?: { forceEdit?: boolean }) => {
+      const trimmed = instruction.trim();
+      if (!trimmed || aiStatus === "sending") return;
+      const forceEdit = Boolean(options?.forceEdit);
+
+      const editor = editorRef.current;
+      const model = editor?.getModel?.();
+      const selection = editor?.getSelection?.();
+      if (!editor || !model) return;
+
+      const selectionText = selection ? model.getValueInRange(selection) : "";
+      const content = model.getValue();
+
+      setAiChanges([]);
+      setAiChangeIndex(0);
+      aiReviewSnapshotRef.current = null;
+      aiReviewEditsRef.current = 0;
+      aiSeenEditsRef.current = new Set();
+      clearDiffDecorations();
+
+      const isSelectionEmpty = selection?.isEmpty() ?? true;
+
+      setPendingSelection(
+        selection && !isSelectionEmpty
+          ? {
+            startLine: selection.startLineNumber,
+            startColumn: selection.startColumn,
+            endLine: selection.endLineNumber,
+            endColumn: selection.endColumn,
+          }
+          : null
+      );
+
+      snapshotVersion();
+      setAiContext({
+        filePath: activePath,
+        selection: selectionText,
+        instruction: trimmed,
+      });
+      setAiApplying(true);
+      setAiStatus("sending");
+      setAiInput("");
+      setAiLoading(true);
+      setAiError(null);
+      setAiThoughts([]);
+
+      let runId = "";
+      let timestamp = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      try {
+        const run = await createLatexAiRun(problemId, {
+          prompt: trimmed,
+          file_path: activePath,
+          selection: selectionText || undefined,
+        });
+        runId = run.id;
+        aiPersistRef.current = true;
+        aiRunIdRef.current = runId;
+        timestamp = toLocalTime(run.created_at) || timestamp;
+        setAiRuns((prev) => [
+          {
+            id: runId,
+            prompt: trimmed,
+            steps: [],
+            edits: [],
+            filePath: activePath,
+            selection: selectionText,
+            timestamp,
+            summary: run.summary || undefined,
+          },
+          ...prev,
+        ]);
+        setAiMessages((prev) => [
+          ...prev,
+          { id: `${runId}-user`, role: "user", content: trimmed, timestamp, runId },
+        ]);
+        void createLatexAiMessage(problemId, {
+          role: "user",
+          content: trimmed,
+          run_id: runId,
+        }).catch((error) => {
+          console.warn("Failed to persist AI message", error);
+        });
+      } catch (error) {
+        console.warn("AI store unavailable, falling back to local session", error);
+        runId = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+        aiPersistRef.current = false;
+        aiRunIdRef.current = runId;
+        setAiRuns((prev) => [
+          {
+            id: runId,
+            prompt: trimmed,
+            steps: [],
+            edits: [],
+            filePath: activePath,
+            selection: selectionText,
+            timestamp,
+          },
+          ...prev,
+        ]);
+        setAiMessages((prev) => [
+          ...prev,
+          { id: `${runId}-user`, role: "user", content: trimmed, timestamp, runId },
+        ]);
+      }
+
+      aiStreamAbortRef.current?.abort();
+      const controller = new AbortController();
+      aiStreamAbortRef.current = controller;
+
+      let failed = false;
+      try {
+        const response = await fetch("/api/latex-ai/edit", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            instruction: trimmed,
+            file_path: activePath,
+            selection: selectionText || undefined,
+            content,
+            memory: aiMemory || undefined,
+            force_edit: forceEdit,
+            model_id: aiModelId,
+          }),
+          signal: controller.signal,
+        });
+
+        if (!response.ok || !response.body) {
+          throw new Error(await response.text());
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          let index = buffer.indexOf("\n");
+          while (index !== -1) {
+            const line = buffer.slice(0, index).trim();
+            buffer = buffer.slice(index + 1);
+            if (line) {
+              const payload = parseNdjsonLine(line);
+              if (payload?.type === "comment" && payload.text) {
+                const text = String(payload.text);
+                if (text.startsWith("Thinking:")) {
+                  setAiThoughts((prev) => [...prev, text.replace("Thinking:", "").trim()]);
+                  continue;
+                }
+                const currentRunId = aiRunIdRef.current;
+                const timestamp = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+                setAiMessages((prev) => [
+                  ...prev,
+                  {
+                    id: `${aiRunIdRef.current}-assistant-${Date.now()}`,
+                    role: "assistant",
+                    content: text,
+                    timestamp,
+                    runId: aiRunIdRef.current || undefined,
+                  },
+                ]);
+                // Sync with visible temp messages
+                const tempMsgId = `${aiRunIdRef.current}-comment-${Date.now()}`;
+                setTempMessages((prev) => [
+                  ...prev,
+                  {
+                    id: tempMsgId,
+                    role: "assistant",
+                    content: text,
+                    createdAt: new Date(),
+                  },
+                ]);
+                if (aiRunIdRef.current) {
+                  setTempMessageRunIds((prev) => ({ ...prev, [tempMsgId]: aiRunIdRef.current as string }));
+                }
+                setAiRuns((prev) =>
+                  prev.map((run) =>
+                    run.id === aiRunIdRef.current
+                      ? { ...run, steps: [...run.steps, text] }
+                      : run
+                  )
+                );
+                if (currentRunId && aiPersistRef.current && isUuid(currentRunId)) {
+                  // Sync with visible persistent messages
+                  setPersistentMessages((prev) => [
+                    ...prev,
+                    {
+                      id: `${aiRunIdRef.current}-comment-persistent-${Date.now()}`,
+                      role: "assistant",
+                      content: text,
+                      createdAt: new Date(),
+                    },
+                  ]);
+                  void createLatexAiMessage(problemId, {
+                    role: "assistant",
+                    content: text,
+                    run_id: currentRunId,
+                  }).catch((error) => {
+                    console.warn("Failed to persist AI message", error);
+                  });
+                  void appendLatexAiRunStep(problemId, currentRunId, text).catch((error) => {
+                    console.warn("Failed to persist AI step", error);
+                  });
+                }
+              }
+              if (payload?.type === "edit" && Array.isArray(payload.edits)) {
+                const currentRunId = aiRunIdRef.current;
+                const nextEdits = payload.edits.filter(
+                  (edit: { start: { line: number; column: number }; end: { line: number; column: number }; text: string }) => {
+                    const key = makeEditKey(currentRunId, activePath, edit);
+                    if (aiSeenEditsRef.current.has(key)) return false;
+                    aiSeenEditsRef.current.add(key);
+                    return true;
+                  }
+                );
+                if (nextEdits.length > 0) {
+                  applyEdits(nextEdits);
+                }
+                setAiRuns((prev) =>
+                  prev.map((run) =>
+                    run.id === aiRunIdRef.current
+                      ? { ...run, edits: [...run.edits, ...payload.edits] }
+                      : run
+                  )
+                );
+                if (currentRunId && aiPersistRef.current && isUuid(currentRunId)) {
+                  payload.edits.forEach((edit: { start: { line: number; column: number }; end: { line: number; column: number }; text: string }) => {
+                    void appendLatexAiRunEdit(problemId, currentRunId, edit.start, edit.end, edit.text).catch((error) => {
+                      console.warn("Failed to persist AI edit", error);
+                    });
+                  });
+                }
+              }
+              if (payload?.type === "summary" && payload.text) {
+                const summary = String(payload.text);
+                setAiRuns((prev) =>
+                  prev.map((run) =>
+                    run.id === aiRunIdRef.current ? { ...run, summary } : run
+                  )
+                );
+                // Also update aiChanges for the current run if they exist
+                setAiChanges((prev) =>
+                  prev.map((change) =>
+                    change.summary === undefined ? { ...change, summary } : change
+                  )
+                );
+                setAiHistory((prev) => {
+                  if (prev.length === 0) return prev;
+                  const [first, ...rest] = prev;
+                  return [{ ...first, summary }, ...rest];
+                });
+                const currentRunId = aiRunIdRef.current;
+                if (currentRunId && aiPersistRef.current && isUuid(currentRunId)) {
+                  void updateLatexAiRunSummary(problemId, currentRunId, summary).catch((error) => {
+                    console.warn("Failed to persist AI summary", error);
+                  });
+                }
+              }
+              if (payload?.type === "result") {
+                const { comment, summary, edits, updated_content } = payload;
+                const currentRunId = aiRunIdRef.current;
+                if (comment) {
+                  // Final explanation
+                  setAiMessages((prev) => {
+                    const exists = prev.some(m => m.content === comment);
+                    if (exists) return prev;
+                    return [...prev, {
+                      id: `${aiRunIdRef.current}-final-comment-${Date.now()}`,
+                      role: "assistant",
+                      content: comment,
+                      timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+                      runId: aiRunIdRef.current || undefined,
+                    }];
+                  });
+                  const tempFinalId = `${aiRunIdRef.current}-final-temp-${Date.now()}`;
+                  setTempMessages((prev) => {
+                    const exists = prev.some(m => m.content === comment);
+                    if (exists) return prev;
+                    return [...prev, {
+                      id: tempFinalId,
+                      role: "assistant",
+                      content: comment,
+                      createdAt: new Date(),
+                    }];
+                  });
+                  if (aiRunIdRef.current) {
+                    setTempMessageRunIds((prev) => ({ ...prev, [tempFinalId]: aiRunIdRef.current as string }));
+                  }
+                  if (currentRunId && aiPersistRef.current && isUuid(currentRunId)) {
+                    setPersistentMessages((prev) => {
+                      const exists = prev.some(m => m.content === comment);
+                      if (exists) return prev;
+                      return [
+                        ...prev,
+                        {
+                          id: `${aiRunIdRef.current}-final-comment-persistent-${Date.now()}`,
+                          role: "assistant",
+                          content: comment,
+                          createdAt: new Date(),
+                        },
+                      ];
+                    });
+                    void createLatexAiMessage(problemId, {
+                      role: "assistant",
+                      content: comment,
+                      run_id: currentRunId,
+                    }).catch((error) => {
+                      console.warn("Failed to persist AI message", error);
+                    });
+                  }
+                }
+                if (summary) {
+                  setAiRuns((prev) => prev.map((run) => run.id === aiRunIdRef.current ? { ...run, summary } : run));
+                  setAiChanges((prev) => prev.map((change) => change.summary === undefined ? { ...change, summary } : change));
+                  setAiHistory((prev) => prev.length === 0 ? prev : [{ ...prev[0], summary }, ...prev.slice(1)]);
+                }
+                if (currentRunId && aiPersistRef.current && isUuid(currentRunId)) {
+                  payload.edits.forEach((edit: { start: { line: number; column: number }; end: { line: number; column: number }; text: string }) => {
+                    void appendLatexAiRunEdit(problemId, currentRunId, edit.start, edit.end, edit.text).catch((error) => {
+                      console.warn("Failed to persist AI edit", error);
+                    });
+                  });
+                }
+                if (Array.isArray(edits) && edits.length > 0) {
+                  const currentRunId = aiRunIdRef.current;
+                  const nextEdits = edits.filter(
+                    (edit: { start: { line: number; column: number }; end: { line: number; column: number }; text: string }) => {
+                      const key = makeEditKey(currentRunId, activePath, edit);
+                      if (aiSeenEditsRef.current.has(key)) return false;
+                      aiSeenEditsRef.current.add(key);
+                      return true;
+                    }
+                  );
+                  if (nextEdits.length > 0) {
+                    applyEdits(nextEdits);
+                  }
+                  setAiRuns((prev) => prev.map((run) => run.id === aiRunIdRef.current ? { ...run, edits: [...run.edits, ...edits] } : run));
+                  const changeItems = nextEdits.map((edit, idx) => {
+                    const addedLines = countLines(edit.text);
+                    const removedLines = estimateRemovedLines(edit);
+                    const runId = aiRunIdRef.current;
+                    return {
+                      id: `${aiRunIdRef.current}-edit-res-${idx}-${Date.now()}`,
+                      key: makeEditKey(runId ?? null, activePath, edit),
+                      edit,
+                      hasInsert: addedLines > 0,
+                      hasRemove: removedLines > 0,
+                      addedLines,
+                      removedLines,
+                      summary: summary || undefined,
+                      filePath: activePath,
+                      runId: runId || undefined,
+                      status: "pending" as const,
+                    };
+                  });
+                  setAiChanges((prev) => [...prev, ...changeItems]);
+                  if (aiRunIdRef.current) {
+                    const runKey = aiRunIdRef.current;
+                    setAiChangeLog((prev) => ({
+                      ...prev,
+                      [runKey]: [...(prev[runKey] || []), ...changeItems],
+                    }));
+                  }
+                } else if (updated_content) {
+                  const lines = editorValue.split("\n");
+                  const endLine = Math.max(1, lines.length);
+                  const endColumn = lines.length ? lines[lines.length - 1].length + 1 : 1;
+                  const fallbackEdit = [{ start: { line: 1, column: 1 }, end: { line: endLine, column: endColumn }, text: String(updated_content) }];
+                  applyEdits(fallbackEdit);
+                  setAiRuns((prev) => prev.map((run) => run.id === aiRunIdRef.current ? { ...run, edits: [...run.edits, ...fallbackEdit] } : run));
+                  const fallbackItem = (() => {
+                    const addedLines = countLines(fallbackEdit[0].text);
+                    const removedLines = estimateRemovedLines(fallbackEdit[0]);
+                    const runId = aiRunIdRef.current;
+                    return {
+                      id: `${aiRunIdRef.current}-edit-fallback-${Date.now()}`,
+                      key: makeEditKey(runId ?? null, activePath, fallbackEdit[0]),
+                      edit: fallbackEdit[0],
+                      hasInsert: addedLines > 0,
+                      hasRemove: removedLines > 0,
+                      addedLines,
+                      removedLines,
+                      summary: summary || undefined,
+                      filePath: activePath,
+                      runId: runId || undefined,
+                      status: "pending" as const,
+                    };
+                  })();
+                  setAiChanges((prev) => [...prev, fallbackItem]);
+                  if (aiRunIdRef.current) {
+                    const runKey = aiRunIdRef.current;
+                    setAiChangeLog((prev) => ({
+                      ...prev,
+                      [runKey]: [...(prev[runKey] || []), fallbackItem],
+                    }));
+                  }
+                }
+              }
+            }
+            index = buffer.indexOf("\n");
+          }
+        }
+
+        const tail = buffer.trim();
+        if (tail) {
+          const payload = parseNdjsonLine(tail);
+          if (payload?.type === "comment" && payload.text) {
+            const text = String(payload.text);
+            const currentRunId = aiRunIdRef.current;
+            if (text.startsWith("Thinking:")) {
+              setAiThoughts((prev) => [...prev, text.replace("Thinking:", "").trim()]);
+            } else {
+              const timestamp = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+              setAiMessages((prev) => [
+                ...prev,
+                {
+                  id: `${aiRunIdRef.current}-assistant-${Date.now()}`,
+                  role: "assistant",
+                  content: text,
+                  timestamp,
+                  runId: aiRunIdRef.current || undefined,
+                },
+              ]);
+              // ... rest of tail logic ...
+            }
+            // Sync with visible temp messages
+            const tempTailId = `${aiRunIdRef.current}-comment-tail-${Date.now()}`;
+            setTempMessages((prev) => [
+              ...prev,
+              {
+                id: tempTailId,
+                role: "assistant",
+                content: text,
+                createdAt: new Date(),
+              },
+            ]);
+            if (aiRunIdRef.current) {
+              setTempMessageRunIds((prev) => ({ ...prev, [tempTailId]: aiRunIdRef.current as string }));
+            }
+            setAiRuns((prev) =>
+              prev.map((run) =>
+                run.id === aiRunIdRef.current ? { ...run, steps: [...run.steps, text] } : run
+              )
+            );
+            if (currentRunId && aiPersistRef.current && isUuid(currentRunId)) {
+              // Sync with visible persistent messages
+              setPersistentMessages((prev) => [
+                ...prev,
+                {
+                  id: `${aiRunIdRef.current}-comment-persistent-tail-${Date.now()}`,
+                  role: "assistant",
+                  content: text,
+                  createdAt: new Date(),
+                },
+              ]);
+              void createLatexAiMessage(problemId, {
+                role: "assistant",
+                content: text,
+                run_id: currentRunId,
+              }).catch((error) => {
+                console.warn("Failed to persist AI message", error);
+              });
+              void appendLatexAiRunStep(problemId, currentRunId, text).catch((error) => {
+                console.warn("Failed to persist AI step", error);
+              });
+            }
+          }
+          if (payload?.type === "result") {
+            const { comment, summary, edits, updated_content } = payload;
+            const currentRunId = aiRunIdRef.current;
+            if (comment) {
+              setAiMessages((prev) => {
+                const exists = prev.some(m => m.content === comment);
+                if (exists) return prev;
+                return [...prev, {
+                  id: `${aiRunIdRef.current}-final-comment-tail-${Date.now()}`,
+                  role: "assistant",
+                  content: comment,
+                  timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+                  runId: aiRunIdRef.current || undefined,
+                }];
+              });
+              const tempFinalTailId = `${aiRunIdRef.current}-final-temp-tail-${Date.now()}`;
+              setTempMessages((prev) => {
+                const exists = prev.some(m => m.content === comment);
+                if (exists) return prev;
+                return [...prev, {
+                  id: tempFinalTailId,
+                  role: "assistant",
+                  content: comment,
+                  createdAt: new Date(),
+                }];
+              });
+              if (aiRunIdRef.current) {
+                setTempMessageRunIds((prev) => ({ ...prev, [tempFinalTailId]: aiRunIdRef.current as string }));
+              }
+              if (currentRunId && aiPersistRef.current && isUuid(currentRunId)) {
+                setPersistentMessages((prev) => {
+                  const exists = prev.some(m => m.content === comment);
+                  if (exists) return prev;
+                  return [
+                    ...prev,
+                    {
+                      id: `${aiRunIdRef.current}-final-comment-persistent-tail-${Date.now()}`,
+                      role: "assistant",
+                      content: comment,
+                      createdAt: new Date(),
+                    },
+                  ];
+                });
+                void createLatexAiMessage(problemId, {
+                  role: "assistant",
+                  content: comment,
+                  run_id: currentRunId,
+                }).catch((error) => {
+                  console.warn("Failed to persist AI message", error);
+                });
+              }
+            }
+            if (summary) {
+              setAiRuns((prev) => prev.map((run) => run.id === aiRunIdRef.current ? { ...run, summary } : run));
+              setAiChanges((prev) => prev.map((change) => change.summary === undefined ? { ...change, summary } : change));
+            }
+            if (Array.isArray(edits) && edits.length > 0) {
+              const currentRunId = aiRunIdRef.current;
+              const nextEdits = edits.filter(
+                (edit: { start: { line: number; column: number }; end: { line: number; column: number }; text: string }) => {
+                  const key = makeEditKey(currentRunId, activePath, edit);
+                  if (aiSeenEditsRef.current.has(key)) return false;
+                  aiSeenEditsRef.current.add(key);
+                  return true;
+                }
+              );
+              if (nextEdits.length > 0) {
+                applyEdits(nextEdits);
+              }
+              setAiRuns((prev) => prev.map((run) => run.id === aiRunIdRef.current ? { ...run, edits: [...run.edits, ...edits] } : run));
+              const changeItems = nextEdits.map((edit, idx) => {
+                const addedLines = countLines(edit.text);
+                const removedLines = estimateRemovedLines(edit);
+                const runId = aiRunIdRef.current;
+                return {
+                  id: `${aiRunIdRef.current}-edit-res-tail-${idx}-${Date.now()}`,
+                  key: makeEditKey(runId ?? null, activePath, edit),
+                  edit,
+                  hasInsert: addedLines > 0,
+                  hasRemove: removedLines > 0,
+                  addedLines,
+                  removedLines,
+                  summary: summary || undefined,
+                  filePath: activePath,
+                  runId: runId || undefined,
+                  status: "pending" as const,
+                };
+              });
+              setAiChanges((prev) => [...prev, ...changeItems]);
+              if (aiRunIdRef.current) {
+                const runKey = aiRunIdRef.current;
+                setAiChangeLog((prev) => ({
+                  ...prev,
+                  [runKey]: [...(prev[runKey] || []), ...changeItems],
+                }));
+              }
+            } else if (updated_content) {
+              const lines = editorValue.split("\n");
+              const endLine = Math.max(1, lines.length);
+              const endColumn = lines.length ? lines[lines.length - 1].length + 1 : 1;
+              const fallbackEdit = [{ start: { line: 1, column: 1 }, end: { line: endLine, column: endColumn }, text: String(updated_content) }];
+              applyEdits(fallbackEdit);
+              setAiRuns((prev) => prev.map((run) => run.id === aiRunIdRef.current ? { ...run, edits: [...run.edits, ...fallbackEdit] } : run));
+              const fallbackItem = (() => {
+                const addedLines = countLines(fallbackEdit[0].text);
+                const removedLines = estimateRemovedLines(fallbackEdit[0]);
+                const runId = aiRunIdRef.current;
+                return {
+                  id: `${aiRunIdRef.current}-edit-fallback-tail-${Date.now()}`,
+                  key: makeEditKey(runId ?? null, activePath, fallbackEdit[0]),
+                  edit: fallbackEdit[0],
+                  hasInsert: addedLines > 0,
+                  hasRemove: removedLines > 0,
+                  addedLines,
+                  removedLines,
+                  summary: summary || undefined,
+                  filePath: activePath,
+                  runId: runId || undefined,
+                  status: "pending" as const,
+                };
+              })();
+              setAiChanges((prev) => [...prev, fallbackItem]);
+              if (aiRunIdRef.current) {
+                const runKey = aiRunIdRef.current;
+                setAiChangeLog((prev) => ({
+                  ...prev,
+                  [runKey]: [...(prev[runKey] || []), fallbackItem],
+                }));
+              }
+            }
+          }
+        }
+      } catch (error) {
+        console.error("AI request failed", error);
+        setAiError(error as Error);
+        setAiStatus("error");
+        failed = true;
+      } finally {
+        setAiApplying(false);
+        setAiLoading(false);
+        setAiStatus(failed ? "error" : "idle");
+        if (!failed) {
+          try {
+            const response = await fetch("/api/latex-ai/reflect", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                memory: aiMemory,
+                instruction: trimmed,
+                summary: aiRuns.find((run) => run.id === aiRunIdRef.current)?.summary || "",
+                messages: aiMessages.slice(-8),
+              }),
+            });
+            if (response.ok) {
+              const data = await response.json();
+              if (typeof data.memory === "string") {
+                setAiMemory(data.memory);
+              }
+            }
+          } catch (error) {
+            console.warn("Memory reflect failed", error);
+          }
+        }
+      }
+    },
+    [
+      aiStatus,
+      activePath,
+      aiMemory,
+      snapshotVersion,
+      applyEdits,
+      parseNdjsonLine,
+      aiMessages,
+      aiRuns,
+      problemId,
+      toLocalTime,
+      clearDiffDecorations,
+      setPersistentMessages,
+      isUuid,
+    ]
+  );
+
+  const handleSendAi = useCallback(async () => {
+    await runEdit(aiInput);
+  }, [aiInput, runEdit]);
+
+  const handleSendPersistentChat = useCallback(async () => {
+    const text = persistentInput.trim();
+    if (!text || !activePersistentChatId) return;
+    setPersistentInput("");
+    setMentionOpen(null);
+    setMentionQuery("");
+    if (isEditIntent(text)) {
+      setPersistentMessages((prev) => [
+        ...prev,
+        {
+          id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          role: "user",
+          content: text,
+          createdAt: new Date(),
+        },
+      ]);
+      await runEdit(text, { forceEdit: true });
+      return;
+    }
+    await appendPersistent(
+      { role: "user", content: text },
+      {
+        body: {
+          file_path: activePath,
+          model_id: aiModelId,
+          context: persistentChatContext,
+        },
+      }
+    );
+  }, [
+    persistentInput,
+    activePersistentChatId,
+    appendPersistent,
+    setPersistentInput,
+    runEdit,
+    setPersistentMessages,
+    activePath,
+    aiModelId,
+    persistentChatContext,
+  ]);
+
+  const handleStopAi = useCallback(() => {
+    aiStreamAbortRef.current?.abort();
+    setAiLoading(false);
+    setAiApplying(false);
+    setAiStatus("idle");
+  }, []);
+
+  const handleSendTempChat = useCallback(async () => {
+    const text = tempInput.trim();
+    if (!text) return;
+    setTempInput(""); // Immediate reset
+    setMentionOpen(null);
+    setMentionQuery("");
+    if (isEditIntent(text)) {
+      setTempMessages((prev) => [
+        ...prev,
+        {
+          id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          role: "user",
+          content: text,
+          createdAt: new Date(),
+        },
+      ]);
+      await runEdit(text, { forceEdit: true });
+      return;
+    }
+    await appendTemp(
+      { role: "user", content: text },
+      {
+        body: {
+          file_path: activePath,
+          model_id: aiModelId,
+          context: tempChatContext,
+        },
+      }
+    );
+  }, [tempInput, appendTemp, runEdit, setTempMessages, activePath, aiModelId, tempChatContext]);
+
+  const handleAcceptSingle = useCallback((id: string) => {
+    const accepted = aiChanges.find((item) => item.id === id);
+    if (accepted?.runId) {
+      updateLatexAiRun(problemId, accepted.runId, { status: "accepted" }).catch(err => console.warn("Failed to update run status", err));
+    }
+
+    setAiChanges((prev) => {
+      const accepted = prev.find((item) => item.id === id);
+      if (accepted && !accepted.edit.text) {
+        applyEditsRaw([accepted.edit]);
+      }
+      const next = prev.filter((item) => item.id !== id);
+      if (next.length === 0) {
+        aiReviewSnapshotRef.current = null;
+        clearDiffDecorations();
+        setAiReviewOpen(false);
+      }
+      return next;
+    });
+    setAiChangeLog((prev) => {
+      const accepted = aiChanges.find((item) => item.id === id);
+      const acceptedKey = accepted?.key;
+      const next: typeof prev = {};
+      Object.entries(prev).forEach(([runId, items]) => {
+        next[runId] = items.map((item) =>
+          acceptedKey && item.key === acceptedKey ? { ...item, status: "accepted" } : item
+        );
+      });
+      return next;
+    });
+  }, [applyEditsRaw, clearDiffDecorations, problemId, aiChanges]);
+
+  const handleRejectSingle = useCallback((id: string) => {
+    const rejected = aiChanges.find((item) => item.id === id);
+    if (rejected?.runId) {
+      updateLatexAiRun(problemId, rejected.runId, { status: "rejected" }).catch(err => console.warn("Failed to update run status", err));
+    }
+
+    setAiChanges((prev) => {
+      const next = prev.filter((item) => item.id !== id);
+      const editor = editorRef.current;
+      const model = editor?.getModel?.();
+      if (model && aiReviewSnapshotRef.current !== null) {
+        editor.pushUndoStop?.();
+        model.setValue(aiReviewSnapshotRef.current);
+        applyEditsRaw(next.map((n) => n.edit));
+        editor.pushUndoStop?.();
+      }
+      if (next.length === 0) {
+        aiReviewSnapshotRef.current = null;
+        clearDiffDecorations();
+        setAiReviewOpen(false);
+      }
+      return next;
+    });
+    setAiChangeLog((prev) => {
+      const rejected = aiChanges.find((item) => item.id === id);
+      const rejectedKey = rejected?.key;
+      const next: typeof prev = {};
+      Object.entries(prev).forEach(([runId, items]) => {
+        next[runId] = items.map((item) =>
+          rejectedKey && item.key === rejectedKey ? { ...item, status: "rejected" } : item
+        );
+      });
+      return next;
+    });
+  }, [clearDiffDecorations, applyEditsRaw, problemId, aiChanges]);
+
+  const handleAcceptAll = useCallback(() => {
+    const runIds = Array.from(new Set(aiChanges.map((change) => change.runId).filter(Boolean))) as string[];
+    runIds.forEach((runId) => {
+      updateLatexAiRun(problemId, runId, { status: "accepted" }).catch(console.warn);
+    });
+
+    setAiChanges((prev) => {
+      const deletions = prev
+        .filter((change) => !change.edit.text)
+        .map((change) => change.edit);
+      if (deletions.length > 0) {
+        applyEditsRaw(deletions);
+      }
+      return [];
+    });
+    setAiChangeLog((prev) => {
+      const activeKeys = new Set(aiChanges.map((item) => item.key));
+      const next: typeof prev = {};
+      Object.entries(prev).forEach(([runId, items]) => {
+        next[runId] = items.map((item) =>
+          item.status === "pending" && activeKeys.has(item.key) ? { ...item, status: "accepted" } : item
+        );
+      });
+      return next;
+    });
+    aiReviewSnapshotRef.current = null;
+    clearDiffDecorations();
+    setAiReviewOpen(false);
+  }, [applyEditsRaw, clearDiffDecorations, aiChanges, problemId]);
+
+  const handleAcceptIds = useCallback((ids: string[]) => {
+    if (ids.length === 0) return;
+    const runIds = Array.from(
+      new Set(aiChanges.filter((item) => ids.includes(item.id)).map((item) => item.runId).filter(Boolean))
+    ) as string[];
+    runIds.forEach((runId) => {
+      updateLatexAiRun(problemId, runId, { status: "accepted" }).catch(console.warn);
+    });
+    setAiChanges((prev) => {
+      const idSet = new Set(ids);
+      const accepted = prev.filter((item) => idSet.has(item.id));
+      const deletions = accepted.filter((item) => !item.edit.text).map((item) => item.edit);
+      if (deletions.length > 0) {
+        applyEditsRaw(deletions);
+      }
+      const next = prev.filter((item) => !idSet.has(item.id));
+      if (next.length === 0) {
+        aiReviewSnapshotRef.current = null;
+        clearDiffDecorations();
+        setAiReviewOpen(false);
+      }
+      setAiChangeIndex((current) => Math.min(current, Math.max(0, next.length - 1)));
+      return next;
+    });
+    setAiChangeLog((prev) => {
+      const idSet = new Set(ids);
+      const acceptedKeys = new Set(
+        aiChanges.filter((item) => idSet.has(item.id)).map((item) => item.key)
+      );
+      const next: typeof prev = {};
+      Object.entries(prev).forEach(([runId, items]) => {
+        next[runId] = items.map((item) =>
+          acceptedKeys.has(item.key) ? { ...item, status: "accepted" } : item
+        );
+      });
+      return next;
+    });
+  }, [aiChanges, applyEditsRaw, clearDiffDecorations, problemId]);
+
+  const handleRejectIds = useCallback((ids: string[]) => {
+    if (ids.length === 0) return;
+    const runIds = Array.from(
+      new Set(aiChanges.filter((item) => ids.includes(item.id)).map((item) => item.runId).filter(Boolean))
+    ) as string[];
+    runIds.forEach((runId) => {
+      updateLatexAiRun(problemId, runId, { status: "rejected" }).catch(console.warn);
+    });
+    setAiChanges((prev) => {
+      const idSet = new Set(ids);
+      const next = prev.filter((item) => !idSet.has(item.id));
+      const editor = editorRef.current;
+      const model = editor?.getModel?.();
+      if (model && aiReviewSnapshotRef.current !== null) {
+        editor.pushUndoStop?.();
+        model.setValue(aiReviewSnapshotRef.current);
+        applyEditsRaw(next.map((n) => n.edit));
+        editor.pushUndoStop?.();
+      }
+      if (next.length === 0) {
+        aiReviewSnapshotRef.current = null;
+        clearDiffDecorations();
+        setAiReviewOpen(false);
+      }
+      setAiChangeIndex((current) => Math.min(current, Math.max(0, next.length - 1)));
+      return next;
+    });
+    setAiChangeLog((prev) => {
+      const idSet = new Set(ids);
+      const rejectedKeys = new Set(
+        aiChanges.filter((item) => idSet.has(item.id)).map((item) => item.key)
+      );
+      const next: typeof prev = {};
+      Object.entries(prev).forEach(([runId, items]) => {
+        next[runId] = items.map((item) =>
+          rejectedKeys.has(item.key) ? { ...item, status: "rejected" } : item
+        );
+      });
+      return next;
+    });
+  }, [aiChanges, applyEditsRaw, clearDiffDecorations, problemId]);
+
+  const handleRejectAll = useCallback(() => {
+    const runIds = Array.from(new Set(aiChanges.map((change) => change.runId).filter(Boolean))) as string[];
+    runIds.forEach((runId) => {
+      updateLatexAiRun(problemId, runId, { status: "rejected" }).catch(console.warn);
+    });
+
+    const editor = editorRef.current;
+    const model = editor?.getModel?.();
+    if (model && aiReviewSnapshotRef.current !== null) {
+      editor.pushUndoStop?.();
+      model.setValue(aiReviewSnapshotRef.current);
+      editor.pushUndoStop?.();
+    }
+    setAiChanges([]);
+    setAiChangeLog((prev) => {
+      const activeKeys = new Set(aiChanges.map((item) => item.key));
+      const next: typeof prev = {};
+      Object.entries(prev).forEach(([runId, items]) => {
+        next[runId] = items.map((item) =>
+          item.status === "pending" && activeKeys.has(item.key) ? { ...item, status: "rejected" } : item
+        );
+      });
+      return next;
+    });
+    aiReviewSnapshotRef.current = null;
+    clearDiffDecorations();
+    setAiReviewOpen(false);
+  }, [clearDiffDecorations, aiChanges, problemId]);
+
+  const handleAcceptAiEdits = useCallback(() => {
+    setAiChanges((prev) => {
+      if (prev.length === 0) return prev;
+      const current = prev[aiChangeIndex];
+      if (current?.runId) {
+        updateLatexAiRun(problemId, current.runId, { status: "accepted" }).catch(console.warn);
+      }
+      if (current && !current.edit.text) {
+        applyEditsRaw([current.edit]);
+      }
+      const next = prev.filter((_, index) => index !== aiChangeIndex);
+      aiReviewEditsRef.current = next.length;
+      if (next.length === 0) {
+        aiReviewSnapshotRef.current = null;
+        clearDiffDecorations();
+        setAiReviewOpen(false);
+      } else {
+        setAiChangeIndex(Math.min(aiChangeIndex, next.length - 1));
+      }
+      return next;
+    });
+    setAiChangeLog((prev) => {
+      const next: typeof prev = {};
+      const current = aiChanges[aiChangeIndex];
+      Object.entries(prev).forEach(([runId, items]) => {
+        next[runId] = items.map((item) =>
+          current && item.key === current.key ? { ...item, status: "accepted" } : item
+        );
+      });
+      return next;
+    });
+  }, [aiChangeIndex, applyEditsRaw, clearDiffDecorations, aiChanges, problemId]);
+
+  const handleRejectAiEdits = useCallback(() => {
+    const editor = editorRef.current;
+    const model = editor?.getModel?.();
+    const current = aiChanges[aiChangeIndex];
+    if (current?.runId) {
+      updateLatexAiRun(problemId, current.runId, { status: "rejected" }).catch(console.warn);
+    }
+    if (model && aiReviewSnapshotRef.current !== null) {
+      editor.pushUndoStop?.();
+      model.setValue(aiReviewSnapshotRef.current);
+      editor.pushUndoStop?.();
+    }
+    setAiChanges((prev) => {
+      if (prev.length === 0) return prev;
+      const next = prev.filter((_, index) => index !== aiChangeIndex);
+      if (next.length === 0) {
+        aiReviewSnapshotRef.current = null;
+        aiReviewEditsRef.current = 0;
+        clearDiffDecorations();
+        setAiReviewOpen(false);
+        return next;
+      }
+      clearDiffDecorations();
+      applyEditsRaw(next.map((item) => item.edit));
+      aiReviewEditsRef.current = next.length;
+      setAiChangeIndex(Math.min(aiChangeIndex, next.length - 1));
+      return next;
+    });
+    setAiChangeLog((prev) => {
+      const next: typeof prev = {};
+      const current = aiChanges[aiChangeIndex];
+      Object.entries(prev).forEach(([runId, items]) => {
+        next[runId] = items.map((item) =>
+          current && item.key === current.key ? { ...item, status: "rejected" } : item
+        );
+      });
+      return next;
+    });
+  }, [aiChangeIndex, clearDiffDecorations, applyEditsRaw, aiChanges, problemId]);
+
+  const focusAiChange = useCallback(
+    (index: number) => {
+      const editor = editorRef.current;
+      const monaco = monacoRef.current;
+      if (!editor || !monaco || aiChanges.length === 0) return;
+      const change = aiChanges[index];
+      if (!change || change.filePath !== activePath) return;
+      const range = new monaco.Range(
+        change.edit.start.line,
+        change.edit.start.column,
+        change.edit.end.line,
+        change.edit.end.column
+      );
+      editor.revealRangeInCenter?.(range);
+      editor.setSelection?.(range);
+    },
+    [aiChanges, activePath]
+  );
+
+  const handlePrevAiChange = useCallback(() => {
+    setAiChangeIndex((prev) => Math.max(0, prev - 1));
+  }, []);
+
+  const handleNextAiChange = useCallback(() => {
+    setAiChangeIndex((prev) => Math.min(aiChanges.length - 1, prev + 1));
+  }, [aiChanges.length]);
+
+  const handlePdfClick = useCallback(
+    async (event: MouseEvent<HTMLCanvasElement>) => {
+      if (!pdfDocRef.current || !pdfCanvasRef.current || !pdfViewportRef.current) return;
+      const rect = pdfCanvasRef.current.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      const y = event.clientY - rect.top;
+      if (x < 0 || y < 0 || x > rect.width || y > rect.height) return;
+
+      const [pdfX, pdfY] = pdfViewportRef.current.convertToPdfPoint(x, y);
+      try {
+        const mapping = await mapLatexPdfToSource(problemId, pdfPage, pdfX, pdfY);
+        setPdfSyncNotice(null);
+        const normalized = normalizePath(mapping.path || "");
+        if (!normalized) return;
+        pendingCursorRef.current = {
+          path: normalized,
+          line: mapping.line,
+          column: mapping.column ?? 1,
+        };
+        setOpenTabs((prev) => (prev.includes(normalized) ? prev : [...prev, normalized]));
+        setActivePath(normalized);
+      } catch (error) {
+        const message =
+          error instanceof Error && error.message
+            ? error.message
+            : "Sync unavailable. Compile again.";
+        setPdfSyncNotice(message);
+        console.warn("Synctex mapping failed", error);
+      }
+    },
+    [problemId, pdfPage]
+  );
 
   useEffect(() => {
     loadProblem();
@@ -758,6 +2670,54 @@ export default function LabPage({ params }: PageProps) {
     if (!workspaceReady || !activePath) return;
     loadFile(activePath);
   }, [workspaceReady, activePath, loadFile]);
+
+  useEffect(() => {
+    if (!activePersistentChatId) return;
+    setPersistentChats((prev) =>
+      prev.map((chat) =>
+        chat.id === activePersistentChatId
+          ? {
+            ...chat,
+            messages: persistentMessages.map((msg) => ({
+              id: msg.id || `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+              role: msg.role as "user" | "assistant",
+              content: msg.content,
+              timestamp: msg.createdAt
+                ? new Date(msg.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                : new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+            })),
+          }
+          : chat
+      )
+    );
+  }, [persistentMessages, activePersistentChatId]);
+
+  useEffect(() => {
+    if (!aiReviewOpen) return;
+    if (aiChanges.length === 0) {
+      clearDiffDecorations();
+      return;
+    }
+    renderDiffDecorations(aiChanges, aiChangeIndex);
+  }, [aiChanges, aiChangeIndex, aiReviewOpen, renderDiffDecorations, clearDiffDecorations]);
+
+  useEffect(() => {
+    if (!aiReviewOpen || aiChanges.length === 0) return;
+    focusAiChange(aiChangeIndex);
+  }, [aiChangeIndex, aiReviewOpen, aiChanges.length, focusAiChange]);
+
+  useEffect(() => {
+    const pending = pendingCursorRef.current;
+    if (!pending || pending.path !== activePath) return;
+    const editor = editorRef.current;
+    if (!editor) return;
+    window.requestAnimationFrame(() => {
+      editor.focus?.();
+      editor.setPosition?.({ lineNumber: pending.line, column: pending.column || 1 });
+      editor.revealPositionInCenter?.({ lineNumber: pending.line, column: pending.column || 1 });
+    });
+    pendingCursorRef.current = null;
+  }, [activePath, editorValue]);
 
   useEffect(() => {
     if (!activePath) return;
@@ -808,6 +2768,7 @@ export default function LabPage({ params }: PageProps) {
     });
   }, [pdfPage, pdfZoom, pdfPages, renderPdfPage]);
 
+
   useEffect(() => {
     return () => {
       if (saveTimeoutRef.current) window.clearTimeout(saveTimeoutRef.current);
@@ -817,25 +2778,198 @@ export default function LabPage({ params }: PageProps) {
   }, [pdfUrl]);
 
   useEffect(() => {
+    aiStoreLoadedRef.current = false;
+    setAiMessages([]);
+    setAiRuns([]);
+    setAiMemory("");
+    setAiHistory([]);
+    setCustomActions(DEFAULT_ACTIONS);
+    tempPersistedIdsRef.current = new Set();
+  }, [problemId]);
+
+  useEffect(() => {
+    if (!workspaceReady || !problemId || aiStoreLoadedRef.current) return;
+    aiStoreLoadedRef.current = true;
+    let cancelled = false;
+    const loadAi = async () => {
+      try {
+        const [memoryResp, actionsResp, messagesResp, runsResp] = await Promise.all([
+          getLatexAiMemory(problemId),
+          listLatexAiActions(problemId),
+          listLatexAiMessages(problemId, 400),
+          listLatexAiRuns(problemId, 50),
+        ]);
+        if (cancelled) return;
+        setAiMemory(memoryResp.memory || "");
+        if (actionsResp.length > 0) {
+          setCustomActions(
+            actionsResp.map((action) => ({ id: action.id, label: action.label, prompt: action.prompt }))
+          );
+        } else {
+          setCustomActions(DEFAULT_ACTIONS);
+          Promise.all(
+            DEFAULT_ACTIONS.map((action) =>
+              createLatexAiAction(problemId, { label: action.label, prompt: action.prompt })
+            )
+          )
+            .then((created) => {
+              if (cancelled) return;
+              if (created.length > 0) {
+                setCustomActions(
+                  created.map((action) => ({ id: action.id, label: action.label, prompt: action.prompt }))
+                );
+              }
+            })
+            .catch((error) => {
+              console.warn("Failed to seed AI actions", error);
+            });
+        }
+        setAiMessages(
+          messagesResp.map((msg) => ({
+            id: msg.id,
+            role: msg.role,
+            content: msg.content,
+            timestamp: toLocalTime(msg.created_at) || "",
+            runId: msg.run_id || undefined,
+          }))
+        );
+        setAiRuns(
+          runsResp.map((run) => ({
+            id: run.id,
+            prompt: run.prompt,
+            steps: Array.isArray(run.steps) ? run.steps.map((step) => String(step)) : [],
+            summary: run.summary || undefined,
+            timestamp: toLocalTime(run.created_at) || "",
+            edits: Array.isArray(run.edits) ? run.edits : [],
+            filePath: run.file_path || "",
+            selection: run.selection || "",
+          }))
+        );
+
+        // Sync temp chat messages (messages not associated with a run)
+        const tempFromServer = messagesResp
+          .filter((msg) => !msg.run_id)
+          .map((msg) => ({
+            id: msg.id,
+            role: msg.role,
+            content: msg.content,
+            createdAt: new Date(msg.created_at),
+          }));
+        setTempMessages(tempFromServer);
+        tempPersistedIdsRef.current = new Set(tempFromServer.map((msg) => msg.id));
+
+        // Populate aiChanges from runs (pending only for active list, all for history)
+        const allChanges: any[] = [];
+        const changesByRun: Record<string, any[]> = {};
+        runsResp.forEach((run) => {
+          if (Array.isArray(run.edits) && run.edits.length > 0) {
+            run.edits.forEach((edit, idx) => {
+              const addedLines = countLines(edit.text);
+              const removedLines = estimateRemovedLines(edit);
+              const item = {
+                id: `${run.id}-edit-${idx}`,
+                key: makeEditKey(run.id, run.file_path || DEFAULT_MAIN, edit),
+                edit,
+                hasInsert: addedLines > 0,
+                hasRemove: removedLines > 0,
+                addedLines,
+                removedLines,
+                summary: run.summary || undefined,
+                filePath: run.file_path || DEFAULT_MAIN,
+                runId: run.id,
+                status: run.status === "accepted" || run.status === "rejected" ? run.status : "pending",
+              };
+              if (item.status === "pending") {
+                allChanges.push(item);
+              }
+              changesByRun[run.id] = [...(changesByRun[run.id] || []), item];
+            });
+          }
+        });
+        setAiChanges(allChanges);
+        setAiChangeLog(changesByRun);
+        if (allChanges.length > 0) {
+          setAiReviewOpen(true);
+          const model = editorRef.current?.getModel?.();
+          if (model) {
+            aiReviewSnapshotRef.current = model.getValue();
+          }
+        } else {
+          setAiReviewOpen(false);
+          aiReviewSnapshotRef.current = null;
+        }
+      } catch (error) {
+        console.warn("Failed to load AI workspace", error);
+      }
+    };
+    loadAi();
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceReady, problemId, toLocalTime]);
+
+  useEffect(() => {
+    if (!problemId) return;
+    tempMessages.forEach((msg) => {
+      if (!msg.id) return;
+      if (tempPersistedIdsRef.current.has(msg.id)) return;
+      if (tempMessageRunIds[msg.id]) return;
+      tempPersistedIdsRef.current.add(msg.id);
+      void createLatexAiMessage(problemId, {
+        role: msg.role as "user" | "assistant",
+        content: msg.content,
+        run_id: null,
+      }).catch((error) => {
+        console.warn("Failed to persist temp chat message", error);
+      });
+    });
+  }, [tempMessages, tempMessageRunIds, problemId]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !problemId) return;
+    if (aiMemorySaveRef.current) {
+      window.clearTimeout(aiMemorySaveRef.current);
+    }
+    aiMemorySaveRef.current = window.setTimeout(() => {
+      updateLatexAiMemory(problemId, aiMemory || null).catch((error) => {
+        console.warn("Failed to save AI memory", error);
+      });
+    }, 800);
+    return () => {
+      if (aiMemorySaveRef.current) {
+        window.clearTimeout(aiMemorySaveRef.current);
+      }
+    };
+  }, [aiMemory, problemId]);
+
+  useEffect(() => {
     const getLimits = () => {
       const collapsedLeft = 40;
+      const collapsedChat = 40;
       const collapsedRight = 40;
-      const minCenter = 360;
+      const minCenter = 420;
       const available = window.innerWidth;
       const left = leftOpen ? leftWidth + 1 : collapsedLeft;
+      const chat = chatOpen ? chatWidth + 1 : collapsedChat;
       const right = rightOpen ? rightWidth + 1 : collapsedRight;
-      const maxLeft = Math.max(200, available - right - minCenter);
-      const maxRight = Math.max(320, available - left - minCenter);
-      return { maxLeft, maxRight };
+      const maxLeft = Math.max(200, available - chat - right - minCenter);
+      const maxChat = Math.max(260, available - left - right - minCenter);
+      const maxRight = Math.max(320, available - left - chat - minCenter);
+      return { maxLeft, maxChat, maxRight };
     };
 
     const handleMove = (event: MouseEvent) => {
       const drag = dragRef.current;
       if (!drag) return;
-      const { maxLeft, maxRight } = getLimits();
+      const { maxLeft, maxChat, maxRight } = getLimits();
       if (drag.type === "left") {
         const next = clamp(drag.leftWidth + (event.clientX - drag.startX), 200, maxLeft);
         setLeftWidth(next);
+        document.body.style.cursor = "col-resize";
+      }
+      if (drag.type === "chat") {
+        const next = clamp(drag.chatWidth + (event.clientX - drag.startX), 260, maxChat);
+        setChatWidth(next);
         document.body.style.cursor = "col-resize";
       }
       if (drag.type === "right") {
@@ -848,11 +2982,6 @@ export default function LabPage({ params }: PageProps) {
         setLogHeight(next);
         document.body.style.cursor = "row-resize";
       }
-      if (drag.type === "ai") {
-        const next = clamp(drag.aiHeight - (event.clientY - drag.startY), 180, 380);
-        setAiHeight(next);
-        document.body.style.cursor = "row-resize";
-      }
     };
 
     const handleUp = () => {
@@ -863,8 +2992,9 @@ export default function LabPage({ params }: PageProps) {
     };
 
     const handleResize = () => {
-      const { maxLeft, maxRight } = getLimits();
+      const { maxLeft, maxChat, maxRight } = getLimits();
       setLeftWidth((prev) => clamp(prev, 200, maxLeft));
+      setChatWidth((prev) => clamp(prev, 260, maxChat));
       setRightWidth((prev) => clamp(prev, 320, maxRight));
     };
 
@@ -877,7 +3007,7 @@ export default function LabPage({ params }: PageProps) {
       window.removeEventListener("mouseup", handleUp);
       window.removeEventListener("resize", handleResize);
     };
-  }, [leftOpen, rightOpen, leftWidth, rightWidth]);
+  }, [leftOpen, chatOpen, rightOpen, leftWidth, chatWidth, rightWidth]);
 
   const renderCreateRow = useCallback(
     (parent: string, depth: number) => {
@@ -888,7 +3018,7 @@ export default function LabPage({ params }: PageProps) {
           className="flex items-center gap-2 px-2 py-1"
           style={{ paddingLeft: padding }}
         >
-          <div className="text-[11px] text-neutral-500">
+          <div className="text-[11px] text-neutral-600">
             {createTarget.type === "folder" ? "New folder" : "New file"}
           </div>
           <input
@@ -913,7 +3043,7 @@ export default function LabPage({ params }: PageProps) {
               }
             }}
             placeholder={createTarget.type === "folder" ? "folder-name" : "file.tex"}
-            className="flex-1 bg-neutral-950 border border-neutral-800 rounded px-2 py-1 text-xs text-neutral-200 placeholder-neutral-600 outline-none"
+            className="flex-1 bg-[#0a0a0a] border border-[#2a2a2a] rounded-md px-2 py-1 text-xs text-neutral-300 placeholder-neutral-700 outline-none focus:border-[#404040] transition-colors"
           />
         </div>
       );
@@ -931,9 +3061,8 @@ export default function LabPage({ params }: PageProps) {
         return (
           <div key={node.path}>
             <div
-              className={`w-full flex items-center gap-1.5 py-1 text-xs text-left rounded px-2 group ${
-                node.path === "" ? "text-neutral-500" : "text-neutral-300"
-              }`}
+              className={`w-full flex items-center gap-1.5 py-1 text-xs text-left rounded-md px-2 group ${node.path === "" ? "text-neutral-600" : "text-neutral-400"
+                }`}
               style={{ paddingLeft: padding }}
             >
               <button
@@ -941,8 +3070,8 @@ export default function LabPage({ params }: PageProps) {
                 onClick={() => toggleDir(node.path)}
                 className="flex items-center gap-1.5 flex-1"
               >
-                {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                <Folder size={12} className="text-neutral-500" />
+                {expanded ? <ChevronDown size={12} className="text-neutral-600" /> : <ChevronRight size={12} className="text-neutral-600" />}
+                <Folder size={12} className="text-neutral-600" />
                 {isRenaming ? (
                   <input
                     autoFocus
@@ -962,18 +3091,18 @@ export default function LabPage({ params }: PageProps) {
                       if (renameValue.trim()) submitRename();
                       else cancelRename();
                     }}
-                    className="flex-1 bg-neutral-950 border border-neutral-800 rounded px-2 py-0.5 text-[11px] text-neutral-200"
+                    className="flex-1 bg-[#0a0a0a] border border-[#2a2a2a] rounded-md px-2 py-0.5 text-[11px] text-neutral-300 outline-none focus:border-[#404040]"
                   />
                 ) : (
-                  <span>{node.name || "root"}</span>
+                  <span className="truncate">{node.name || "root"}</span>
                 )}
               </button>
               {!isRenaming && (
-                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100">
+                <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                   <button
                     type="button"
                     onClick={() => handleCreateFile(node.path)}
-                    className="p-1 rounded hover:bg-neutral-800 text-neutral-500 hover:text-neutral-200"
+                    className="p-1 rounded-md hover:bg-[#1a1a1a] text-neutral-600 hover:text-neutral-300 transition-colors"
                     title="New file"
                   >
                     <FilePlus size={12} />
@@ -981,7 +3110,7 @@ export default function LabPage({ params }: PageProps) {
                   <button
                     type="button"
                     onClick={() => handleCreateFolder(node.path)}
-                    className="p-1 rounded hover:bg-neutral-800 text-neutral-500 hover:text-neutral-200"
+                    className="p-1 rounded-md hover:bg-[#1a1a1a] text-neutral-600 hover:text-neutral-300 transition-colors"
                     title="New folder"
                   >
                     <FolderPlus size={12} />
@@ -991,7 +3120,7 @@ export default function LabPage({ params }: PageProps) {
                       <button
                         type="button"
                         onClick={() => startRename(node.path)}
-                        className="p-1 rounded hover:bg-neutral-800 text-neutral-500 hover:text-neutral-200"
+                        className="p-1 rounded-md hover:bg-[#1a1a1a] text-neutral-600 hover:text-neutral-300 transition-colors"
                         title="Rename"
                       >
                         <Pencil size={12} />
@@ -999,7 +3128,7 @@ export default function LabPage({ params }: PageProps) {
                       <button
                         type="button"
                         onClick={() => startDelete(node.path)}
-                        className="p-1 rounded hover:bg-neutral-800 text-neutral-500 hover:text-neutral-200"
+                        className="p-1 rounded-md hover:bg-[#1a1a1a] text-neutral-600 hover:text-red-400 transition-colors"
                         title="Delete"
                       >
                         <Trash2 size={12} />
@@ -1017,21 +3146,21 @@ export default function LabPage({ params }: PageProps) {
             {expanded && renderCreateRow(node.path, depth + 1)}
             {isDeleting && (
               <div
-                className="flex items-center gap-2 px-2 py-1 text-[11px] text-neutral-500"
+                className="flex items-center gap-2 px-2 py-1 text-[11px]"
                 style={{ paddingLeft: padding + 12 }}
               >
-                <span>Delete folder?</span>
+                <span className="text-neutral-600">Delete folder?</span>
                 <button
                   type="button"
                   onClick={() => handleDeleteFile(node.path, true)}
-                  className="px-2 py-0.5 rounded bg-neutral-100 text-black text-[10px]"
+                  className="px-2 py-0.5 rounded bg-red-500/20 text-red-400 border border-red-500/30 text-[10px] hover:bg-red-500/30 transition-colors"
                 >
                   Delete
                 </button>
                 <button
                   type="button"
                   onClick={cancelDelete}
-                  className="px-2 py-0.5 rounded border border-neutral-800 text-[10px]"
+                  className="px-2 py-0.5 rounded border border-[#2a2a2a] text-neutral-500 hover:text-neutral-300 text-[10px] transition-colors"
                 >
                   Cancel
                 </button>
@@ -1045,9 +3174,8 @@ export default function LabPage({ params }: PageProps) {
       return (
         <div
           key={node.path}
-          className={`w-full flex items-center gap-1.5 py-1 text-xs rounded px-2 hover:bg-neutral-900 group ${
-            activePath === node.path ? "bg-neutral-900 text-white" : "text-neutral-400"
-          }`}
+          className={`w-full flex items-center gap-1.5 py-1 text-xs rounded-md px-2 group ${activePath === node.path ? "bg-[#1a1a1a] text-neutral-200" : "text-neutral-500 hover:bg-[#141414] hover:text-neutral-300"
+            } transition-colors`}
           style={{ paddingLeft: padding }}
         >
           <button
@@ -1055,7 +3183,7 @@ export default function LabPage({ params }: PageProps) {
             onClick={() => handleSelectFile(node.path)}
             className="flex items-center gap-1.5 flex-1 min-w-0"
           >
-            <Icon size={12} className="text-neutral-500" />
+            <Icon size={12} className={activePath === node.path ? "text-neutral-400" : "text-neutral-600"} />
             {isRenaming ? (
               <input
                 autoFocus
@@ -1075,18 +3203,18 @@ export default function LabPage({ params }: PageProps) {
                   if (renameValue.trim()) submitRename();
                   else cancelRename();
                 }}
-                className="flex-1 bg-neutral-950 border border-neutral-800 rounded px-2 py-0.5 text-[11px] text-neutral-200"
+                className="flex-1 bg-[#0a0a0a] border border-[#2a2a2a] rounded-md px-2 py-0.5 text-[11px] text-neutral-300 outline-none focus:border-[#404040]"
               />
             ) : (
               <span className="truncate">{node.name}</span>
             )}
           </button>
           {!isRenaming && (
-            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100">
+            <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
               <button
                 type="button"
                 onClick={() => startRename(node.path)}
-                className="p-1 rounded hover:bg-neutral-800 text-neutral-500 hover:text-neutral-200"
+                className="p-1 rounded-md hover:bg-[#1a1a1a] text-neutral-600 hover:text-neutral-300 transition-colors"
                 title="Rename"
               >
                 <Pencil size={12} />
@@ -1094,7 +3222,7 @@ export default function LabPage({ params }: PageProps) {
               <button
                 type="button"
                 onClick={() => startDelete(node.path)}
-                className="p-1 rounded hover:bg-neutral-800 text-neutral-500 hover:text-neutral-200"
+                className="p-1 rounded-md hover:bg-[#1a1a1a] text-neutral-600 hover:text-red-400 transition-colors"
                 title="Delete"
               >
                 <Trash2 size={12} />
@@ -1106,14 +3234,14 @@ export default function LabPage({ params }: PageProps) {
               <button
                 type="button"
                 onClick={() => handleDeleteFile(node.path, false)}
-                className="px-2 py-0.5 rounded bg-neutral-100 text-black text-[10px]"
+                className="px-2 py-0.5 rounded bg-red-500/20 text-red-400 border border-red-500/30 text-[10px] hover:bg-red-500/30 transition-colors"
               >
                 Delete
               </button>
               <button
                 type="button"
                 onClick={cancelDelete}
-                className="px-2 py-0.5 rounded border border-neutral-800 text-[10px]"
+                className="px-2 py-0.5 rounded border border-[#2a2a2a] text-neutral-500 hover:text-neutral-300 text-[10px] transition-colors"
               >
                 Cancel
               </button>
@@ -1148,21 +3276,21 @@ export default function LabPage({ params }: PageProps) {
   const pageLabel = canPreview ? `${pdfPage} / ${pdfPages}` : "--";
 
   return (
-    <main className="workspace-shell h-screen w-screen overflow-hidden flex flex-col text-sm selection:bg-indigo-500/30 selection:text-indigo-200">
-      <header className="h-12 border-b border-neutral-800 flex items-center justify-between px-4 shrink-0 glass-panel z-20">
-        <div className="flex items-center gap-6">
+    <main className="h-screen w-screen overflow-hidden flex flex-col text-sm selection:bg-indigo-500/20 selection:text-indigo-200 bg-[#0a0a0a] text-neutral-300">
+      <header className="h-11 border-b border-[#1a1a1a] flex items-center justify-between px-4 shrink-0 z-20 bg-[#0a0a0a]">
+        <div className="flex items-center gap-5">
           <Link href="/dashboard" className="flex items-center gap-2 group">
-            <div className="w-5 h-5 bg-neutral-200 rounded flex items-center justify-center text-black">
+            <div className="w-5 h-5 bg-neutral-700 rounded-sm flex items-center justify-center text-neutral-200 group-hover:bg-neutral-600 transition-colors">
               <Infinity size={14} />
             </div>
-            <span className="font-semibold tracking-tight text-neutral-200 text-base">ProofMesh</span>
+            <span className="font-medium tracking-tight text-neutral-400 text-sm group-hover:text-neutral-300 transition-colors">ProofMesh</span>
           </Link>
 
-          <div className="h-4 w-px bg-neutral-800" />
-          <div className="flex items-center gap-2 text-neutral-500 hover:text-neutral-300 transition-colors">
-            <span className="text-xs font-medium">{problem?.title || "Problem"}</span>
-            <ChevronRight size={12} />
-            <span className="text-xs font-medium text-neutral-200">LaTeX Workspace</span>
+          <div className="h-3.5 w-px bg-[#252525]" />
+          <div className="flex items-center gap-2 text-neutral-500">
+            <span className="text-xs font-medium text-neutral-400">{problem?.title || "Problem"}</span>
+            <ChevronRight size={12} className="text-neutral-600" />
+            <span className="text-xs font-medium text-neutral-300">LaTeX Lab</span>
           </div>
         </div>
 
@@ -1171,15 +3299,15 @@ export default function LabPage({ params }: PageProps) {
             type="button"
             onClick={() => runCompile("manual")}
             disabled={!canEdit}
-            className="px-3 py-1 rounded text-xs font-medium bg-neutral-100 text-black hover:bg-neutral-300 disabled:opacity-40 flex items-center gap-1.5"
+            className="px-3 py-1.5 rounded-md text-xs font-medium bg-neutral-100 text-black hover:bg-white disabled:opacity-40 flex items-center gap-1.5 transition-colors"
           >
-            <Play size={12} />
+            <Play size={12} fill="currentColor" />
             Compile
           </button>
           <button
             type="button"
             onClick={loadPdf}
-            className="p-1 rounded hover:bg-neutral-900 text-neutral-400"
+            className="p-1.5 rounded-md hover:bg-[#1a1a1a] text-neutral-500 hover:text-neutral-300 transition-colors"
             title="Refresh PDF"
           >
             <RefreshCw size={14} />
@@ -1189,11 +3317,11 @@ export default function LabPage({ params }: PageProps) {
 
       <div className="flex-1 flex overflow-hidden">
         {!leftOpen && (
-          <div className="w-10 bg-neutral-950 border-r border-neutral-800 flex flex-col items-center py-3">
+          <div className="w-10 bg-[#0a0a0a] border-r border-[#1a1a1a] flex flex-col items-center py-3">
             <button
               type="button"
               onClick={() => setLeftOpen(true)}
-              className="p-1 rounded hover:bg-neutral-900 text-neutral-500 hover:text-neutral-200"
+              className="p-1.5 rounded-md hover:bg-[#1a1a1a] text-neutral-600 hover:text-neutral-300 transition-colors"
               title="Show files"
             >
               <ChevronRight size={16} />
@@ -1203,493 +3331,1163 @@ export default function LabPage({ params }: PageProps) {
         {leftOpen && (
           <>
             <aside
-              className="bg-neutral-950 border-r border-neutral-800 flex flex-col shrink-0 hidden md:flex"
+              className="bg-[#0d0d0d] border-r border-[#1a1a1a] flex flex-col shrink-0 hidden md:flex"
               style={{ width: leftWidth, flex: "0 0 auto" }}
             >
-          <div className="p-4 border-b border-neutral-900">
-            <div className="flex items-center justify-between">
-              <h2 className="text-xs font-semibold text-neutral-300 uppercase tracking-wider">Files</h2>
-              <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  onClick={() => handleCreateFile("")}
-                  disabled={!canEdit}
-                  className="p-1 rounded hover:bg-neutral-800 text-neutral-500 hover:text-neutral-200 disabled:opacity-40"
-                  title="New file"
-                >
-                  <FilePlus size={14} />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleCreateFolder("")}
-                  disabled={!canEdit}
-                  className="p-1 rounded hover:bg-neutral-800 text-neutral-500 hover:text-neutral-200 disabled:opacity-40"
-                  title="New folder"
-                >
-                  <FolderPlus size={14} />
-                </button>
-                <button
-                  type="button"
-                  onClick={handleUploadClick}
-                  disabled={!canEdit}
-                  className="p-1 rounded hover:bg-neutral-800 text-neutral-500 hover:text-neutral-200 disabled:opacity-40"
-                  title="Upload asset"
-                >
-                  <Upload size={14} />
-                </button>
-                <button
-                  type="button"
-                  onClick={refreshFiles}
-                  className="p-1 rounded hover:bg-neutral-800 text-neutral-500 hover:text-neutral-200"
-                  title="Refresh"
-                >
-                  <RefreshCw size={14} />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setLeftOpen(false)}
-                  className="p-1 rounded hover:bg-neutral-800 text-neutral-500 hover:text-neutral-200"
-                  title="Collapse files"
-                >
-                  <ChevronLeft size={14} />
-                </button>
-              </div>
-            </div>
-            {!canEdit && <p className="mt-2 text-[10px] text-neutral-600">Read-only</p>}
-          </div>
+              <div className="p-3 space-y-3 border-b border-[#1a1a1a]">
+                <div className="flex items-center gap-1.5 text-[11px]">
+                  <button
+                    type="button"
+                    onClick={() => setLeftTab("files")}
+                    className={`px-3 py-1.5 rounded-md text-[11px] font-medium transition-all ${leftTab === "files" ? "bg-[#1a1a1a] text-neutral-200" : "text-neutral-500 hover:text-neutral-300 hover:bg-[#151515]"}`}
+                  >
+                    Files
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setLeftTab("chats")}
+                    className={`px-3 py-1.5 rounded-md text-[11px] font-medium transition-all ${leftTab === "chats" ? "bg-[#1a1a1a] text-neutral-200" : "text-neutral-500 hover:text-neutral-300 hover:bg-[#151515]"}`}
+                  >
+                    Chats
+                  </button>
+                  <div className="flex-1" />
+                  <button
+                    type="button"
+                    onClick={() => setLeftOpen(false)}
+                    className="p-1.5 rounded-md hover:bg-[#1a1a1a] text-neutral-500 hover:text-neutral-300 transition-colors"
+                    title="Collapse"
+                  >
+                    <ChevronLeft size={14} />
+                  </button>
+                </div>
 
-          <div className="flex-1 overflow-y-auto px-2 py-2">
-            {renderCreateRow("", 0)}
-            {fileTree?.children?.length ? (
-              fileTree.children.map((child) => renderNode(child, 0))
-            ) : (
-              <div className="px-2 py-2 text-[11px] text-neutral-500">No files yet</div>
-            )}
-          </div>
-
-          <div className="p-3 border-t border-neutral-900 flex items-center gap-2 text-[10px] text-neutral-500">
-            <span className="uppercase tracking-wider">Auto-compile</span>
-            {autoCompileAt ? (
-              <span className="text-neutral-300">scheduled</span>
-            ) : (
-              <span>idle</span>
-            )}
-          </div>
-        </aside>
-        <div
-          className="w-1 bg-neutral-900/80 hover:bg-neutral-800 cursor-col-resize hidden md:block"
-          onMouseDown={(event) => {
-            dragRef.current = {
-              type: "left",
-              startX: event.clientX,
-              startY: event.clientY,
-              leftWidth,
-              rightWidth,
-              logHeight,
-              aiHeight,
-            };
-          }}
-        />
-          </>
-        )}
-
-        <section className="flex-1 flex overflow-hidden min-w-0">
-          <div className="flex-1 flex flex-col border-r border-neutral-900 bg-[#080808] min-w-0">
-            <div className="h-10 px-4 flex items-center justify-between border-b border-neutral-900">
-              <div className="flex items-center gap-2 text-xs text-neutral-400 min-w-0 flex-1">
-                <FileText size={12} />
-                <div className="flex items-center gap-1 overflow-x-auto no-scrollbar">
-                  {openTabs.map((tab) => (
-                    <div
-                      key={tab}
-                      className={`flex items-center gap-1 px-2 py-1 rounded-md border text-[11px] ${
-                        tab === activePath
-                          ? "border-neutral-600 bg-neutral-900 text-neutral-100"
-                          : "border-neutral-800 bg-neutral-950 text-neutral-500"
-                      }`}
-                    >
+                {leftTab === "files" && (
+                  <div className="flex items-center justify-between">
+                    <h2 className="text-[11px] font-medium text-neutral-500 uppercase tracking-wide">Files</h2>
+                    <div className="flex items-center gap-0.5">
                       <button
                         type="button"
-                        onClick={() => setActivePath(tab)}
-                        className="truncate max-w-[140px]"
+                        onClick={() => handleCreateFile("")}
+                        disabled={!canEdit}
+                        className="p-1.5 rounded-md hover:bg-[#1a1a1a] text-neutral-500 hover:text-neutral-300 disabled:opacity-40 transition-colors"
+                        title="New file"
                       >
-                        {tab}
+                        <FilePlus size={14} />
                       </button>
                       <button
                         type="button"
-                        onClick={() => handleCloseTab(tab)}
-                        className="text-neutral-500 hover:text-neutral-200"
+                        onClick={() => handleCreateFolder("")}
+                        disabled={!canEdit}
+                        className="p-1.5 rounded-md hover:bg-[#1a1a1a] text-neutral-500 hover:text-neutral-300 disabled:opacity-40 transition-colors"
+                        title="New folder"
+                      >
+                        <FolderPlus size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleUploadClick}
+                        disabled={!canEdit}
+                        className="p-1.5 rounded-md hover:bg-[#1a1a1a] text-neutral-500 hover:text-neutral-300 disabled:opacity-40 transition-colors"
+                        title="Upload asset"
+                      >
+                        <Upload size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={refreshFiles}
+                        className="p-1.5 rounded-md hover:bg-[#1a1a1a] text-neutral-500 hover:text-neutral-300 transition-colors"
+                        title="Refresh"
+                      >
+                        <RefreshCw size={14} />
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {leftTab === "chats" && (
+                  <div className="flex items-center justify-between">
+                    <h2 className="text-[11px] font-medium text-neutral-500 uppercase tracking-wide">Chats</h2>
+                    <button
+                      type="button"
+                      onClick={handleCreatePersistentChat}
+                      className="px-2.5 py-1 rounded-md bg-[#151515] hover:bg-[#1a1a1a] border border-[#252525] text-[10px] text-neutral-400 hover:text-neutral-200 transition-colors"
+                    >
+                      New
+                    </button>
+                  </div>
+                )}
+                {!canEdit && <p className="text-[10px] text-neutral-600">Read-only</p>}
+              </div>
+
+              <div className="flex-1 overflow-y-auto px-2 py-2">
+                {leftTab === "files" && (
+                  <>
+                    {renderCreateRow("", 0)}
+                    {fileTree?.children?.length ? (
+                      fileTree.children.map((child) => renderNode(child, 0))
+                    ) : (
+                      <div className="px-2 py-2 text-[11px] text-neutral-600">No files yet</div>
+                    )}
+                  </>
+                )}
+                {leftTab === "chats" && (
+                  <div className="space-y-1.5">
+                    {persistentChats.length === 0 ? (
+                      <button
+                        type="button"
+                        onClick={handleCreatePersistentChat}
+                        className="w-full text-left px-3 py-2.5 rounded-lg border border-[#252525] bg-[#0f0f0f] hover:bg-[#151515] text-[11px] text-neutral-400 hover:text-neutral-300 transition-colors"
+                      >
+                        Create your first chat
+                      </button>
+                    ) : (
+                      persistentChats.map((chat) => (
+                        <button
+                          key={chat.id}
+                          type="button"
+                          onClick={() => {
+                            setActivePersistentChatId(chat.id);
+                            setLeftTab("chats");
+                          }}
+                          className={`w-full text-left px-3 py-2.5 rounded-lg border text-[11px] transition-all ${activePersistentChatId === chat.id
+                            ? "border-[#353535] bg-[#1a1a1a] text-neutral-200"
+                            : "border-[#1f1f1f] bg-[#0f0f0f] text-neutral-500 hover:border-[#2a2a2a] hover:bg-[#141414]"
+                            }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="truncate font-medium">{chat.title}</span>
+                            <span className="text-[10px] text-neutral-600">{chat.createdAt}</span>
+                          </div>
+                          <div className="text-[10px] text-neutral-600 truncate mt-0.5">
+                            {chat.messages[chat.messages.length - 1]?.content || "No messages yet"}
+                          </div>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div className="p-3 border-t border-[#1a1a1a] flex items-center gap-2 text-[10px]">
+                <span className="uppercase tracking-wider text-neutral-600">Auto-compile</span>
+                {autoCompileAt ? (
+                  <span className="text-neutral-400">scheduled</span>
+                ) : (
+                  <span className="text-neutral-700">idle</span>
+                )}
+              </div>
+            </aside>
+            <div
+              className="w-1 bg-transparent hover:bg-[#252525] cursor-col-resize hidden md:block transition-colors"
+              onMouseDown={(event) => {
+                dragRef.current = {
+                  type: "left",
+                  startX: event.clientX,
+                  startY: event.clientY,
+                  leftWidth,
+                  chatWidth,
+                  rightWidth,
+                  logHeight,
+                };
+              }}
+            />
+          </>
+        )}
+
+        {chatOpen && null}
+
+        <section className="flex-1 flex overflow-hidden min-w-0">
+          <div className="flex-1 flex flex-col border-r border-[#1a1a1a] bg-[#0a0a0a] min-w-0">
+            <div className="lab-tabs-header">
+              <div className="lab-tabs">
+                {openTabs.map((tab) => {
+                  const Icon = fileIcon(tab);
+                  const isActive = tab === activePath && !activePersistentChatId;
+                  return (
+                    <div
+                      key={tab}
+                      className={`lab-tab ${isActive ? "lab-tab--active" : ""}`}
+                      onClick={() => {
+                        setActivePersistentChatId(null);
+                        setActivePath(tab);
+                      }}
+                    >
+                      <Icon size={14} className="lab-tab__icon" />
+                      <span className="lab-tab__name">{tab.split('/').pop()}</span>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleCloseTab(tab);
+                        }}
+                        className="lab-tab__close"
                       >
                         <X size={12} />
                       </button>
                     </div>
-                  ))}
-                </div>
-                {fileLoading && <Loader size={12} className="animate-spin" />}
+                  );
+                })}
+                {activePersistentChatId && (
+                  <div className="lab-tab lab-tab--active">
+                    <FileText size={14} className="lab-tab__icon" />
+                    <span className="lab-tab__name">
+                      {persistentChats.find((chat) => chat.id === activePersistentChatId)?.title || "Chat"}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setActivePersistentChatId(null);
+                      }}
+                      className="lab-tab__close"
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                )}
               </div>
-              <div className="flex items-center gap-2 text-xs">
-                {saveState === "saving" && (
-                  <span className="text-neutral-500">Saving...</span>
-                )}
-                {saveState === "saved" && (
-                  <span className="text-emerald-400">Saved</span>
-                )}
-                {saveState === "error" && (
-                  <span className="text-red-400">Save error</span>
-                )}
+              <div className="lab-tabs-actions">
+                {fileLoading && <Loader size={14} className="animate-spin text-neutral-600" />}
+                <span className="text-[11px] text-neutral-600 px-2">
+                  {saveState === "saving" && "Saving..."}
+                  {saveState === "saved" && <span className="text-emerald-500">Saved</span>}
+                  {saveState === "error" && <span className="text-red-400">Error</span>}
+                </span>
               </div>
             </div>
 
-            <div className="flex-1 min-h-0">
-              {binaryPreview ? (
-                <div className="h-full flex items-center justify-center text-neutral-500 text-sm p-6">
+            <div className="flex-1 min-h-0 relative">
+              {activeChat ? (
+                <div className="h-full flex flex-col">
+                  <div className="flex-1 flex flex-col items-center justify-center text-center px-6">
+                    <div className="text-xl text-neutral-300 font-medium mb-3">Ready when you are!</div>
+                    <div className="text-xs text-neutral-600 max-w-md">
+                      Start a persistent chat tied to this workspace. Ask for edits, summaries, or ideas.
+                    </div>
+                  </div>
+                  <div className="px-6 pb-6">
+                    <div className="flex flex-wrap gap-2 justify-center mb-5">
+                      <button className="px-3 py-1.5 rounded-full text-[11px] border border-[#252525] bg-[#111111] text-neutral-500 hover:text-neutral-300 hover:border-[#353535] transition-all">Add file</button>
+                      <button className="px-3 py-1.5 rounded-full text-[11px] border border-[#252525] bg-[#111111] text-neutral-500 hover:text-neutral-300 hover:border-[#353535] transition-all">Summarize</button>
+                    </div>
+                    <div className="pm-context-block pm-context-inline">
+                      <div className="flex flex-wrap gap-2 items-center">
+                        <span className="inline-flex items-center gap-1 pl-1 pr-2 py-1 rounded-full text-[10px] bg-[#0f141f] text-sky-200 border border-[#22324a]">
+                          <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-[#1a2636] text-sky-200">
+                            <FileCode size={10} />
+                          </span>
+                          {activePath}
+                        </span>
+                        {selectionRangeLabel && !contextDismissed && (
+                          <span className="inline-flex items-center gap-1 pl-1 pr-2 py-1 rounded-full text-[10px] bg-[#1a1016] text-rose-200 border border-[#3a2230]">
+                            <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-[#2b1922] text-rose-200">
+                              <Check size={9} />
+                            </span>
+                            {selectionRangeLabel}
+                            <button
+                              type="button"
+                              onClick={clearSelectionContext}
+                              className="ml-1 text-rose-300/70 hover:text-rose-200"
+                              aria-label="Remove selection context"
+                            >
+                              ×
+                            </button>
+                          </span>
+                        )}
+                        {persistentMentionFiles.map((path) => (
+                          <span
+                            key={`mention-${path}`}
+                            className="inline-flex items-center gap-1 pl-1 pr-2 py-1 rounded-full text-[10px] bg-[#141014] text-amber-200 border border-[#3a2f1a]"
+                          >
+                            <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-[#241a12] text-amber-200">
+                              <FileText size={10} />
+                            </span>
+                            @{path}
+                            <button
+                              type="button"
+                              onClick={() => setPersistentInput((prev) => removeMention(prev, path))}
+                              className="ml-1 text-amber-300/70 hover:text-amber-200"
+                              aria-label={`Remove @${path}`}
+                            >
+                              ×
+                            </button>
+                          </span>
+                        ))}
+                        {attachedImages.map((path) => (
+                          <span
+                            key={`image-${path}`}
+                            className="inline-flex items-center gap-1 pl-1 pr-2 py-1 rounded-full text-[10px] bg-[#0f1512] text-emerald-200 border border-[#233a2c]"
+                          >
+                            <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-[#1a2a21] text-emerald-200">
+                              <ImageIcon size={10} />
+                            </span>
+                            {path}
+                            <button
+                              type="button"
+                              onClick={() => setAttachedImages((prev) => prev.filter((item) => item !== path))}
+                              className="ml-1 text-emerald-300/70 hover:text-emerald-200"
+                              aria-label={`Remove ${path}`}
+                            >
+                              ×
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="relative group">
+                      <div className="absolute -inset-0.5 rounded-2xl bg-gradient-to-r from-zinc-700/20 via-zinc-600/10 to-zinc-700/20 blur opacity-20 group-hover:opacity-40 transition duration-500" />
+                      <div className="relative flex flex-col w-full bg-[#09090b] border border-zinc-800 rounded-2xl shadow-xl shadow-black/40 focus-within:ring-1 focus-within:ring-zinc-700 focus-within:border-zinc-700 transition-all duration-200">
+                        <div className="relative px-2 pt-2">
+                          <textarea
+                            value={persistentInput}
+                            onChange={(event) => {
+                              const next = event.target.value;
+                              setPersistentInput(next);
+                              const query = extractMentionQuery(next);
+                              if (query !== null) {
+                                setMentionOpen("persistent");
+                                setMentionQuery(query);
+                                setMentionIndex(0);
+                              } else {
+                                setMentionOpen(null);
+                                setMentionQuery("");
+                              }
+                            }}
+                            onKeyDown={(event) => {
+                              if (mentionOpen === "persistent") {
+                                if (event.key === "ArrowDown") {
+                                  event.preventDefault();
+                                  const list = getMentionSuggestions(mentionQuery);
+                                  const maxIndex = Math.max(list.length - 1, 0);
+                                  setMentionIndex((prev) => Math.min(prev + 1, maxIndex));
+                                  return;
+                                }
+                                if (event.key === "ArrowUp") {
+                                  event.preventDefault();
+                                  setMentionIndex((prev) => Math.max(prev - 1, 0));
+                                  return;
+                                }
+                                if (event.key === "Enter") {
+                                  const list = getMentionSuggestions(mentionQuery);
+                                  if (list[mentionIndex]) {
+                                    event.preventDefault();
+                                    applyMention(persistentInput, list[mentionIndex], setPersistentInput);
+                                    return;
+                                  }
+                                }
+                                if (event.key === "Escape") {
+                                  setMentionOpen(null);
+                                  setMentionQuery("");
+                                  return;
+                                }
+                              }
+                              if (event.key === "Enter" && !event.shiftKey) {
+                                event.preventDefault();
+                                handleSendPersistentChat();
+                              }
+                            }}
+                            placeholder="Ask anything..."
+                            rows={2}
+                            className="w-full bg-transparent text-sm font-light text-zinc-100 placeholder-zinc-600 p-4 min-h-[5rem] max-h-48 resize-none outline-none border-none leading-relaxed"
+                          />
+                          {mentionOpen === "persistent" && (
+                            <div className="absolute bottom-4 left-4 right-4 bg-[#0f0f0f] border border-[#252525] rounded-md shadow-lg z-20 max-h-40 overflow-y-auto">
+                              {getMentionSuggestions(mentionQuery).map((path, index) => (
+                                <button
+                                  key={path}
+                                  type="button"
+                                  className={`w-full text-left px-3 py-2 text-[11px] ${index === mentionIndex ? "bg-[#1a1a1a] text-neutral-200" : "text-neutral-400 hover:bg-[#151515]"}`}
+                                  onClick={() => applyMention(persistentInput, path, setPersistentInput)}
+                                >
+                                  @{path}
+                                </button>
+                              ))}
+                              {getMentionSuggestions(mentionQuery).length === 0 && (
+                                <div className="px-3 py-2 text-[11px] text-neutral-600">No matches</div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex items-center justify-between px-3 pb-3 pt-1">
+                          <div className="flex items-center p-1 bg-zinc-900/80 border border-zinc-800 rounded-lg">
+                            <button
+                              type="button"
+                              onClick={() => setAiModelMode("flash")}
+                              className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-[11px] font-medium transition-all ${aiModelMode === "flash"
+                                ? "bg-zinc-800 shadow-sm border border-zinc-700/50 text-zinc-100"
+                                : "text-zinc-500 hover:text-zinc-300"
+                                }`}
+                            >
+                              <Zap size={12} className="text-amber-400" />
+                              Flash
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setAiModelMode("thinking")}
+                              className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-[11px] font-medium transition-all ${aiModelMode === "thinking"
+                                ? "bg-zinc-800 shadow-sm border border-zinc-700/50 text-zinc-100"
+                                : "text-zinc-500 hover:text-zinc-300"
+                                }`}
+                            >
+                              <BrainCircuit size={12} />
+                              Thinking
+                            </button>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={handleImageUploadClick}
+                              className="p-2 text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 rounded-lg transition-all"
+                              title="Upload image"
+                            >
+                              <Paperclip size={16} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={handleSendPersistentChat}
+                              className="group/send flex items-center justify-center p-2 rounded-lg bg-zinc-100 hover:bg-white text-zinc-950 shadow-[0_0_15px_rgba(255,255,255,0.1)] transition-all active:scale-95"
+                            >
+                              <ArrowUp size={16} className="group-hover/send:-translate-y-0.5 group-hover/send:translate-x-0.5 transition-transform" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                      <div className="mt-4 space-y-2 max-h-48 overflow-y-auto">
+                      {persistentMessages.map((msg) => (
+                        <div
+                          key={msg.id}
+                          className={`rounded-lg border px-3 py-2.5 text-[11px] ${msg.role === "user"
+                            ? "border-[#2a2a2a] bg-[#1a1a1a] text-neutral-300"
+                            : "border-[#252525] bg-[#0f0f0f] text-neutral-400"
+                            }`}
+                        >
+                          <div className="flex items-center justify-between text-[10px] text-neutral-600 mb-1">
+                            <span>{msg.role === "user" ? "You" : "Assistant"}</span>
+                            <span>
+                              {msg.createdAt
+                                ? new Date(msg.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                                : ""}
+                            </span>
+                          </div>
+                          {msg.role === "assistant" ? (
+                            <div className="pm-markdown">
+                              <ReactMarkdown
+                                remarkPlugins={[remarkMath]}
+                                rehypePlugins={[rehypeKatex]}
+                              >
+                                {msg.content}
+                              </ReactMarkdown>
+                            </div>
+                          ) : (
+                            msg.content
+                          )}
+                        </div>
+                      ))}
+                      {(persistentLoading || aiLoading) && (
+                        <div className="pm-thinking">
+                          <span>Thinking</span>
+                          <div className="pm-thinking__dots">
+                            <div className="pm-thinking__dot" />
+                            <div className="pm-thinking__dot" />
+                            <div className="pm-thinking__dot" />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ) : binaryPreview ? (
+                <div className="h-full flex items-center justify-center text-neutral-600 text-sm p-6 pm-fade-in">
                   {binaryPreview.content_type?.startsWith("image/") && binaryPreview.content_base64 ? (
                     <img
                       src={`data:${binaryPreview.content_type};base64,${binaryPreview.content_base64}`}
                       alt={binaryPreview.path}
-                      className="max-h-full max-w-full object-contain rounded border border-neutral-800"
+                      className="max-h-full max-w-full object-contain rounded-lg border border-[#2a2a2a] shadow-xl"
                     />
                   ) : (
-                    <div>
-                      <p className="text-neutral-300">Binary file</p>
-                      <p className="text-xs text-neutral-500">Download via file list.</p>
+                    <div className="text-center">
+                      <p className="text-neutral-400 mb-1">Binary file</p>
+                      <p className="text-xs text-neutral-600">Download via file list.</p>
                     </div>
                   )}
                 </div>
               ) : (
-                <Editor
-                  height="100%"
-                  theme="proofmesh-latex"
-                  language={LATEX_LANGUAGE_ID}
-                  beforeMount={handleBeforeMount}
-                  onMount={handleEditorMount}
-                  value={editorValue}
-                  onChange={handleEditorChange}
-                  options={{
-                    fontSize: 13,
-                    minimap: { enabled: false },
-                    wordWrap: "on",
-                    scrollBeyondLastLine: false,
-                    renderLineHighlight: "all",
-                    readOnly: !canEdit,
-                  }}
-                />
-              )}
-            </div>
-
-            {aiOpen ? (
-              <>
-                <div
-                  className="h-2 w-full cursor-row-resize bg-neutral-900/70"
-                  onMouseDown={(event) => {
-                    dragRef.current = {
-                      type: "ai",
-                      startX: event.clientX,
-                      startY: event.clientY,
-                      leftWidth,
-                      rightWidth,
-                      logHeight,
-                      aiHeight,
-                    };
-                  }}
-                />
-                <div
-                  className="border-t border-neutral-900 bg-[#121316]"
-                  style={{ height: aiHeight }}
-                >
-                  <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-800/80">
-                    <div className="flex items-center gap-3 text-xs text-neutral-400">
-                      <span className="h-2.5 w-2.5 rounded-full bg-neutral-300" />
-                      <span className="text-neutral-200 font-medium">Review Panel</span>
-                      <span className="text-[10px] uppercase tracking-[0.3em] text-neutral-500">Workspace</span>
-                    </div>
-                    <div className="flex items-center gap-2 text-[10px] text-neutral-500">
-                      <span className="px-2 py-1 rounded-full bg-neutral-900/80 border border-neutral-800">
-                        Context: {activePath}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setAiOpen(false)}
-                        className="px-2 py-1 rounded-full border border-neutral-800 bg-neutral-900/60 text-neutral-400 hover:text-neutral-200"
-                      >
-                        Collapse
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="flex flex-col h-[calc(100%-52px)]">
-                    <div className="px-4 py-3 text-[11px] text-neutral-500 border-b border-neutral-900">
-                      Estoy obteniendo el contenido del archivo {activePath}.
-                    </div>
-                    <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                      <div className="rounded-xl border border-neutral-800 bg-neutral-900/30">
-                        <div className="flex items-center justify-between px-3 py-2 border-b border-neutral-800 text-[11px] text-neutral-400">
-                          <span className="uppercase tracking-[0.2em]">Proposed changes</span>
-                          <div className="flex items-center gap-2 text-[10px] text-neutral-500">
-                            <button className="hover:text-neutral-200">Undo all</button>
-                            <button className="hover:text-neutral-200">Keep all</button>
-                          </div>
-                        </div>
-                        <div className="flex items-center justify-between px-3 py-2 text-xs">
-                          <div className="flex items-center gap-2 text-neutral-400">
-                            <span className="text-neutral-500">{activePath}:77</span>
-                            <span className="text-neutral-300 italic">Ejemplo chulo</span>
-                          </div>
-                          <div className="flex items-center gap-2 text-[10px]">
-                            <span className="text-emerald-400">+1</span>
-                            <span className="text-rose-400">-2</span>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="rounded-xl border border-neutral-800 bg-neutral-900/20 px-3 py-2 text-xs text-neutral-300">
-                        Se reemplazó el ejemplo seleccionado por uno más llamativo que genera una
-                        figura con TikZ en una sola columna.
-                      </div>
-
-                      <div className="space-y-2">
-                        {aiMessages.map((message) => (
-                          <div
-                            key={message.id}
-                            className={`rounded-xl px-3 py-2 text-xs leading-relaxed ${
-                              message.role === "user"
-                                ? "bg-neutral-800 text-neutral-100 ml-6"
-                                : "bg-neutral-900/60 text-neutral-300 border border-neutral-800"
-                            }`}
+                <>
+                  <Editor
+                    height="100%"
+                    theme="proofmesh-latex"
+                    language={LATEX_LANGUAGE_ID}
+                    beforeMount={handleBeforeMount}
+                    onMount={handleEditorMount}
+                    value={editorValue}
+                    onChange={handleEditorChange}
+                    options={{
+                      fontSize: 13,
+                      fontFamily: "'JetBrains Mono', 'Fira Code', ui-monospace, monospace",
+                      fontLigatures: true,
+                      minimap: { enabled: false },
+                      wordWrap: "on",
+                      scrollBeyondLastLine: false,
+                      renderLineHighlight: "none",
+                      quickSuggestions: { other: true, comments: false, strings: true },
+                      suggestOnTriggerCharacters: true,
+                      tabCompletion: "on",
+                      readOnly: !canEdit,
+                      padding: { top: 16, bottom: 16 },
+                      lineNumbersMinChars: 3,
+                      glyphMargin: false,
+                      folding: true,
+                      lineDecorationsWidth: 8,
+                    }}
+                  />
+                  {tempChatOpen ? (
+                    <div className="pm-temp-chat">
+                      <div className="pm-temp-header">
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={handleClearTempChat}
+                            className="text-[10px] text-neutral-500 hover:text-neutral-300 px-2 py-0.5 rounded hover:bg-[#1a1a1a] transition-colors"
+                            title="Clear chat"
                           >
-                            <div className="text-[10px] text-neutral-500 mb-1">{message.timestamp}</div>
-                            {message.content}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="px-4 pb-4">
-                      <div className="flex items-center gap-2 rounded-xl border border-neutral-800 bg-neutral-950/70 px-3 py-2">
-                        <input
-                          value={aiInput}
-                          onChange={(event) => setAiInput(event.target.value)}
-                          onKeyDown={(event) => {
-                            if (event.key === "Enter" && !event.shiftKey) {
-                              event.preventDefault();
-                              handleSendAi();
-                            }
-                          }}
-                          placeholder="Request edits, add citations, or rewrite…"
-                          className="flex-1 bg-transparent text-xs text-neutral-200 placeholder-neutral-600 outline-none"
-                        />
-                        <div className="flex items-center gap-2 text-neutral-500">
-                          <button type="button" className="p-1 rounded hover:bg-neutral-800">
-                            <Image size={14} />
-                          </button>
-                          <button type="button" className="p-1 rounded hover:bg-neutral-800">
-                            <Mic size={14} />
+                            Clear
                           </button>
                           <button
                             type="button"
-                            onClick={handleSendAi}
-                            className="p-1 rounded hover:bg-neutral-800 text-neutral-200"
+                            onClick={() => setTempChatOpen(false)}
+                            className="pm-review-icon"
                           >
-                            <Send size={14} />
+                            <ChevronDown size={12} />
                           </button>
                         </div>
                       </div>
+                      <div className="pm-temp-messages">
+                      {tempMessages.map((msg, idx) => (
+                        <div
+                          key={msg.id}
+                          className={`pm-chat-bubble ${msg.role === "user" ? "user" : "assistant"}`}
+                        >
+                          <div className="pm-chat-bubble__content">
+                            {msg.role === "user" ? (
+                              msg.content
+                            ) : (
+                              <div className="pm-markdown">
+                                {aiLoading && aiThoughts.length > 0 && lastTempAssistantIndex === idx && (
+                                  <details className="mb-2 rounded-md border border-[#252525] bg-[#0b0b0b] px-2 py-1.5">
+                                    <summary className="cursor-pointer text-[10px] text-neutral-500">
+                                      Thinking summary
+                                    </summary>
+                                    <div className="mt-2 space-y-1">
+                                      {aiThoughts.map((thought, idx) => (
+                                        <div key={idx} className="text-[10px] text-neutral-500">
+                                          <div className="pm-markdown">
+                                            <ReactMarkdown
+                                              remarkPlugins={[remarkMath]}
+                                              rehypePlugins={[rehypeKatex]}
+                                            >
+                                              {thought}
+                                            </ReactMarkdown>
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </details>
+                                )}
+                                {(() => {
+                                  const runIdForMsg = tempMessageRunIds[msg.id];
+                                  const runChanges = runIdForMsg
+                                    ? (aiChangeLog[runIdForMsg] || [])
+                                    : (lastTempAssistantIndex === idx ? aiChanges : []);
+                                  const visibleChanges = runChanges.filter((c) => c.filePath === activePath);
+                                  const hasOtherFiles = runChanges.some((c) => c.filePath !== activePath);
+                                  if (visibleChanges.length === 0 && !hasOtherFiles) return null;
+                                  return (
+                                    <div className="mb-2 rounded-md border border-[#252525] bg-[#0b0b0b] px-2 py-1.5">
+                                      <div className="flex items-center justify-between">
+                                        <div className="text-[10px] text-neutral-500">Proposed changes</div>
+                                        <div className="flex items-center gap-2">
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              handleAcceptIds(visibleChanges.filter((c) => c.status !== "accepted").map((c) => c.id));
+                                            }}
+                                            className="text-[10px] text-emerald-500 hover:text-emerald-400 font-medium px-1 py-0.5 rounded hover:bg-emerald-500/10 transition-colors"
+                                          >
+                                            Accept file
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              handleRejectIds(visibleChanges.filter((c) => c.status !== "rejected").map((c) => c.id));
+                                            }}
+                                            className="text-[10px] text-rose-500 hover:text-rose-400 font-medium px-1 py-0.5 rounded hover:bg-rose-500/10 transition-colors"
+                                          >
+                                            Reject file
+                                          </button>
+                                        </div>
+                                      </div>
+                                      {hasOtherFiles && (
+                                        <div className="text-[10px] text-neutral-600 mt-1">
+                                          Hay cambios pendientes en otros archivos.
+                                        </div>
+                                      )}
+                                      <div className="mt-2 space-y-1 max-h-28 overflow-y-auto pm-scrollbar-thin">
+                                        {visibleChanges.map((change) => {
+                                          const isActive = aiChanges.some((c) => c.key === change.key);
+                                          return (
+                                            <button
+                                              key={change.id}
+                                              type="button"
+                                              className="w-full text-left rounded-md border border-transparent hover:border-[#2a2a2a] hover:bg-[#121212] px-2 py-1 transition-colors"
+                                              onClick={() => {
+                                                if (isActive) {
+                                                  focusAiChange(aiChanges.findIndex((c) => c.key === change.key));
+                                                }
+                                              }}
+                                            >
+                                              <div className="flex items-center justify-between text-[10px] text-neutral-500">
+                                                <span>{change.filePath.split('/').pop()}:{change.edit.start.line}</span>
+                                                <span className="pm-proposed-diff">
+                                                  <span className="pm-proposed-add">
+                                                    +{change.addedLines ?? countLines(change.edit.text)}
+                                                  </span>
+                                                  <span className="pm-proposed-del">
+                                                    -{change.removedLines ?? estimateRemovedLines(change.edit)}
+                                                  </span>
+                                                </span>
+                                              </div>
+                                              <div className="flex items-center justify-between gap-2">
+                                                <div className="text-[10px] text-neutral-400 truncate">
+                                                  {change.summary || "AI change"}
+                                                </div>
+                                                {change.status && change.status !== "pending" && (
+                                                  <span className="text-[10px] text-neutral-500">
+                                                    {change.status === "accepted" ? "Accepted" : "Rejected"}
+                                                  </span>
+                                                )}
+                                                <div className="flex items-center gap-1">
+                                                  <span
+                                                    role="button"
+                                                    aria-label="Accept this change"
+                                                    onClick={(e) => {
+                                                      e.stopPropagation();
+                                                      if (isActive) handleAcceptSingle(change.id);
+                                                    }}
+                                                    className={`p-1 rounded ${isActive ? "text-emerald-500 hover:bg-emerald-500/10" : "text-neutral-700 cursor-not-allowed"}`}
+                                                  >
+                                                    <Check size={12} />
+                                                  </span>
+                                                  <span
+                                                    role="button"
+                                                    aria-label="Reject this change"
+                                                    onClick={(e) => {
+                                                      e.stopPropagation();
+                                                      if (isActive) handleRejectSingle(change.id);
+                                                    }}
+                                                    className={`p-1 rounded ${isActive ? "text-rose-500 hover:bg-rose-500/10" : "text-neutral-700 cursor-not-allowed"}`}
+                                                  >
+                                                    <X size={12} />
+                                                  </span>
+                                                </div>
+                                              </div>
+                                            </button>
+                                          );
+                                        })}
+                                      </div>
+                                    </div>
+                                  );
+                                })()}
+                                <ReactMarkdown
+                                  remarkPlugins={[remarkMath]}
+                                  rehypePlugins={[rehypeKatex]}
+                                >
+                                  {msg.content}
+                                </ReactMarkdown>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                      {(tempLoading || aiLoading) && (
+                        <div className="pm-thinking">
+                          <div className="flex items-center gap-2">
+                            <span>Thinking</span>
+                            <div className="pm-thinking__dots">
+                              <div className="pm-thinking__dot" />
+                              <div className="pm-thinking__dot" />
+                              <div className="pm-thinking__dot" />
+                            </div>
+                          </div>
+                          {aiThoughts.length > 0 && (
+                            <div className="mt-2 space-y-1">
+                              {aiThoughts.map((thought, idx) => (
+                                <div
+                                  key={idx}
+                                  className="text-[10px] text-neutral-500 animate-in fade-in slide-in-from-left-2 duration-300"
+                                  style={{ opacity: 1 - Math.min(0.8, (aiThoughts.length - 1 - idx) * 0.12) }}
+                                >
+                                  <div className="pm-markdown">
+                                    <ReactMarkdown
+                                      remarkPlugins={[remarkMath]}
+                                      rehypePlugins={[rehypeKatex]}
+                                    >
+                                      {thought}
+                                    </ReactMarkdown>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      </div>
+                      <div className="pm-context-pill">
+                        <div className="flex flex-wrap gap-2 items-center">
+                          <span className="inline-flex items-center gap-1 pl-1 pr-2 py-1 rounded-full text-[10px] bg-[#0f141f] text-sky-200 border border-[#22324a]">
+                            <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-[#1a2636] text-sky-200">
+                              <FileCode size={10} />
+                            </span>
+                            {activePath}
+                          </span>
+                          {selectionRangeLabel && !contextDismissed && (
+                            <span className="inline-flex items-center gap-1 pl-1 pr-2 py-1 rounded-full text-[10px] bg-[#1a1016] text-rose-200 border border-[#3a2230]">
+                              <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-[#2b1922] text-rose-200">
+                                <Check size={9} />
+                              </span>
+                              {selectionRangeLabel}
+                              <button
+                                type="button"
+                                onClick={clearSelectionContext}
+                                className="ml-1 text-rose-300/70 hover:text-rose-200"
+                                aria-label="Remove selection context"
+                              >
+                                ×
+                              </button>
+                            </span>
+                          )}
+                          {tempMentionFiles.map((path) => (
+                            <span
+                              key={`mention-temp-${path}`}
+                              className="inline-flex items-center gap-1 pl-1 pr-2 py-1 rounded-full text-[10px] bg-[#141014] text-amber-200 border border-[#3a2f1a]"
+                            >
+                              <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-[#241a12] text-amber-200">
+                                <FileText size={10} />
+                              </span>
+                              @{path}
+                              <button
+                                type="button"
+                                onClick={() => setTempInput((prev) => removeMention(prev, path))}
+                                className="ml-1 text-amber-300/70 hover:text-amber-200"
+                                aria-label={`Remove @${path}`}
+                              >
+                                ×
+                              </button>
+                            </span>
+                          ))}
+                          {attachedImages.map((path) => (
+                            <span
+                              key={`image-temp-${path}`}
+                              className="inline-flex items-center gap-1 pl-1 pr-2 py-1 rounded-full text-[10px] bg-[#0f1512] text-emerald-200 border border-[#233a2c]"
+                            >
+                              <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-[#1a2a21] text-emerald-200">
+                                <ImageIcon size={10} />
+                              </span>
+                              {path}
+                              <button
+                                type="button"
+                                onClick={() => setAttachedImages((prev) => prev.filter((item) => item !== path))}
+                                className="ml-1 text-emerald-300/70 hover:text-emerald-200"
+                                aria-label={`Remove ${path}`}
+                              >
+                                ×
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="relative group">
+                        <div className="absolute -inset-0.5 rounded-2xl bg-gradient-to-r from-zinc-700/20 via-zinc-600/10 to-zinc-700/20 blur opacity-20 group-hover:opacity-40 transition duration-500" />
+                        <div className="relative flex flex-col w-full bg-[#09090b] border border-zinc-800 rounded-2xl shadow-xl shadow-black/40 focus-within:ring-1 focus-within:ring-zinc-700 focus-within:border-zinc-700 transition-all duration-200">
+                          <div className="relative px-2 pt-2">
+                            <textarea
+                              disabled={aiLoading}
+                              value={tempInput}
+                              onChange={(event) => {
+                                const next = event.target.value;
+                                setTempInput(next);
+                                const query = extractMentionQuery(next);
+                                if (query !== null) {
+                                  setMentionOpen("temp");
+                                  setMentionQuery(query);
+                                  setMentionIndex(0);
+                                } else {
+                                  setMentionOpen(null);
+                                  setMentionQuery("");
+                                }
+                              }}
+                              onKeyDown={(event) => {
+                                if (mentionOpen === "temp") {
+                                  if (event.key === "ArrowDown") {
+                                    event.preventDefault();
+                                    const list = getMentionSuggestions(mentionQuery);
+                                    const maxIndex = Math.max(list.length - 1, 0);
+                                    setMentionIndex((prev) => Math.min(prev + 1, maxIndex));
+                                    return;
+                                  }
+                                  if (event.key === "ArrowUp") {
+                                    event.preventDefault();
+                                    setMentionIndex((prev) => Math.max(prev - 1, 0));
+                                    return;
+                                  }
+                                  if (event.key === "Enter") {
+                                    const list = getMentionSuggestions(mentionQuery);
+                                    if (list[mentionIndex]) {
+                                      event.preventDefault();
+                                      applyMention(tempInput, list[mentionIndex], setTempInput);
+                                      return;
+                                    }
+                                  }
+                                  if (event.key === "Escape") {
+                                    setMentionOpen(null);
+                                    setMentionQuery("");
+                                    return;
+                                  }
+                                }
+                                if (event.key === "Enter" && !event.shiftKey) {
+                                  event.preventDefault();
+                                  if (!aiLoading) handleSendTempChat();
+                                }
+                              }}
+                              placeholder={aiLoading ? "Thinking..." : "Ask anything..."}
+                              rows={2}
+                              className={`w-full bg-transparent text-sm font-light text-zinc-100 placeholder-zinc-600 p-4 min-h-[5rem] max-h-48 resize-none outline-none border-none leading-relaxed ${aiLoading ? "opacity-50 cursor-not-allowed" : ""}`}
+                            />
+                            {mentionOpen === "temp" && (
+                              <div className="absolute bottom-4 left-4 right-4 bg-[#0f0f0f] border border-[#252525] rounded-md shadow-lg z-20 max-h-40 overflow-y-auto">
+                                {getMentionSuggestions(mentionQuery).map((path, index) => (
+                                  <button
+                                    key={path}
+                                    type="button"
+                                    className={`w-full text-left px-3 py-2 text-[11px] ${index === mentionIndex ? "bg-[#1a1a1a] text-neutral-200" : "text-neutral-400 hover:bg-[#151515]"}`}
+                                    onClick={() => applyMention(tempInput, path, setTempInput)}
+                                  >
+                                    @{path}
+                                  </button>
+                                ))}
+                                {getMentionSuggestions(mentionQuery).length === 0 && (
+                                  <div className="px-3 py-2 text-[11px] text-neutral-600">No matches</div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex items-center justify-between px-3 pb-3 pt-1">
+                            <div className="flex items-center p-1 bg-zinc-900/80 border border-zinc-800 rounded-lg">
+                              <button
+                                type="button"
+                                onClick={() => setAiModelMode("flash")}
+                                className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-[11px] font-medium transition-all ${aiModelMode === "flash"
+                                  ? "bg-zinc-800 shadow-sm border border-zinc-700/50 text-zinc-100"
+                                  : "text-zinc-500 hover:text-zinc-300"
+                                  }`}
+                              >
+                                <Zap size={12} className="text-amber-400" />
+                                Flash
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setAiModelMode("thinking")}
+                                className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-[11px] font-medium transition-all ${aiModelMode === "thinking"
+                                  ? "bg-zinc-800 shadow-sm border border-zinc-700/50 text-zinc-100"
+                                  : "text-zinc-500 hover:text-zinc-300"
+                                  }`}
+                              >
+                                <BrainCircuit size={12} />
+                                Thinking
+                              </button>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              {aiLoading ? (
+                                <button
+                                  type="button"
+                                  onClick={handleStopAi}
+                                  className="p-2 text-rose-500 hover:text-rose-400 hover:bg-zinc-800 rounded-lg transition-all"
+                                  title="Stop generating"
+                                >
+                                  <Square size={14} fill="currentColor" />
+                                </button>
+                              ) : (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={handleImageUploadClick}
+                                    className="p-2 text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 rounded-lg transition-all"
+                                    title="Upload image"
+                                  >
+                                    <Paperclip size={16} />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={handleSendTempChat}
+                                    className="group/send flex items-center justify-center p-2 rounded-lg bg-zinc-100 hover:bg-white text-zinc-950 shadow-[0_0_15px_rgba(255,255,255,0.1)] transition-all active:scale-95"
+                                  >
+                                    <ArrowUp size={16} className="group-hover/send:-translate-y-0.5 group-hover/send:translate-x-0.5 transition-transform" />
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                </div>
-              </>
-            ) : (
-              <div className="border-t border-neutral-900 bg-[#121316] h-8 flex items-center justify-between px-4 text-xs text-neutral-500">
-                <span>Review Panel</span>
-                <button
-                  type="button"
-                  onClick={() => setAiOpen(true)}
-                  className="text-[10px] text-neutral-500 hover:text-neutral-200"
-                >
-                  Open
-                </button>
-              </div>
-            )}
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setTempChatOpen(true)}
+                      className="pm-temp-toggle"
+                    >
+                      Open chat
+                    </button>
+                  )}
+                  {aiReviewOpen && (
+                    <div className="pm-review-bar">
+                      <div className="pm-review-count">
+                        {aiChanges.length === 0 ? "0/0" : `${aiChangeIndex + 1}/${aiChanges.length}`}
+                      </div>
+                      <div className="pm-review-nav">
+                        <button
+                          type="button"
+                          onClick={handlePrevAiChange}
+                          disabled={aiChangeIndex <= 0}
+                          className="pm-review-icon"
+                          aria-label="Previous change"
+                        >
+                          <ChevronUp size={14} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleNextAiChange}
+                          disabled={aiChangeIndex >= aiChanges.length - 1}
+                          className="pm-review-icon"
+                          aria-label="Next change"
+                        >
+                          <ChevronDown size={14} />
+                        </button>
+                      </div>
+                      <div className="pm-review-actions">
+                        <button
+                          type="button"
+                          onClick={handleAcceptAiEdits}
+                          className="pm-review-accept"
+                        >
+                          Accept
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleRejectAiEdits}
+                          className="pm-review-reject"
+                        >
+                          Reject
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+              {selectionBox && null}
+            </div>
+
+            {/* AI panel moved to chat column */}
           </div>
 
           {rightOpen && (
             <div
-              className="w-1 bg-neutral-900/80 hover:bg-neutral-800 cursor-col-resize"
+              className="w-1 bg-transparent hover:bg-[#252525] cursor-col-resize transition-colors"
               onMouseDown={(event) => {
                 dragRef.current = {
                   type: "right",
                   startX: event.clientX,
                   startY: event.clientY,
                   leftWidth,
+                  chatWidth,
                   rightWidth,
                   logHeight,
-                  aiHeight,
                 };
               }}
             />
           )}
 
           {rightOpen ? (
-          <div
-            className="bg-neutral-950 flex flex-col min-w-0"
-            style={{ width: rightWidth, flex: "0 0 auto" }}
-          >
-            <div className="h-10 px-4 flex items-center justify-between border-b border-neutral-900">
-              <div className="flex items-center gap-2 text-xs text-neutral-400">
-                <span className="text-neutral-200">Preview</span>
-                {compileState === "running" && <Loader size={12} className="animate-spin" />}
-                {compileState === "success" && <CheckCircle size={12} className="text-emerald-400" />}
-                {compileState === "error" && <AlertTriangle size={12} className="text-red-400" />}
-                {compileState === "timeout" && <AlertTriangle size={12} className="text-amber-400" />}
-              </div>
-              <div className="flex items-center gap-1.5 text-xs text-neutral-400">
-                <button
-                  type="button"
-                  onClick={handlePrevPage}
-                  disabled={!canPreview || pdfPage <= 1}
-                  className="p-1 rounded hover:bg-neutral-900 text-neutral-500 hover:text-neutral-200 disabled:opacity-40"
-                  title="Previous page"
-                >
-                  <ChevronLeft size={14} />
-                </button>
-                <span className="text-[11px] text-neutral-500 w-12 text-center">{pageLabel}</span>
-                <button
-                  type="button"
-                  onClick={handleNextPage}
-                  disabled={!canPreview || pdfPage >= pdfPages}
-                  className="p-1 rounded hover:bg-neutral-900 text-neutral-500 hover:text-neutral-200 disabled:opacity-40"
-                  title="Next page"
-                >
-                  <ChevronRight size={14} />
-                </button>
-                <div className="w-px h-4 bg-neutral-800 mx-1" />
-                <button
-                  type="button"
-                  onClick={handleZoomOut}
-                  disabled={!canPreview || pdfZoom <= 0.5}
-                  className="p-1 rounded hover:bg-neutral-900 text-neutral-500 hover:text-neutral-200 disabled:opacity-40"
-                  title="Zoom out"
-                >
-                  <ZoomOut size={14} />
-                </button>
-                <button
-                  type="button"
-                  onClick={handleZoomReset}
-                  disabled={!canPreview}
-                  className="px-2 py-1 rounded text-[10px] text-neutral-400 hover:text-neutral-200 hover:bg-neutral-900 disabled:opacity-40"
-                  title="Reset zoom"
-                >
-                  {Math.round(pdfZoom * 100)}%
-                </button>
-                <button
-                  type="button"
-                  onClick={handleZoomIn}
-                  disabled={!canPreview || pdfZoom >= 2.5}
-                  className="p-1 rounded hover:bg-neutral-900 text-neutral-500 hover:text-neutral-200 disabled:opacity-40"
-                  title="Zoom in"
-                >
-                  <ZoomIn size={14} />
-                </button>
-                {pdfUrl && (
-                  <a
-                    href={pdfUrl}
-                    download={`proofmesh-${problemId}.pdf`}
-                    className="p-1 rounded hover:bg-neutral-900 text-neutral-500 hover:text-neutral-200"
-                    title="Download PDF"
+            <div
+              className="bg-[#0d0d0d] flex flex-col min-w-0 border-l border-[#1a1a1a]"
+              style={{ width: rightWidth, flex: "0 0 auto" }}
+            >
+              <div className="h-10 px-3 flex items-center justify-between border-b border-[#1a1a1a] bg-[#0a0a0a]">
+                <div className="flex items-center gap-2 text-xs text-neutral-500">
+                  <span className="text-neutral-300 font-medium">Preview</span>
+                  {canPreview && <span className="text-[10px] text-neutral-600">click para ir al código</span>}
+                  {pdfSyncNotice && (
+                    <span className="text-[10px] text-amber-500">{pdfSyncNotice}</span>
+                  )}
+                  {compileState === "running" && <Loader size={12} className="animate-spin text-neutral-500" />}
+                  {compileState === "success" && <CheckCircle size={12} className="text-emerald-500" />}
+                  {compileState === "error" && <AlertTriangle size={12} className="text-red-400" />}
+                  {compileState === "timeout" && <AlertTriangle size={12} className="text-amber-500" />}
+                </div>
+                <div className="flex items-center gap-1 text-xs text-neutral-500">
+                  <button
+                    type="button"
+                    onClick={handlePrevPage}
+                    disabled={!canPreview || pdfPage <= 1}
+                    className="p-1.5 rounded-md hover:bg-[#1a1a1a] text-neutral-500 hover:text-neutral-300 disabled:opacity-40 transition-colors"
+                    title="Previous page"
                   >
-                    <Download size={14} />
-                  </a>
-                )}
-                <button
-                  type="button"
-                  onClick={() => startDelete(activePath)}
-                  disabled={!canEdit}
-                  className="p-1 rounded hover:bg-neutral-900 text-neutral-500 hover:text-neutral-200 disabled:opacity-40"
-                  title="Delete file"
-                >
-                  <Trash2 size={14} />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setRightOpen(false)}
-                  className="p-1 rounded hover:bg-neutral-900 text-neutral-500 hover:text-neutral-200"
-                  title="Collapse preview"
-                >
-                  <ChevronRight size={14} />
-                </button>
-              </div>
-            </div>
-
-            <div className="flex-1 bg-[#0e0e0f] overflow-auto relative">
-              {pdfLoading && (
-                <div className="absolute inset-0 flex items-center justify-center text-neutral-500 text-sm">
-                  Rendering PDF...
-                </div>
-              )}
-              {canPreview ? (
-                <div className="min-h-full flex justify-center px-6 py-6">
-                  <div className="bg-white shadow-[0_15px_45px_rgba(0,0,0,0.35)] rounded-sm overflow-hidden">
-                    <canvas ref={pdfCanvasRef} className="block bg-white" />
-                  </div>
-                </div>
-              ) : (
-                <div className="h-full flex items-center justify-center text-neutral-500 text-sm">
-                  No PDF yet
-                </div>
-              )}
-            </div>
-
-            {logOpen ? (
-              <>
-                <div
-                  className="h-2 w-full cursor-row-resize bg-neutral-900/70"
-                  onMouseDown={(event) => {
-                    dragRef.current = {
-                      type: "log",
-                      startX: event.clientX,
-                      startY: event.clientY,
-                      leftWidth,
-                      rightWidth,
-                      logHeight,
-                      aiHeight,
-                    };
-                  }}
-                />
-                <div className="border-t border-neutral-900 bg-[#0b0b0b]" style={{ height: logHeight }}>
-                  <div className="px-3 py-2 text-xs text-neutral-400 border-b border-neutral-900 flex items-center justify-between">
-                    <span>Compiler log</span>
-                    <button
-                      type="button"
-                      onClick={() => setLogOpen(false)}
-                      className="text-[10px] text-neutral-500 hover:text-neutral-200"
+                    <ChevronLeft size={14} />
+                  </button>
+                  <span className="text-[11px] text-neutral-600 w-12 text-center font-medium">{pageLabel}</span>
+                  <button
+                    type="button"
+                    onClick={handleNextPage}
+                    disabled={!canPreview || pdfPage >= pdfPages}
+                    className="p-1.5 rounded-md hover:bg-[#1a1a1a] text-neutral-500 hover:text-neutral-300 disabled:opacity-40 transition-colors"
+                    title="Next page"
+                  >
+                    <ChevronRight size={14} />
+                  </button>
+                  <div className="w-px h-4 bg-[#252525] mx-1.5" />
+                  <button
+                    type="button"
+                    onClick={handleZoomOut}
+                    disabled={!canPreview || pdfZoom <= 0.5}
+                    className="p-1.5 rounded-md hover:bg-[#1a1a1a] text-neutral-500 hover:text-neutral-300 disabled:opacity-40 transition-colors"
+                    title="Zoom out"
+                  >
+                    <ZoomOut size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleZoomReset}
+                    disabled={!canPreview}
+                    className="px-2 py-1 rounded-md text-[10px] text-neutral-500 hover:text-neutral-300 hover:bg-[#1a1a1a] disabled:opacity-40 transition-colors min-w-[44px]"
+                    title="Reset zoom"
+                  >
+                    {Math.round(pdfZoom * 100)}%
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleZoomIn}
+                    disabled={!canPreview || pdfZoom >= 2.5}
+                    className="p-1.5 rounded-md hover:bg-[#1a1a1a] text-neutral-500 hover:text-neutral-300 disabled:opacity-40 transition-colors"
+                    title="Zoom in"
+                  >
+                    <ZoomIn size={14} />
+                  </button>
+                  {pdfUrl && (
+                    <a
+                      href={pdfUrl}
+                      download={`proofmesh-${problemId}.pdf`}
+                      className="p-1.5 rounded-md hover:bg-[#1a1a1a] text-neutral-500 hover:text-neutral-300 transition-colors"
+                      title="Download PDF"
                     >
-                      Collapse
-                    </button>
-                  </div>
-                  <pre className="h-[calc(100%-28px)] overflow-y-auto text-[11px] text-neutral-500 px-3 py-2 whitespace-pre-wrap">
-                    {compileLog || "No logs yet."}
-                  </pre>
+                      <Download size={14} />
+                    </a>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => startDelete(activePath)}
+                    disabled={!canEdit}
+                    className="p-1.5 rounded-md hover:bg-[#1a1a1a] text-neutral-500 hover:text-neutral-300 disabled:opacity-40 transition-colors"
+                    title="Delete file"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRightOpen(false)}
+                    className="p-1.5 rounded-md hover:bg-[#1a1a1a] text-neutral-500 hover:text-neutral-300 transition-colors"
+                    title="Collapse preview"
+                  >
+                    <ChevronRight size={14} />
+                  </button>
                 </div>
-              </>
-            ) : (
-              <div className="border-t border-neutral-900 bg-[#0b0b0b] h-8 flex items-center justify-between px-3 text-xs text-neutral-500">
-                <span>Compiler log</span>
-                <button
-                  type="button"
-                  onClick={() => setLogOpen(true)}
-                  className="text-[10px] text-neutral-500 hover:text-neutral-200"
-                >
-                  Open
-                </button>
               </div>
-            )}
-          </div>
+
+              <div className="flex-1 bg-[#0a0a0a] overflow-auto relative">
+                {pdfLoading && (
+                  <div className="absolute inset-0 flex items-center justify-center text-neutral-600 text-sm">
+                    Rendering PDF...
+                  </div>
+                )}
+                {canPreview ? (
+                  <div className="min-h-full flex justify-center px-6 py-6">
+                    <div className="bg-white shadow-[0_20px_60px_rgba(0,0,0,0.5)] rounded-sm overflow-hidden">
+                      <canvas
+                        ref={pdfCanvasRef}
+                        onClick={handlePdfClick}
+                        className="block bg-white cursor-crosshair"
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="h-full flex items-center justify-center text-neutral-700 text-sm">
+                    No PDF yet
+                  </div>
+                )}
+              </div>
+
+              {logOpen ? (
+                <>
+                  <div
+                    className="h-2 w-full cursor-row-resize bg-transparent hover:bg-[#252525] transition-colors"
+                    onMouseDown={(event) => {
+                      dragRef.current = {
+                        type: "log",
+                        startX: event.clientX,
+                        startY: event.clientY,
+                        leftWidth,
+                        chatWidth,
+                        rightWidth,
+                        logHeight,
+                      };
+                    }}
+                  />
+                  <div className="border-t border-[#1a1a1a] bg-[#0a0a0a]" style={{ height: logHeight }}>
+                    <div className="px-3 py-2 text-xs text-neutral-500 border-b border-[#1a1a1a] flex items-center justify-between">
+                      <span className="font-medium">Compiler log</span>
+                      <button
+                        type="button"
+                        onClick={() => setLogOpen(false)}
+                        className="text-[10px] text-neutral-600 hover:text-neutral-300 transition-colors"
+                      >
+                        Collapse
+                      </button>
+                    </div>
+                    <pre className="h-[calc(100%-28px)] overflow-y-auto text-[11px] text-neutral-600 px-3 py-2 whitespace-pre-wrap font-mono">
+                      {compileLog || "No logs yet."}
+                    </pre>
+                  </div>
+                </>
+              ) : (
+                <div className="border-t border-[#1a1a1a] bg-[#0a0a0a] h-8 flex items-center justify-between px-3 text-xs text-neutral-600">
+                  <span>Compiler log</span>
+                  <button
+                    type="button"
+                    onClick={() => setLogOpen(true)}
+                    className="text-[10px] text-neutral-600 hover:text-neutral-300 transition-colors"
+                  >
+                    Open
+                  </button>
+                </div>
+              )}
+            </div>
           ) : (
-            <div className="w-10 bg-neutral-950 border-l border-neutral-800 flex flex-col items-center py-3">
+            <div className="w-10 bg-[#0a0a0a] border-l border-[#1a1a1a] flex flex-col items-center py-3">
               <button
                 type="button"
                 onClick={() => setRightOpen(true)}
-                className="p-1 rounded hover:bg-neutral-900 text-neutral-500 hover:text-neutral-200"
+                className="p-1.5 rounded-md hover:bg-[#1a1a1a] text-neutral-600 hover:text-neutral-300 transition-colors"
                 title="Show preview"
               >
                 <ChevronLeft size={16} />
@@ -1704,6 +4502,19 @@ export default function LabPage({ params }: PageProps) {
         type="file"
         className="hidden"
         onChange={handleUpload}
+      />
+      <input
+        ref={imageUploadRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          if (file) {
+            void handleImageUpload(file);
+          }
+          event.target.value = "";
+        }}
       />
     </main>
   );
