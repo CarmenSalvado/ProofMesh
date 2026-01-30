@@ -11,6 +11,7 @@ from app.models.comment import Comment
 from app.models.star import Star, StarTargetType
 from app.models.notification import Notification, NotificationType
 from app.models.team import Team, TeamMember, TeamProblem, TeamRole
+from app.models.latex_ai import LatexAIMemory, LatexAIRun, LatexAIMessage, LatexAIQuickAction
 
 __all__ = [
     "Base",
@@ -32,4 +33,8 @@ __all__ = [
     "TeamMember",
     "TeamProblem",
     "TeamRole",
+    "LatexAIMemory",
+    "LatexAIRun",
+    "LatexAIMessage",
+    "LatexAIQuickAction",
 ]

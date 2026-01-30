@@ -38,6 +38,7 @@ class LatexCompileResponse(BaseModel):
     log: str
     pdf_key: str | None = None
     log_key: str | None = None
+    synctex_key: str | None = None
     meta_key: str | None = None
     duration_ms: int | None = None
 
@@ -45,3 +46,15 @@ class LatexCompileResponse(BaseModel):
 class LatexRenameRequest(BaseModel):
     from_path: str
     to_path: str
+
+
+class LatexSynctexRequest(BaseModel):
+    page: int = Field(..., ge=1)
+    x: float
+    y: float
+
+
+class LatexSynctexResponse(BaseModel):
+    path: str
+    line: int
+    column: int | None = None

@@ -21,6 +21,8 @@ from app.schemas.latex import (
     LatexCompileResponse,
     LatexFileInfo,
     LatexRenameRequest,
+    LatexSynctexRequest,
+    LatexSynctexResponse,
 )
 from app.services.storage import (
     list_objects,
@@ -300,3 +302,45 @@ async def get_output_log(
     if data is None:
         raise HTTPException(status_code=404, detail="Log not found")
     return Response(content=data, media_type="text/plain")
+
+
+@router.post("/{problem_id}/synctex", response_model=LatexSynctexResponse)
+async def synctex_map(
+    problem_id: UUID,
+    payload: LatexSynctexRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User | None = Depends(get_current_user_optional),
+):
+    await verify_problem_access(problem_id, db, current_user)
+    prefix = latex_prefix(problem_id)
+    timeout = settings.latex_compile_timeout + 5
+
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        try:
+            response = await client.post(
+                f"{settings.latex_compiler_url}/synctex",
+                json={
+                    "prefix": prefix,
+                    "page": payload.page,
+                    "x": payload.x,
+                    "y": payload.y,
+                },
+            )
+        except httpx.RequestError as exc:
+            raise HTTPException(status_code=502, detail="Compiler service unavailable") from exc
+
+    if response.status_code != 200:
+        detail = response.text
+        if response.headers.get("content-type", "").startswith("application/json"):
+            try:
+                detail = response.json().get("detail", detail)
+            except ValueError:
+                pass
+        raise HTTPException(status_code=response.status_code, detail=detail or "Synctex failed")
+
+    data = response.json()
+    return LatexSynctexResponse(
+        path=data.get("path", ""),
+        line=int(data.get("line", 1)),
+        column=data.get("column"),
+    )

@@ -13,6 +13,8 @@ from app.api import (
     social_router,
     realtime_router,
     latex_router,
+    latex_ai_router,
+    latex_ai_store_router,
 )
 from app.api.orchestration import router as orchestration_router
 from app.api.documents import router as documents_router
@@ -55,6 +57,8 @@ app.include_router(workspaces_router)
 app.include_router(agents_router)
 app.include_router(social_router)
 app.include_router(latex_router)
+app.include_router(latex_ai_router)
+app.include_router(latex_ai_store_router)
 app.include_router(orchestration_router)
 app.include_router(documents_router, prefix="/api/documents", tags=["documents"])
 
