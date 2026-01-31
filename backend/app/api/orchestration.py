@@ -25,8 +25,9 @@ from app.models.library_item import LibraryItem, LibraryItemKind, LibraryItemSta
 from app.models.user import User
 from app.api.deps import get_current_user_optional, get_current_user
 
-# Add mesh backend to path - use relative path from this file
-_mesh_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "mesh"))
+# Add mesh backend to path
+# In Docker: /app/mesh, locally: ../../../mesh relative to this file
+_mesh_path = "/app/mesh" if os.path.exists("/app/mesh") else os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "mesh"))
 if _mesh_path not in sys.path:
     sys.path.insert(0, _mesh_path)
 
@@ -141,21 +142,33 @@ async def verify_problem_access(
 
 def get_orchestrator():
     """Get or create the orchestrator instance."""
+    # Debug logging
+    api_key = os.environ.get("GEMINI_API_KEY")
+    print(f"[Orchestration] Checking GEMINI_API_KEY: {'present (len={})'.format(len(api_key)) if api_key else 'MISSING'}")
+    print(f"[Orchestration] Mesh path: {_mesh_path}")
+    print(f"[Orchestration] Mesh path exists: {os.path.exists(_mesh_path)}")
+    
+    if not api_key:
+        print("[Orchestration] GEMINI_API_KEY not found in environment")
+        return None
+    
     try:
         # Import from mesh/backend - path already added at module level
+        print("[Orchestration] Attempting import of backend.orchestrator...")
         from backend.orchestrator import Orchestrator
         from backend.adk_runtime import Runtime
-        
-        # Check for API key
-        if not os.environ.get("GEMINI_API_KEY"):
-            return None
+        print("[Orchestration] Import successful!")
             
         return Orchestrator(runtime=Runtime())
     except ImportError as e:
         print(f"[Orchestration] Import error: {e}")
+        import traceback
+        traceback.print_exc()
         return None
     except Exception as e:
         print(f"[Orchestration] Error creating orchestrator: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 

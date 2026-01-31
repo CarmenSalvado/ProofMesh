@@ -136,6 +136,7 @@ export interface LibraryItem {
 	kind: LibraryItemKind;
 	content: string;
 	formula: string | null;
+	lean_code: string | null;
 	status: LibraryItemStatus;
 	authors: AuthorInfo[];
 	source: {
@@ -158,6 +159,7 @@ export interface LibraryItemCreate {
 	kind: LibraryItemKind;
 	content: string;
 	formula?: string;
+	lean_code?: string;
 	authors?: AuthorInfo[];
 	dependencies?: UUID[];
 }

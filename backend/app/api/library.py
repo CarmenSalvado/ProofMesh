@@ -97,6 +97,7 @@ async def create_library_item(
         kind=data.kind,
         content=data.content,
         formula=data.formula,
+        lean_code=data.lean_code,
         status=LibraryItemStatus.PROPOSED,
         authors=authors,
         source=data.source.model_dump() if data.source else None,
@@ -176,6 +177,8 @@ async def update_library_item(
         item.content = data.content
     if data.formula is not None:
         item.formula = data.formula
+    if data.lean_code is not None:
+        item.lean_code = data.lean_code
     if data.status is not None:
         item.status = data.status
     if data.verification is not None:

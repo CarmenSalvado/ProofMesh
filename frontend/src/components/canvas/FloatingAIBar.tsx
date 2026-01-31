@@ -15,12 +15,18 @@ import {
   Command,
   Image as ImageIcon,
   Target,
+  Play,
+  Zap,
+  CheckCircle,
+  XCircle,
 } from "lucide-react";
 import { CanvasNode, NODE_TYPE_CONFIG } from "./types";
 import {
   getOrchestrationStatus,
   exploreContext,
   formalizeText,
+  verifyLeanCode,
+  critiqueProposal,
 } from "@/lib/api";
 
 interface FloatingInsight {
@@ -46,6 +52,7 @@ interface FloatingAIBarProps {
   isVisible: boolean;
   onToggle: () => void;
   onCreateNode?: (data: { type: string; title: string; content: string; formula?: string; x?: number; y?: number; dependencies?: string[] }) => void;
+  onUpdateNode?: (nodeId: string, updates: { formula?: string; leanCode?: string; status?: "PROPOSED" | "VERIFIED" | "REJECTED" }) => void;
 }
 
 export function FloatingAIBar({
@@ -55,6 +62,7 @@ export function FloatingAIBar({
   isVisible,
   onToggle,
   onCreateNode,
+  onUpdateNode,
 }: FloatingAIBarProps) {
   const [command, setCommand] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -64,6 +72,9 @@ export function FloatingAIBar({
   const [copied, setCopied] = useState<string | null>(null);
   const [contextNodes, setContextNodes] = useState<ContextNode[]>([]);
   const [attachedImages, setAttachedImages] = useState<File[]>([]);
+  const [currentLeanCode, setCurrentLeanCode] = useState<string | null>(null);
+  const [verificationResult, setVerificationResult] = useState<{ success: boolean; log: string } | null>(null);
+  const [isPipelineRunning, setIsPipelineRunning] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -74,8 +85,8 @@ export function FloatingAIBar({
       .catch(() => setIsOrchestrationAvailable(false));
   }, []);
 
-  // Auto-add selected node to context
-  useEffect(() => {
+  // Manual add context - user clicks to add selected nodes
+  const handleAddContext = useCallback(() => {
     if (selectedNode && !contextNodes.find(n => n.id === selectedNode.id)) {
       setContextNodes(prev => [...prev, {
         id: selectedNode.id,
@@ -83,20 +94,7 @@ export function FloatingAIBar({
         type: selectedNode.type,
       }]);
     }
-  }, [selectedNode]);
-
-  // Add multiple selected nodes
-  useEffect(() => {
-    if (selectedNodes.length > 0) {
-      const newNodes = selectedNodes.filter(n => !contextNodes.find(c => c.id === n.id));
-      if (newNodes.length > 0) {
-        setContextNodes(prev => [
-          ...prev,
-          ...newNodes.map(n => ({ id: n.id, title: n.title, type: n.type }))
-        ]);
-      }
-    }
-  }, [selectedNodes]);
+  }, [selectedNode, contextNodes]);
 
   // Keyboard shortcut
   useEffect(() => {
@@ -124,31 +122,69 @@ export function FloatingAIBar({
 
   const handleExplore = useCallback(async () => {
     if (!command.trim() || !problemId) return;
-    
+
     setIsLoading(true);
     setActiveAction("explore");
-    
+
     try {
-      const contextStr = contextNodes.length > 0 
-        ? `Context nodes: ${contextNodes.map(n => `${n.title} (${n.type})`).join(", ")}\n\n`
-        : "";
-      
+      // Build rich context including node content
+      let contextStr = "";
+      if (contextNodes.length > 0) {
+        const contextDetails = contextNodes.map(n => {
+          const fullNode = selectedNode?.id === n.id ? selectedNode : selectedNodes.find(sn => sn.id === n.id);
+          const content = fullNode?.content ? ` - ${fullNode.content}` : "";
+          return `${n.title} (${n.type})${content}`;
+        }).join("\n");
+        contextStr = `Context nodes:\n${contextDetails}\n\n`;
+      }
+
       const result = await exploreContext({
         problem_id: problemId,
         context: contextStr + command,
         max_iterations: 3,
       });
-      
+
+      // Calculate base position for new nodes
+      const baseX = selectedNode?.x ?? 400;
+      const baseY = selectedNode?.y ?? 300;
+      const dependencyIds = contextNodes.map(n => n.id);
+
+      // Create one node per proposal
       result.proposals.forEach((proposal, index) => {
+        // Add as insight for display
         addInsight({
           type: "proposal",
           title: `Proposal ${index + 1}`,
           content: proposal.content,
           score: proposal.score,
         });
+
+        // Auto-create a canvas node for each proposal
+        if (onCreateNode) {
+          // Fan out positions for multiple proposals
+          const angle = ((index - (result.proposals.length - 1) / 2) * 45) * (Math.PI / 180);
+          const distance = 300;
+          const nodeX = baseX + Math.sin(angle) * distance;
+          const nodeY = baseY + distance * 0.7;
+
+          // Format content with confidence score
+          const confidencePercent = Math.round(proposal.score * 100);
+          const nodeContent = `**Confidence: ${confidencePercent}%**\n\n${proposal.content}\n\n---\n*Reasoning: ${proposal.reasoning}*`;
+
+          onCreateNode({
+            type: "NOTE",
+            title: proposal.content.slice(0, 60) + (proposal.content.length > 60 ? "..." : ""),
+            content: nodeContent,
+            x: nodeX,
+            y: nodeY,
+            dependencies: dependencyIds,
+          });
+        }
       });
-      
+
       setCommand("");
+      // Clear context after creating nodes
+      setContextNodes([]);
     } catch (err) {
       addInsight({
         type: "insight",
@@ -159,52 +195,66 @@ export function FloatingAIBar({
       setIsLoading(false);
       setActiveAction(null);
     }
-  }, [command, problemId, contextNodes, addInsight]);
+  }, [command, problemId, contextNodes, selectedNode, selectedNodes, addInsight, onCreateNode]);
 
   const handleQuickInsight = useCallback(async () => {
     if (contextNodes.length === 0) return;
-    
+
     setIsLoading(true);
     setActiveAction("insight");
-    
+
     const node = contextNodes[0];
     addInsight({
       type: "insight",
       title: "Quick Insight",
-      content: `Node "${node.title}" is a ${NODE_TYPE_CONFIG[node.type]?.label || node.type}. ${
-        node.type === "AXIOM" ? "This serves as a foundational assumption." :
+      content: `Node "${node.title}" is a ${NODE_TYPE_CONFIG[node.type]?.label || node.type}. ${node.type === "AXIOM" ? "This serves as a foundational assumption." :
         node.type === "LEMMA" ? "This is a helper result for proving larger theorems." :
-        node.type === "THEOREM" ? "This represents a main result in the proof." :
-        node.type === "DEFINITION" ? "This establishes key terminology." :
-        "This is part of the proof structure."
-      }`,
+          node.type === "THEOREM" ? "This represents a main result in the proof." :
+            node.type === "DEFINITION" ? "This establishes key terminology." :
+              "This is part of the proof structure."
+        }`,
       nodeRef: node.id,
     });
-    
+
     setIsLoading(false);
     setActiveAction(null);
   }, [contextNodes, addInsight]);
 
   const handleFormalize = useCallback(async () => {
     if (contextNodes.length === 0 || !problemId) return;
-    
+
     setIsLoading(true);
     setActiveAction("formalize");
-    
+
     try {
       const node = contextNodes[0];
+      const nodeContent = selectedNode?.id === node.id ? selectedNode?.content : "";
       const result = await formalizeText({
         problem_id: problemId,
-        text: `${node.title}: ${selectedNode?.content || ""}`,
+        text: `${node.title}: ${nodeContent || ""}`,
       });
-      
-      addInsight({
-        type: "code",
-        title: "Lean 4 Code",
-        content: result.lean_code,
-        score: result.confidence,
-        nodeRef: node.id,
-      });
+
+      setCurrentLeanCode(result.lean_code);
+
+      // Update the node's leanCode field if we have onUpdateNode
+      if (onUpdateNode && selectedNode) {
+        onUpdateNode(selectedNode.id, { leanCode: result.lean_code });
+        addInsight({
+          type: "code",
+          title: "✓ Lean Code Added to Node",
+          content: result.lean_code,
+          score: result.confidence,
+          nodeRef: node.id,
+        });
+      } else {
+        addInsight({
+          type: "code",
+          title: "Lean 4 Code",
+          content: result.lean_code,
+          score: result.confidence,
+          nodeRef: node.id,
+        });
+      }
     } catch (err) {
       addInsight({
         type: "insight",
@@ -215,7 +265,161 @@ export function FloatingAIBar({
       setIsLoading(false);
       setActiveAction(null);
     }
-  }, [contextNodes, selectedNode, problemId, addInsight]);
+  }, [contextNodes, selectedNode, problemId, addInsight, onUpdateNode]);
+
+  const handleVerify = useCallback(async () => {
+    if (!currentLeanCode || !problemId) return;
+
+    setIsLoading(true);
+    setActiveAction("verify");
+    setVerificationResult(null);
+
+    try {
+      const result = await verifyLeanCode({
+        problem_id: problemId,
+        lean_code: currentLeanCode,
+      });
+
+      setVerificationResult({ success: result.success, log: result.log });
+      addInsight({
+        type: "insight",
+        title: result.success ? "✓ Verification Passed" : "✗ Verification Failed",
+        content: result.log || (result.success ? "Lean code verified successfully!" : "Verification failed"),
+        score: result.success ? 1 : 0,
+      });
+    } catch (err) {
+      addInsight({
+        type: "insight",
+        title: "Verification Error",
+        content: err instanceof Error ? err.message : "Verification failed",
+      });
+    } finally {
+      setIsLoading(false);
+      setActiveAction(null);
+    }
+  }, [currentLeanCode, problemId, addInsight]);
+
+  const handleFullPipeline = useCallback(async () => {
+    if (!command.trim() && contextNodes.length === 0) return;
+    if (!problemId) return;
+
+    setIsPipelineRunning(true);
+    setActiveAction("pipeline");
+    setVerificationResult(null);
+    setCurrentLeanCode(null);
+
+    try {
+      // Step 1: Explore
+      addInsight({ type: "insight", title: "🔄 Pipeline: Exploring...", content: "Generating proposals..." });
+
+      let contextStr = command.trim();
+      if (contextNodes.length > 0) {
+        const contextDetails = contextNodes.map(n => {
+          const fullNode = selectedNode?.id === n.id ? selectedNode : selectedNodes.find(sn => sn.id === n.id);
+          return `${n.title} (${n.type})${fullNode?.content ? `: ${fullNode.content}` : ""}`;
+        }).join("\n");
+        contextStr = contextDetails + (contextStr ? `\n\n${contextStr}` : "");
+      }
+
+      const exploration = await exploreContext({
+        problem_id: problemId,
+        context: contextStr,
+        max_iterations: 3,
+      });
+
+      if (!exploration.proposals || exploration.proposals.length === 0) {
+        addInsight({ type: "insight", title: "Pipeline Failed", content: "No proposals generated" });
+        return;
+      }
+
+      const bestProposal = exploration.proposals[0];
+      addInsight({ type: "proposal", title: "Proposal Generated", content: bestProposal.content, score: bestProposal.score });
+
+      // Step 2: Critique
+      addInsight({ type: "insight", title: "🔄 Pipeline: Critiquing...", content: "Evaluating proposal..." });
+
+      const critique = await critiqueProposal({
+        problem_id: problemId,
+        proposal: bestProposal.content,
+      });
+
+      addInsight({ type: "insight", title: "Critique Complete", content: critique.feedback, score: critique.score });
+
+      // Step 3: Formalize
+      addInsight({ type: "insight", title: "🔄 Pipeline: Formalizing...", content: "Converting to Lean 4..." });
+
+      const formalization = await formalizeText({
+        problem_id: problemId,
+        text: bestProposal.content,
+      });
+
+      setCurrentLeanCode(formalization.lean_code);
+      addInsight({ type: "code", title: "Lean 4 Code", content: formalization.lean_code, score: formalization.confidence });
+
+      // Step 4: Verify
+      addInsight({ type: "insight", title: "🔄 Pipeline: Verifying...", content: "Running Lean 4 verification..." });
+
+      const verification = await verifyLeanCode({
+        problem_id: problemId,
+        lean_code: formalization.lean_code,
+      });
+
+      setVerificationResult({ success: verification.success, log: verification.log });
+
+      // Final result
+      if (verification.success) {
+        addInsight({
+          type: "insight",
+          title: "✅ Pipeline Complete!",
+          content: `Proof verified successfully!\n\nScore: ${(critique.score * 100).toFixed(0)}%\nConfidence: ${(formalization.confidence * 100).toFixed(0)}%`,
+          score: 1,
+        });
+
+        // Update the selected node's leanCode field instead of creating a new node
+        if (onUpdateNode && contextNodes.length > 0) {
+          const targetNodeId = contextNodes[0].id;
+          onUpdateNode(targetNodeId, { leanCode: formalization.lean_code, status: "VERIFIED" });
+          addInsight({
+            type: "insight",
+            title: "✓ Node Updated",
+            content: `Lean code added to "${contextNodes[0].title}" and marked as Verified.`,
+          });
+        } else if (onCreateNode) {
+          // Fallback: create new node if no context node selected
+          const baseX = selectedNode?.x ?? 400;
+          const baseY = selectedNode?.y ?? 300;
+          onCreateNode({
+            type: "LEMMA",
+            title: bestProposal.content.slice(0, 60) + (bestProposal.content.length > 60 ? "..." : ""),
+            content: `**Verified ✓**\n\n${bestProposal.content}\n\n---\n*Confidence: ${(formalization.confidence * 100).toFixed(0)}%*`,
+            formula: formalization.lean_code,
+            x: baseX,
+            y: baseY + 200,
+            dependencies: contextNodes.map(n => n.id),
+          });
+        }
+      } else {
+        addInsight({
+          type: "insight",
+          title: "⚠️ Verification Failed",
+          content: verification.log || "Lean verification failed. The code may need adjustments.",
+          score: 0,
+        });
+      }
+
+      setCommand("");
+      setContextNodes([]);
+    } catch (err) {
+      addInsight({
+        type: "insight",
+        title: "Pipeline Error",
+        content: err instanceof Error ? err.message : "Pipeline failed",
+      });
+    } finally {
+      setIsPipelineRunning(false);
+      setActiveAction(null);
+    }
+  }, [command, contextNodes, selectedNode, selectedNodes, problemId, addInsight, onCreateNode, onUpdateNode]);
 
   const handleCopy = useCallback((id: string, content: string) => {
     navigator.clipboard.writeText(content);
@@ -229,14 +433,14 @@ export function FloatingAIBar({
 
   const handleCreateFromInsight = useCallback((insight: FloatingInsight) => {
     if (!onCreateNode) return;
-    
+
     onCreateNode({
       type: insight.type === "code" ? "LEMMA" : "NOTE",
       title: insight.title,
       content: insight.content,
       dependencies: [],
     });
-    
+
     handleDismissInsight(insight.id);
   }, [onCreateNode, handleDismissInsight]);
 
@@ -272,7 +476,7 @@ export function FloatingAIBar({
             ⌘K
           </kbd>
         </button>
-        
+
         {/* Floating insights remain visible */}
         <FloatingInsights
           insights={insights}
@@ -288,7 +492,7 @@ export function FloatingAIBar({
   return (
     <>
       {/* Command Bar - clean floating design */}
-      <div 
+      <div
         className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 w-full max-w-xl px-4 pointer-events-none"
         onDoubleClick={(e) => e.stopPropagation()}
       >
@@ -312,6 +516,20 @@ export function FloatingAIBar({
                   </button>
                 </span>
               ))}
+            </div>
+          )}
+
+          {/* Add selected node to context button */}
+          {selectedNode && !contextNodes.find(n => n.id === selectedNode.id) && (
+            <div className="flex items-center gap-2 px-4 py-2 border-b border-neutral-100">
+              <button
+                onClick={handleAddContext}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs bg-indigo-50 hover:bg-indigo-100 rounded-full text-indigo-600 transition-colors flex-shrink-0"
+              >
+                <Plus className="w-3 h-3" />
+                <span className={`w-1.5 h-1.5 rounded-full ${NODE_TYPE_CONFIG[selectedNode.type]?.color.replace("text-", "bg-") || "bg-neutral-400"}`} />
+                <span className="max-w-[120px] truncate">Add "{selectedNode.title}"</span>
+              </button>
             </div>
           )}
 
@@ -339,7 +557,7 @@ export function FloatingAIBar({
           {/* Main Input */}
           <div className="flex items-center gap-3 px-4 py-3">
             <Sparkles className="w-5 h-5 text-neutral-400 flex-shrink-0" />
-            
+
             <input
               ref={inputRef}
               type="text"
@@ -356,7 +574,7 @@ export function FloatingAIBar({
               disabled={isLoading}
               autoFocus
             />
-            
+
             <input
               ref={fileInputRef}
               type="file"
@@ -365,7 +583,7 @@ export function FloatingAIBar({
               className="hidden"
               onChange={handleFileChange}
             />
-            
+
             <div className="flex items-center gap-0.5">
               <button
                 onClick={handleImageAttach}
@@ -374,7 +592,7 @@ export function FloatingAIBar({
               >
                 <ImageIcon className="w-4 h-4" />
               </button>
-              
+
               {isLoading ? (
                 <div className="p-2">
                   <Loader2 className="w-4 h-4 text-neutral-400 animate-spin" />
@@ -388,7 +606,7 @@ export function FloatingAIBar({
                   <Send className="w-4 h-4" />
                 </button>
               )}
-              
+
               <button
                 onClick={onToggle}
                 className="p-2 text-neutral-400 hover:text-neutral-600 rounded-full transition-colors"
@@ -397,7 +615,7 @@ export function FloatingAIBar({
               </button>
             </div>
           </div>
-          
+
           {/* Quick Actions - minimal bottom bar */}
           <div className="flex items-center gap-1 px-4 py-2 bg-neutral-50/50">
             <QuickActionButton
@@ -407,7 +625,7 @@ export function FloatingAIBar({
               disabled={!command.trim() || isLoading}
               active={activeAction === "explore"}
             />
-            
+
             <QuickActionButton
               icon={Lightbulb}
               label="Insight"
@@ -415,7 +633,7 @@ export function FloatingAIBar({
               disabled={contextNodes.length === 0 || isLoading}
               active={activeAction === "insight"}
             />
-            
+
             <QuickActionButton
               icon={FileCode}
               label="Formalize"
@@ -423,16 +641,41 @@ export function FloatingAIBar({
               disabled={contextNodes.length === 0 || !isOrchestrationAvailable || isLoading}
               active={activeAction === "formalize"}
             />
-            
+
+            <QuickActionButton
+              icon={Play}
+              label="Verify"
+              onClick={handleVerify}
+              disabled={!currentLeanCode || !isOrchestrationAvailable || isLoading}
+              active={activeAction === "verify"}
+            />
+
+            <div className="w-px h-4 bg-neutral-200 mx-1" />
+
+            <QuickActionButton
+              icon={Zap}
+              label="Pipeline"
+              onClick={handleFullPipeline}
+              disabled={(!command.trim() && contextNodes.length === 0) || !isOrchestrationAvailable || isLoading || isPipelineRunning}
+              active={activeAction === "pipeline"}
+            />
+
             <div className="flex-1" />
-            
+
+            {verificationResult && (
+              <span className={`flex items-center gap-1 text-[10px] ${verificationResult.success ? "text-emerald-600" : "text-red-500"}`}>
+                {verificationResult.success ? <CheckCircle className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
+                {verificationResult.success ? "Verified" : "Failed"}
+              </span>
+            )}
+
             <span className="text-[10px] text-neutral-400">
               esc
             </span>
           </div>
         </div>
       </div>
-      
+
       {/* Floating Insights */}
       <FloatingInsights
         insights={insights}
@@ -458,13 +701,12 @@ function QuickActionButton({ icon: Icon, label, onClick, disabled, active }: Qui
     <button
       onClick={onClick}
       disabled={disabled}
-      className={`flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-full transition-colors ${
-        active
-          ? "text-neutral-800 bg-neutral-200"
-          : disabled
+      className={`flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-full transition-colors ${active
+        ? "text-neutral-800 bg-neutral-200"
+        : disabled
           ? "text-neutral-300 cursor-not-allowed"
           : "text-neutral-500 hover:text-neutral-700"
-      }`}
+        }`}
     >
       <Icon className="w-3 h-3" />
       {label}
@@ -482,7 +724,7 @@ interface FloatingInsightsProps {
 
 function FloatingInsights({ insights, onDismiss, onCopy, onCreateNode, copied }: FloatingInsightsProps) {
   if (insights.length === 0) return null;
-  
+
   return (
     <div className="fixed bottom-24 right-6 z-40 flex flex-col gap-2 max-w-sm pointer-events-none">
       {insights.map((insight, index) => (
@@ -499,11 +741,10 @@ function FloatingInsights({ insights, onDismiss, onCopy, onCreateNode, copied }:
               {insight.type === "code" && <FileCode className="w-3.5 h-3.5 text-emerald-500" />}
               <span className="text-sm font-medium text-neutral-800">{insight.title}</span>
               {insight.score !== undefined && (
-                <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
-                  insight.score > 0.7 ? "bg-emerald-100 text-emerald-600" :
+                <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${insight.score > 0.7 ? "bg-emerald-100 text-emerald-600" :
                   insight.score > 0.4 ? "bg-amber-100 text-amber-600" :
-                  "bg-neutral-100 text-neutral-500"
-                }`}>
+                    "bg-neutral-100 text-neutral-500"
+                  }`}>
                   {(insight.score * 100).toFixed(0)}%
                 </span>
               )}
@@ -515,7 +756,7 @@ function FloatingInsights({ insights, onDismiss, onCopy, onCreateNode, copied }:
               <X className="w-3.5 h-3.5" />
             </button>
           </div>
-          
+
           {/* Content */}
           <div className="px-3 pb-2">
             {insight.type === "code" ? (
@@ -528,7 +769,7 @@ function FloatingInsights({ insights, onDismiss, onCopy, onCreateNode, copied }:
               </p>
             )}
           </div>
-          
+
           {/* Actions */}
           <div className="flex items-center gap-1 px-3 py-2 bg-neutral-50/50">
             <button

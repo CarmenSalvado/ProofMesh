@@ -6,6 +6,7 @@ export interface CanvasNode {
   title: string;
   content?: string;
   formula?: string;
+  leanCode?: string;
   x: number;
   y: number;
   width?: number;
@@ -54,7 +55,7 @@ export interface AgentActivity {
 }
 
 // Node type styling configurations
-export const NODE_TYPE_CONFIG: Record<string, { 
+export const NODE_TYPE_CONFIG: Record<string, {
   label: string;
   color: string;
   bgColor: string;

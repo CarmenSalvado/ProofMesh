@@ -1,15 +1,21 @@
-import Mathlib.Data.Nat.Prime
-import Mathlib.Data.Nat.ModEq
-import Mathlib.Algebra.BigOperators.Intervals
+import Mathlib.Algebra.Ring.Parity
+import Mathlib.Data.Int.Basic
 
-open Finset Nat BigOperators
+-- "Sea m y n dos números pares cualesquiera."
+-- "Por definición de número par, existen números enteros k y j tales que m = 2k y n = 2j."
 
-/-- Definition of the sum S_n = ∑_{k=1}^n k^{n-k+1} -/
-def S (n : ℕ) : ℕ := ∑ k in Ico 1 (n + 1), k ^ (n - k + 1)
-
-/-- The recurrence relation S_{n+p-1} ≡ S_n + ∑_{j=1}^{p-1} (n+j)^{p-j} (mod p).
-    Note: The derivation of this relation relies on Fermat's Little Theorem, 
-    so we assume p is prime. -/
-theorem S_recurrence (n p : ℕ) (hp : p.Prime) :
-  S (n + p - 1) ≡ S n + ∑ j in Ico 1 p, (n + j) ^ (p - j) [MOD p] := by
-  sorry
+example (m n : ℤ) (hm : Even m) (hn : Even n) : True := by
+  -- Extract witness k for m
+  obtain ⟨k, hk⟩ := hm
+  -- Extract witness j for n
+  obtain ⟨j, hj⟩ := hn
+  
+  -- Mathlib defines Even x as x = r + r. 
+  -- To match the text "m = 2k", we rewrite addition as multiplication.
+  rw [← two_mul] at hk
+  rw [← two_mul] at hj
+  
+  -- At this point, the context matches the description:
+  -- hk : m = 2 * k
+  -- hj : n = 2 * j
+  trivial

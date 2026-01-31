@@ -1,5 +1,38 @@
 @import "tailwindcss";
-@import "katex/dist/katex.min.css";
+/* Using CDN katex in layout.tsx instead for Firefox compatibility */
+/* @import "katex/dist/katex.min.css"; */
+
+/* Firefox KaTeX fallback - show MathML instead of HTML when fonts fail */
+@-moz-document url-prefix() {
+
+  /* Force MathML to be visible (Firefox supports native MathML) */
+  .katex .katex-mathml {
+    position: static !important;
+    clip: auto !important;
+    width: auto !important;
+    height: auto !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    border: 0 !important;
+    display: inline !important;
+  }
+
+  /* Hide the HTML version that needs web fonts */
+  .katex .katex-html {
+    display: none !important;
+  }
+
+  /* Style the MathML to blend in */
+  .katex math {
+    font-family: "STIX Two Math", "Cambria Math", "Latin Modern Math", serif !important;
+    font-size: inherit !important;
+  }
+}
+
+/* Force KaTeX fonts to load eagerly */
+.katex * {
+  font-display: swap !important;
+}
 
 :root {
   /* Light theme (default) */

@@ -37,6 +37,7 @@ interface NodeDetailPanelProps {
     title: string;
     content: string;
     formula?: string;
+    leanCode?: string;
     status?: "PROPOSED" | "VERIFIED" | "REJECTED";
   }) => Promise<void>;
   onDelete: (nodeId: string) => Promise<void>;
@@ -56,44 +57,47 @@ export function NodeDetailPanel({
   onDelete,
 }: NodeDetailPanelProps) {
   const [activeTab, setActiveTab] = useState<"edit" | "comments">("edit");
-  
+
   // Edit state
   const [title, setTitle] = useState(node.title);
   const [content, setContent] = useState(node.content || "");
   const [formula, setFormula] = useState(node.formula || "");
+  const [leanCode, setLeanCode] = useState(node.leanCode || "");
   const [status, setStatus] = useState<"PROPOSED" | "VERIFIED" | "REJECTED">(
     node.status as "PROPOSED" | "VERIFIED" | "REJECTED"
   );
   const [isSaving, setIsSaving] = useState(false);
   const [hasChanges, setHasChanges] = useState(false);
-  
+
   // Comments state
   const [comments, setComments] = useState<Comment[]>([]);
   const [newComment, setNewComment] = useState("");
   const [loadingComments, setLoadingComments] = useState(false);
   const [submittingComment, setSubmittingComment] = useState(false);
-  
+
   const panelRef = useRef<HTMLDivElement>(null);
   const titleRef = useRef<HTMLTextAreaElement>(null);
   const autosaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  
+
   const typeConfig = NODE_TYPE_CONFIG[node.type] || NODE_TYPE_CONFIG.NOTE;
 
   // Track changes
   useEffect(() => {
-    const changed = 
+    const changed =
       title !== node.title ||
       content !== (node.content || "") ||
       formula !== (node.formula || "") ||
+      leanCode !== (node.leanCode || "") ||
       status !== node.status;
     setHasChanges(changed);
-  }, [title, content, formula, status, node]);
+  }, [title, content, formula, leanCode, status, node]);
 
   // Reset on node change
   useEffect(() => {
     setTitle(node.title);
     setContent(node.content || "");
     setFormula(node.formula || "");
+    setLeanCode(node.leanCode || "");
     setStatus(node.status as "PROPOSED" | "VERIFIED" | "REJECTED");
   }, [node]);
 
@@ -112,6 +116,27 @@ export function NodeDetailPanel({
     document.addEventListener("keydown", handleEscape);
     return () => document.removeEventListener("keydown", handleEscape);
   }, [onClose]);
+
+  // Define handleSave before it's used in autosave
+  const handleSave = useCallback(async () => {
+    if (!title.trim() || isSaving) return;
+
+    setIsSaving(true);
+    try {
+      await onSave(node.id, {
+        title: title.trim(),
+        content: content.trim(),
+        formula: formula.trim() || undefined,
+        leanCode: leanCode.trim() || undefined,
+        status,
+      });
+      setHasChanges(false);
+    } catch (error) {
+      console.error("Failed to save:", error);
+    } finally {
+      setIsSaving(false);
+    }
+  }, [node.id, title, content, formula, leanCode, status, onSave, isSaving]);
 
   // Autosave changes (debounced)
   useEffect(() => {
@@ -153,25 +178,6 @@ export function NodeDetailPanel({
     }
   };
 
-  const handleSave = useCallback(async () => {
-    if (!title.trim() || isSaving) return;
-    
-    setIsSaving(true);
-    try {
-      await onSave(node.id, {
-        title: title.trim(),
-        content: content.trim(),
-        formula: formula.trim() || undefined,
-        status,
-      });
-      setHasChanges(false);
-    } catch (error) {
-      console.error("Failed to save:", error);
-    } finally {
-      setIsSaving(false);
-    }
-  }, [node.id, title, content, formula, status, onSave, isSaving]);
-
   const handleSubmitComment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newComment.trim() || submittingComment) return;
@@ -211,7 +217,7 @@ export function NodeDetailPanel({
     const date = new Date(dateStr);
     const now = new Date();
     const diff = now.getTime() - date.getTime();
-    
+
     if (diff < 60000) return "just now";
     if (diff < 3600000) return `${Math.floor(diff / 60000)}m`;
     if (diff < 86400000) return `${Math.floor(diff / 3600000)}h`;
@@ -266,11 +272,10 @@ export function NodeDetailPanel({
       <div className="flex border-b border-neutral-100">
         <button
           onClick={() => setActiveTab("edit")}
-          className={`flex-1 px-4 py-2.5 text-sm font-medium transition-colors relative ${
-            activeTab === "edit"
-              ? "text-indigo-600"
-              : "text-neutral-500 hover:text-neutral-700"
-          }`}
+          className={`flex-1 px-4 py-2.5 text-sm font-medium transition-colors relative ${activeTab === "edit"
+            ? "text-indigo-600"
+            : "text-neutral-500 hover:text-neutral-700"
+            }`}
         >
           <span className="flex items-center justify-center gap-1.5">
             <Edit3 className="w-3.5 h-3.5" />
@@ -282,11 +287,10 @@ export function NodeDetailPanel({
         </button>
         <button
           onClick={() => setActiveTab("comments")}
-          className={`flex-1 px-4 py-2.5 text-sm font-medium transition-colors relative ${
-            activeTab === "comments"
-              ? "text-indigo-600"
-              : "text-neutral-500 hover:text-neutral-700"
-          }`}
+          className={`flex-1 px-4 py-2.5 text-sm font-medium transition-colors relative ${activeTab === "comments"
+            ? "text-indigo-600"
+            : "text-neutral-500 hover:text-neutral-700"
+            }`}
         >
           <span className="flex items-center justify-center gap-1.5">
             <MessageSquare className="w-3.5 h-3.5" />
@@ -334,11 +338,10 @@ export function NodeDetailPanel({
                   <button
                     key={option.value}
                     onClick={() => setStatus(option.value as typeof status)}
-                    className={`flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium transition-all ${
-                      isSelected
-                        ? `${option.bg} ${option.color} ${option.border} border`
-                        : "text-neutral-400 hover:bg-neutral-100"
-                    }`}
+                    className={`flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium transition-all ${isSelected
+                      ? `${option.bg} ${option.color} ${option.border} border`
+                      : "text-neutral-400 hover:bg-neutral-100"
+                      }`}
                   >
                     <Icon className="w-3 h-3" />
                     {option.label}
@@ -372,6 +375,20 @@ export function NodeDetailPanel({
                 onChange={(e) => setFormula(e.target.value)}
                 placeholder="e.g., $x^2 + y^2 = z^2$"
                 className="w-full text-sm font-mono text-neutral-700 bg-neutral-50 border border-neutral-200 rounded-lg px-3 py-2.5 outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 transition-all"
+              />
+            </div>
+
+            {/* Lean Code */}
+            <div>
+              <label className="block text-[10px] font-medium text-neutral-400 uppercase tracking-wider mb-1.5">
+                Lean Code
+              </label>
+              <textarea
+                value={leanCode}
+                onChange={(e) => setLeanCode(e.target.value)}
+                placeholder="-- Lean 4 proof code&#10;theorem example : ∀ a b : ℕ, a + b = b + a := by&#10;  intro a b&#10;  ring"
+                rows={5}
+                className="w-full text-sm font-mono text-neutral-700 bg-neutral-50 border border-neutral-200 rounded-lg px-3 py-2.5 outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-400 resize-none transition-all"
               />
             </div>
 

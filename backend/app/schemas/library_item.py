@@ -46,6 +46,7 @@ class LibraryItemCreate(BaseModel):
     kind: LibraryItemKind
     content: str
     formula: str | None = None
+    lean_code: str | None = None
     authors: list[AuthorInfo] = []
     source: SourceInfo | None = None
     dependencies: list[UUID] = []
@@ -55,6 +56,7 @@ class LibraryItemUpdate(BaseModel):
     title: str | None = None
     content: str | None = None
     formula: str | None = None
+    lean_code: str | None = None
     status: LibraryItemStatus | None = None
     verification: VerificationInfo | None = None
     dependencies: list[UUID] | None = None
@@ -69,6 +71,7 @@ class LibraryItemResponse(BaseModel):
     kind: LibraryItemKind
     content: str
     formula: str | None
+    lean_code: str | None
     status: LibraryItemStatus
     authors: list[dict]
     source: dict | None

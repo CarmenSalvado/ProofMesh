@@ -87,7 +87,13 @@ class Orchestrator:
         self.facts = fact_store or FactStore()
         
         # Configure LeanRunner to use mesh_project if available
-        project_path = os.path.join(os.getcwd(), "mesh_project")
+        # Find path relative to this file (backend/orchestrator.py) -> ../mesh_project
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        project_path = os.path.join(base_dir, "mesh_project")
+        
+        # Also check CWD fallback
+        if not os.path.exists(project_path):
+             project_path = os.path.join(os.getcwd(), "mesh_project")
         if lean_runner:
             self.lean = lean_runner
         elif os.path.exists(project_path):

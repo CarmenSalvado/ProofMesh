@@ -41,6 +41,17 @@ alembic upgrade head
 
 echo "✅ Migrations complete!"
 
+# Setup Lean Project dependencies in background (non-blocking)
+if [ -d "/app/mesh/mesh_project" ]; then
+    echo "🔧 Setting up Lean project in background..."
+    (
+        cd /app/mesh/mesh_project
+        echo "📦 Fetching Mathlib cache (this may take a while)..."
+        lake exe cache get || echo "⚠️ Warning: Failed to fetch cache"
+    ) &
+    echo "✅ Lean setup initiated (running in background)"
+fi
+
 # Start the application
 echo "🌐 Starting FastAPI server..."
 exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload

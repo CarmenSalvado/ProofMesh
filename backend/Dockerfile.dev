@@ -7,7 +7,18 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
 	gcc \
 	libpq-dev \
+	curl \
+	git \
 	&& rm -rf /var/lib/apt/lists/*
+
+# Install Elan (Lean version manager) manually
+ENV ELAN_HOME="/root/.elan"
+ENV PATH="$ELAN_HOME/bin:$PATH"
+RUN curl -L https://github.com/leanprover/elan/releases/download/v3.0.0/elan-x86_64-unknown-linux-gnu.tar.gz -o elan.tar.gz && \
+    tar -xzf elan.tar.gz && \
+    ./elan-init -y --default-toolchain leanprover/lean4:v4.27.0 && \
+    rm elan.tar.gz elan-init
+
 
 # Copy requirements and install dependencies
 COPY requirements.txt .

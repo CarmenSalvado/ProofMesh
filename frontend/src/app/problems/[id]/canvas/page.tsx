@@ -116,6 +116,7 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
         title: item.title,
         content: item.content,
         formula: item.formula || undefined,
+        leanCode: item.lean_code || undefined,
         x: storedPos?.x ?? defaultX,
         y: storedPos?.y ?? defaultY,
         width: 260,
@@ -154,7 +155,7 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
       setProblem(problemData);
       setLibraryItems(libraryData.items);
       setPositions(loadPositions(problemId));
-      
+
       // Load anchor status for all nodes
       if (libraryData.items.length > 0) {
         try {
@@ -225,7 +226,7 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
     format: "markdown" | "latex";
   }) => {
     if (selectedNodeIds.size === 0) return;
-    
+
     try {
       const result = await commitToDocument(problemId, {
         node_ids: Array.from(selectedNodeIds),
@@ -233,7 +234,7 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
         section_title: data.sectionTitle,
         format: data.format,
       });
-      
+
       // Update anchor status for committed nodes
       const newStatusMap = new Map(nodeAnchorStatus);
       for (const anchor of result.anchors) {
@@ -245,11 +246,11 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
         });
       }
       setNodeAnchorStatus(newStatusMap);
-      
+
       // Clear selection
       setSelectedNodeIds(new Set());
       setCommitModalOpen(false);
-      
+
       // Navigate to the lab with the generated content
       router.push(`/problems/${problemId}/lab?file=${encodeURIComponent(data.workspaceFileId)}`);
     } catch (err) {
@@ -340,12 +341,13 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
     async (data: NewNodeData) => {
       const beforeItems = [...libraryItems];
       const beforePositions = { ...positions };
-      
+
       const newItem = await createLibraryItem(problemId, {
         title: data.title,
         kind: data.type as LibraryItem["kind"],
         content: data.content,
         formula: data.formula,
+        lean_code: data.leanCode,
         dependencies: data.dependencies,
       });
 
@@ -357,7 +359,7 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
       const afterPositions = { ...positions, [newItem.id]: newNodePosition };
       setPositions(afterPositions);
       savePositions(problemId, afterPositions);
-      
+
       // Record for undo
       recordCreate(beforeItems, afterItems, beforePositions, afterPositions, newItem.title);
 
@@ -402,12 +404,13 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
       try {
         const beforeItems = [...libraryItems];
         const beforePositions = { ...positions };
-        
+
         const newItem = await createLibraryItem(problemId, {
           title: nodeData.title,
           kind: (nodeData.type?.toUpperCase() || "NOTE") as LibraryItem["kind"],
           content: nodeData.content || "",
           formula: nodeData.formula,
+          lean_code: nodeData.leanCode,
           dependencies: nodeData.dependencies || [],
         });
 
@@ -418,7 +421,7 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
         const afterPositions = { ...positions, [newItem.id]: pos };
         setPositions(afterPositions);
         savePositions(problemId, afterPositions);
-        
+
         // Record for undo
         recordCreate(beforeItems, afterItems, beforePositions, afterPositions, newItem.title);
 
@@ -449,7 +452,7 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
         if (!currentItem) return;
 
         const updateData: Parameters<typeof updateLibraryItem>[2] = {};
-        
+
         if (updates.status) {
           // Status is already uppercase from CanvasNode
           updateData.status = updates.status as "PROPOSED" | "VERIFIED" | "REJECTED";
@@ -459,6 +462,12 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
         }
         if (updates.content) {
           updateData.content = updates.content;
+        }
+        if (updates.formula !== undefined) {
+          updateData.formula = updates.formula;
+        }
+        if (updates.leanCode !== undefined) {
+          updateData.lean_code = updates.leanCode;
         }
 
         const updatedItem = await updateLibraryItem(problemId, nodeId, updateData);
@@ -489,10 +498,20 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
   const handleUpdateNode = useCallback(
     async (
       nodeId: string,
-      data: { title: string; content: string; formula?: string; status?: "PROPOSED" | "VERIFIED" | "REJECTED" }
+      data: { title: string; content: string; formula?: string; leanCode?: string; status?: "PROPOSED" | "VERIFIED" | "REJECTED" }
     ) => {
       // Status is already uppercase, pass directly
-      const updatedItem = await updateLibraryItem(problemId, nodeId, data);
+      // Convert leanCode to lean_code for API
+      const apiData: any = {
+        title: data.title,
+        content: data.content,
+        formula: data.formula,
+        status: data.status,
+      };
+      if (data.leanCode !== undefined) {
+        apiData.lean_code = data.leanCode;
+      }
+      const updatedItem = await updateLibraryItem(problemId, nodeId, apiData);
 
       // Update local state
       setLibraryItems((prev) =>
@@ -521,13 +540,13 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
       const deletedItem = libraryItems.find(item => item.id === nodeId);
       const beforeItems = [...libraryItems];
       const beforePositions = { ...positions };
-      
+
       await deleteLibraryItem(problemId, nodeId);
 
       // Remove from local state
       const afterItems = libraryItems.filter((item) => item.id !== nodeId);
       setLibraryItems(afterItems);
-      
+
       const afterPositions = { ...positions };
       delete afterPositions[nodeId];
       setPositions(afterPositions);
@@ -552,29 +571,29 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
   const handleMultiDelete = useCallback(
     async (nodeIds: string[]) => {
       if (nodeIds.length === 0) return;
-      
+
       const beforeItems = [...libraryItems];
       const beforePositions = { ...positions };
-      
+
       // Delete all in parallel
       await Promise.all(nodeIds.map(id => deleteLibraryItem(problemId, id)));
-      
+
       // Update local state
       const afterItems = libraryItems.filter(item => !nodeIds.includes(item.id));
       setLibraryItems(afterItems);
-      
+
       const afterPositions = { ...positions };
       nodeIds.forEach(id => delete afterPositions[id]);
       setPositions(afterPositions);
       savePositions(problemId, afterPositions);
-      
+
       // Record for undo
       recordMultiDelete(beforeItems, afterItems, beforePositions, afterPositions, nodeIds.length);
-      
+
       // Clear selection
       setSelectedNodeId(null);
       setSelectedNodeIds(new Set());
-      
+
       // Broadcast to collaborators
       nodeIds.forEach(id => collaboration?.sendNodeDelete?.(id));
     },
@@ -598,19 +617,19 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
       applyPositionsSnapshot(targetPositions);
       return;
     }
-    
+
     // Sync with server - recreate deleted items or delete created items
     const currentIds = new Set(libraryItems.map(i => i.id));
     const targetIds = new Set(state.libraryItems.map(i => i.id));
-    
+
     // Items to recreate (in target but not current)
     const toRecreate = state.libraryItems.filter(i => !currentIds.has(i.id));
     // Items to delete (in current but not target)
     const toDelete = libraryItems.filter(i => !targetIds.has(i.id));
-    
+
     // Delete items that shouldn't exist
-    await Promise.all(toDelete.map(item => deleteLibraryItem(problemId, item.id).catch(() => {})));
-    
+    await Promise.all(toDelete.map(item => deleteLibraryItem(problemId, item.id).catch(() => { })));
+
     // Recreate items that should exist
     for (const item of toRecreate) {
       try {
@@ -625,7 +644,7 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
         console.error("Failed to recreate item during undo:", err);
       }
     }
-    
+
     // Reload to sync state
     await loadData();
     applyPositionsSnapshot(targetPositions);
@@ -642,18 +661,18 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
       applyPositionsSnapshot(targetPositions);
       return;
     }
-    
+
     // Sync with server
     const currentIds = new Set(libraryItems.map(i => i.id));
     const targetIds = new Set(state.libraryItems.map(i => i.id));
-    
+
     // Items to recreate
     const toRecreate = state.libraryItems.filter(i => !currentIds.has(i.id));
     // Items to delete
     const toDelete = libraryItems.filter(i => !targetIds.has(i.id));
-    
-    await Promise.all(toDelete.map(item => deleteLibraryItem(problemId, item.id).catch(() => {})));
-    
+
+    await Promise.all(toDelete.map(item => deleteLibraryItem(problemId, item.id).catch(() => { })));
+
     for (const item of toRecreate) {
       try {
         await createLibraryItem(problemId, {
@@ -667,7 +686,7 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
         console.error("Failed to recreate item during redo:", err);
       }
     }
-    
+
     await loadData();
     applyPositionsSnapshot(targetPositions);
   }, [redo, libraryItems, problemId, loadData, applyPositionsSnapshot]);
@@ -683,7 +702,7 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
 
       // Add dependency to the target item
       const newDeps = [...(targetItem.dependencies || []), fromId];
-      
+
       // Update local state immediately (optimistic update)
       setLibraryItems((prev) =>
         prev.map((item) =>
@@ -719,7 +738,7 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
 
       // Remove the dependency
       const newDeps = targetItem.dependencies.filter((dep) => dep !== edge.from);
-      
+
       // Update local state immediately (optimistic update)
       setLibraryItems((prev) =>
         prev.map((item) =>
@@ -891,7 +910,7 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
               })) || []
             }
           />
-          
+
           {/* Node Detail Panel (Edit + Comments) */}
           {detailPanelNodeId && nodes.find(n => n.id === detailPanelNodeId) && (
             <NodeDetailPanel
@@ -912,6 +931,7 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
           isVisible={aiBarVisible}
           onToggle={() => setAiBarVisible(!aiBarVisible)}
           onCreateNode={(data: { type: string; title: string; content: string; formula?: string; x?: number; y?: number; dependencies?: string[] }) => handleCreateNode({ ...data, dependencies: data.dependencies || [] })}
+          onUpdateNode={(nodeId: string, updates: { formula?: string; leanCode?: string; status?: "PROPOSED" | "VERIFIED" | "REJECTED" }) => handleQuickUpdateNode(nodeId, updates)}
         />
       </div>
 

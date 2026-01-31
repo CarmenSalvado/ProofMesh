@@ -32,6 +32,7 @@ export interface LibraryItem {
 	kind: "RESOURCE" | "IDEA" | "CONTENT" | "LEMMA" | "CLAIM" | "DEFINITION" | "THEOREM" | "COUNTEREXAMPLE" | "COMPUTATION" | "NOTE";
 	content: string;
 	formula: string | null;
+	lean_code: string | null;
 	status: "PROPOSED" | "VERIFIED" | "REJECTED";
 	authors: Array<{ type: string; id: string; name?: string }>;
 	source: { file_path?: string; cell_id?: string; agent_run_id?: string } | null;
@@ -672,6 +673,7 @@ export async function createLibraryItem(
 		kind: LibraryItem["kind"];
 		content: string;
 		formula?: string;
+		lean_code?: string;
 		dependencies?: string[];
 	}
 ): Promise<LibraryItem> {
@@ -688,6 +690,7 @@ export async function updateLibraryItem(
 		title: string;
 		content: string;
 		formula: string;
+		lean_code: string;
 		status: LibraryItem["status"];
 		dependencies: string[];
 		verification: { method: string; logs: string; status: string };

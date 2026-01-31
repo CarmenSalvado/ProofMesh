@@ -293,6 +293,7 @@ export function AgentIntelligencePanel({
         title: proposal.content.slice(0, 50) + (proposal.content.length > 50 ? "..." : ""),
         content: proposal.content,
         formula: leanCode || undefined,
+        leanCode: leanCode || undefined,
       });
     }
   }, [onCreateNode, leanCode]);

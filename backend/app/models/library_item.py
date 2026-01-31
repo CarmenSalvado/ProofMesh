@@ -45,6 +45,9 @@ class LibraryItem(Base):
     # LaTeX formula (optional, for display)
     formula: Mapped[str | None] = mapped_column(Text, nullable=True)
     
+    # Lean 4 code (optional, for verification)
+    lean_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    
     status: Mapped[LibraryItemStatus] = mapped_column(
         ENUM(LibraryItemStatus, name="library_item_status", create_type=True),
         nullable=False,

@@ -18,6 +18,7 @@ export interface NewNodeData {
   title: string;
   content: string;
   formula?: string;
+  leanCode?: string;
   dependencies: string[];
 }
 
