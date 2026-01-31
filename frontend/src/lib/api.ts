@@ -508,17 +508,50 @@ async function apiFetch<T>(
 			let errorDetail = "Unknown error";
 			let errorData: any = {};
 
+			const formatErrorDetail = (detail: unknown) => {
+				if (!detail) return null;
+				if (typeof detail === "string") return detail;
+				if (Array.isArray(detail)) {
+					return detail
+						.map((item) => {
+							if (typeof item === "string") return item;
+							if (item && typeof item === "object" && "msg" in item && typeof item.msg === "string") {
+								return item.msg;
+							}
+							return JSON.stringify(item);
+						})
+						.join("; ");
+				}
+				if (typeof detail === "object") {
+					if ("msg" in detail && typeof (detail as { msg?: unknown }).msg === "string") {
+						return (detail as { msg?: string }).msg || null;
+					}
+					return JSON.stringify(detail);
+				}
+				return String(detail);
+			};
+
 			try {
-				errorData = await response.json();
-				errorDetail = errorData.detail || errorData.message || `API Error: ${response.status}`;
+				const contentType = response.headers.get("content-type") || "";
+				if (contentType.includes("application/json")) {
+					errorData = await response.json();
+					const formatted = formatErrorDetail(errorData.detail ?? errorData.message);
+					errorDetail = formatted || `API Error: ${response.status}`;
+				} else {
+					const text = await response.text();
+					errorDetail = text || response.statusText || `API Error: ${response.status}`;
+				}
 			} catch {
 				errorDetail = response.statusText || `API Error: ${response.status}`;
 			}
 
-			// Enhanced error logging
-			console.error("API Request Failed:", {
+			const method = options.method || "GET";
+
+			// Enhanced error logging (string first for consoles that hide objects)
+			console.error(`API Request Failed: ${method} ${url} (${response.status})`);
+			console.error("API Request Failed (details):", {
 				url,
-				method: options.method || "GET",
+				method,
 				status: response.status,
 				statusText: response.statusText,
 				error: errorData,
@@ -535,7 +568,8 @@ async function apiFetch<T>(
 				}
 			}
 
-			throw new Error(errorDetail);
+			const detailMessage = typeof errorDetail === "string" ? errorDetail : JSON.stringify(errorDetail);
+			throw new Error(`${detailMessage} (HTTP ${response.status} ${method} ${url})`);
 		}
 
 		if (response.status === 204) {
@@ -1582,7 +1616,10 @@ export async function getNodeAnchorStatus(nodeIds: string[]): Promise<{
 	is_stale: boolean;
 	anchor_count: number;
 }[]> {
-	const params = new URLSearchParams();
-	nodeIds.forEach(id => params.append("node_ids", id));
-	return apiFetch(`/documents/nodes/anchor-status?${params.toString()}`);
+	const validIds = nodeIds.filter((id) => typeof id === "string" && id.trim().length > 0);
+	if (validIds.length === 0) return [];
+	return apiFetch(`/documents/nodes/anchor-status`, {
+		method: "POST",
+		body: JSON.stringify({ node_ids: validIds }),
+	});
 }

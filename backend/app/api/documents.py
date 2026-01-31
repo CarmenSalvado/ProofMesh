@@ -8,7 +8,9 @@ from datetime import datetime
 import re
 
 from fastapi import APIRouter, HTTPException, Depends
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 
 from app.api.deps import get_db, get_current_user
@@ -20,6 +22,10 @@ from app.schemas.doc_section import (
 )
 
 router = APIRouter()
+
+
+class AnchorStatusRequest(BaseModel):
+    node_ids: list[UUID]
 
 
 def slugify(text: str) -> str:
@@ -534,20 +540,9 @@ async def commit_to_document(
 # Anchor Status (for Canvas badges)
 # =============================================================================
 
-@router.get("/nodes/anchor-status")
-async def get_nodes_anchor_status(
-    node_ids: list[UUID],
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """
-    Get anchor status for multiple nodes at once.
-    Used to show badges on canvas nodes that are linked to documents.
-    """
-    from sqlalchemy import case
-    
+async def build_anchor_status_response(node_ids: list[UUID], db: AsyncSession) -> list[dict]:
     # Query all anchors for these nodes grouped by library_item_id
-    result = db.execute(
+    result = (await db.execute(
         select(
             DocAnchor.library_item_id,
             func.count(DocAnchor.id).label("anchor_count"),
@@ -555,8 +550,8 @@ async def get_nodes_anchor_status(
         )
         .where(DocAnchor.library_item_id.in_(node_ids))
         .group_by(DocAnchor.library_item_id)
-    ).all()
-    
+    )).all()
+
     # Build response map
     status_map = {
         str(row.library_item_id): {
@@ -567,7 +562,7 @@ async def get_nodes_anchor_status(
         }
         for row in result
     }
-    
+
     # Include nodes with no anchors
     response = []
     for node_id in node_ids:
@@ -581,6 +576,30 @@ async def get_nodes_anchor_status(
                 "is_stale": False,
                 "anchor_count": 0,
             })
-    
+
     return response
 
+
+@router.get("/nodes/anchor-status")
+async def get_nodes_anchor_status(
+    node_ids: list[UUID],
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Get anchor status for multiple nodes at once.
+    Used to show badges on canvas nodes that are linked to documents.
+    """
+    return await build_anchor_status_response(node_ids, db)
+
+
+@router.post("/nodes/anchor-status")
+async def post_nodes_anchor_status(
+    data: AnchorStatusRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Get anchor status for multiple nodes at once (POST body).
+    """
+    return await build_anchor_status_response(data.node_ids, db)

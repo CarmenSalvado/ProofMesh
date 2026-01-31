@@ -52,6 +52,12 @@ out/
 *.log
 npm-debug.log*
 
+# Media (root videos)
+/video.mp4
+/video.mp3
+/video.m4a
+video
+
 # OS
 .DS_Store
 Thumbs.db

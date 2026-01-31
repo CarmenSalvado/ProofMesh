@@ -7,7 +7,9 @@ export default function LandingPage() {
       <nav className="fixed top-0 w-full z-50 border-b border-neutral-100 bg-white/80 backdrop-blur-md">
         <div className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className="w-5 h-5 bg-neutral-900 rounded-sm" />
+            <div className="w-5 h-5 bg-neutral-900 rounded-sm flex items-center justify-center text-white">
+              <span className="font-[var(--font-math)] italic text-[11px] leading-none logo-rho">&rho;</span>
+            </div>
             <span className="text-sm font-semibold tracking-tight">ProofMesh</span>
           </div>
           <div className="hidden md:flex items-center gap-8 text-xs font-medium text-neutral-600">

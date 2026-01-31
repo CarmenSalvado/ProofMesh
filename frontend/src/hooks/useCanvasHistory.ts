@@ -15,6 +15,11 @@ interface HistoryAction {
   redo: HistoryState;
 }
 
+interface HistoryResult {
+  action: HistoryAction;
+  state: HistoryState;
+}
+
 const MAX_HISTORY_SIZE = 50;
 
 export function useCanvasHistory(
@@ -46,7 +51,7 @@ export function useCanvasHistory(
     setHistoryIndex((prev) => Math.min(prev + 1, MAX_HISTORY_SIZE - 1));
   }, [historyIndex]);
 
-  const undo = useCallback((): HistoryState | null => {
+  const undo = useCallback((): HistoryResult | null => {
     if (!canUndo) return null;
     
     isUndoingRef.current = true;
@@ -58,10 +63,10 @@ export function useCanvasHistory(
       isUndoingRef.current = false;
     }, 0);
     
-    return action.undo;
+    return { action, state: action.undo };
   }, [canUndo, history, historyIndex]);
 
-  const redo = useCallback((): HistoryState | null => {
+  const redo = useCallback((): HistoryResult | null => {
     if (!canRedo) return null;
     
     isUndoingRef.current = true;
@@ -73,7 +78,7 @@ export function useCanvasHistory(
       isUndoingRef.current = false;
     }, 0);
     
-    return action.redo;
+    return { action, state: action.redo };
   }, [canRedo, history, historyIndex]);
 
   const recordCreate = useCallback((
@@ -149,6 +154,21 @@ export function useCanvasHistory(
     });
   }, [pushHistory]);
 
+  const recordMove = useCallback((
+    beforeItems: LibraryItem[],
+    afterItems: LibraryItem[],
+    beforePositions: Record<string, { x: number; y: number }>,
+    afterPositions: Record<string, { x: number; y: number }>,
+    count: number
+  ) => {
+    pushHistory({
+      type: "move",
+      description: count > 1 ? `Move ${count} nodes` : "Move node",
+      undo: { libraryItems: beforeItems, positions: beforePositions },
+      redo: { libraryItems: afterItems, positions: afterPositions },
+    });
+  }, [pushHistory]);
+
   const clearHistory = useCallback(() => {
     setHistory([]);
     setHistoryIndex(-1);
@@ -163,6 +183,7 @@ export function useCanvasHistory(
     recordDelete,
     recordMultiDelete,
     recordUpdate,
+    recordMove,
     recordEdgeChange,
     clearHistory,
     historyLength: history.length,

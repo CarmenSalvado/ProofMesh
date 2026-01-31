@@ -16,7 +16,6 @@ import {
   ChevronRight,
   ExternalLink,
   Search,
-  TrendingUp,
 } from "lucide-react";
 
 const HELP_SECTIONS = [
@@ -118,9 +117,9 @@ export default function HelpPage() {
     <nav className="sticky top-0 w-full z-50 border-b border-neutral-200 bg-white/90 backdrop-blur-sm">
       <div className="max-w-[1400px] mx-auto px-4 h-14 flex items-center justify-between gap-4">
         <Link href="/" className="flex items-center gap-2 group">
-          <div className="w-6 h-6 bg-neutral-900 rounded-md flex items-center justify-center text-white group-hover:bg-indigo-600 transition-colors">
-            <TrendingUp className="w-3 h-3" />
-          </div>
+            <div className="w-6 h-6 bg-neutral-900 rounded-md flex items-center justify-center text-white group-hover:bg-indigo-600 transition-colors">
+              <span className="font-[var(--font-math)] italic text-[12px] leading-none logo-rho">&rho;</span>
+            </div>
           <span className="text-sm font-bold tracking-tight">ProofMesh</span>
         </Link>
         <div className="flex items-center gap-3">

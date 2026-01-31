@@ -29,7 +29,7 @@ import {
   useOptionalCollaboration,
   PresenceAvatars,
 } from "@/components/collaboration";
-import { ProofCanvasV2 } from "@/components/canvas/ProofCanvasV2";
+import { ProofCanvasV2, type ProofCanvasHandle } from "@/components/canvas/ProofCanvasV2";
 import { FloatingAIBar } from "@/components/canvas/FloatingAIBar";
 import { CanvasSidebar } from "@/components/canvas/CanvasSidebar";
 import { AddNodeModal, NewNodeData } from "@/components/canvas/AddNodeModal";
@@ -86,6 +86,7 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
   const [detailPanelNodeId, setDetailPanelNodeId] = useState<string | null>(null);
   const [newNodePosition, setNewNodePosition] = useState({ x: 200, y: 200 });
   const positionUpdateTimeout = useRef<NodeJS.Timeout | null>(null);
+  const canvasRef = useRef<ProofCanvasHandle | null>(null);
 
   // History management for undo/redo
   const {
@@ -97,6 +98,7 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
     recordDelete,
     recordMultiDelete,
     recordUpdate,
+    recordMove,
     recordEdgeChange,
   } = useCanvasHistory(libraryItems, positions);
 
@@ -196,7 +198,10 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
     setSelectedNodeId(nodeId);
     // Clear multi-selection when single-selecting
     if (nodeId) {
-      setSelectedNodeIds(new Set());
+      setSelectedNodeIds((prev) => {
+        if (prev.size > 1 && prev.has(nodeId)) return prev;
+        return new Set();
+      });
     }
   }, []);
 
@@ -270,24 +275,64 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
   // Handle node movement with debounced position saving
   const handleNodeMove = useCallback(
     (nodeId: string, x: number, y: number) => {
-      setPositions((prev) => {
-        const next = { ...prev, [nodeId]: { x, y } };
+      const currentPos = positions[nodeId];
+      if (currentPos && currentPos.x === x && currentPos.y === y) return;
+      const beforePositions = positions;
+      const afterPositions = { ...positions, [nodeId]: { x, y } };
 
-        // Debounce saving to localStorage
-        if (positionUpdateTimeout.current) {
-          clearTimeout(positionUpdateTimeout.current);
-        }
-        positionUpdateTimeout.current = setTimeout(() => {
-          savePositions(problemId, next);
-        }, 500);
+      // Update local positions
+      setPositions(afterPositions);
 
-        return next;
-      });
+      // Debounce saving to localStorage
+      if (positionUpdateTimeout.current) {
+        clearTimeout(positionUpdateTimeout.current);
+      }
+      positionUpdateTimeout.current = setTimeout(() => {
+        savePositions(problemId, afterPositions);
+      }, 500);
+
+      // Record history for move
+      recordMove(libraryItems, libraryItems, beforePositions, afterPositions, 1);
 
       // Broadcast move to collaborators
       collaboration?.sendNodeMove?.(nodeId, x, y);
     },
-    [problemId, collaboration]
+    [problemId, collaboration, positions, recordMove, libraryItems]
+  );
+
+  const handleNodesMove = useCallback(
+    (positionsUpdate: Record<string, { x: number; y: number }>) => {
+      const ids = Object.keys(positionsUpdate).filter((id) => {
+        const currentPos = positions[id];
+        const nextPos = positionsUpdate[id];
+        if (!nextPos) return false;
+        return !currentPos || currentPos.x !== nextPos.x || currentPos.y !== nextPos.y;
+      });
+      if (ids.length === 0) return;
+
+      const beforePositions = positions;
+      const afterPositions = { ...positions };
+      ids.forEach((id) => {
+        afterPositions[id] = positionsUpdate[id];
+      });
+
+      setPositions(afterPositions);
+
+      if (positionUpdateTimeout.current) {
+        clearTimeout(positionUpdateTimeout.current);
+      }
+      positionUpdateTimeout.current = setTimeout(() => {
+        savePositions(problemId, afterPositions);
+      }, 500);
+
+      recordMove(libraryItems, libraryItems, beforePositions, afterPositions, ids.length);
+
+      ids.forEach((id) => {
+        const pos = positionsUpdate[id];
+        if (pos) collaboration?.sendNodeMove?.(id, pos.x, pos.y);
+      });
+    },
+    [problemId, collaboration, positions, recordMove, libraryItems]
   );
 
   // Handle creating a new node
@@ -537,9 +582,22 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
   );
 
   // Handle undo
+  const applyPositionsSnapshot = useCallback((nextPositions: Record<string, { x: number; y: number }>) => {
+    setPositions(nextPositions);
+    savePositions(problemId, nextPositions);
+  }, [problemId]);
+
   const handleUndo = useCallback(async () => {
-    const state = undo();
-    if (!state) return;
+    const result = undo();
+    if (!result) return;
+    const { action, state } = result;
+    const targetPositions = state.positions;
+
+    // If it was a move, we only need to restore positions locally
+    if (action.type === "move") {
+      applyPositionsSnapshot(targetPositions);
+      return;
+    }
     
     // Sync with server - recreate deleted items or delete created items
     const currentIds = new Set(libraryItems.map(i => i.id));
@@ -569,13 +627,21 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
     }
     
     // Reload to sync state
-    loadData();
-  }, [undo, libraryItems, problemId, loadData]);
+    await loadData();
+    applyPositionsSnapshot(targetPositions);
+  }, [undo, libraryItems, problemId, loadData, applyPositionsSnapshot]);
 
   // Handle redo  
   const handleRedo = useCallback(async () => {
-    const state = redo();
-    if (!state) return;
+    const result = redo();
+    if (!result) return;
+    const { action, state } = result;
+    const targetPositions = state.positions;
+
+    if (action.type === "move") {
+      applyPositionsSnapshot(targetPositions);
+      return;
+    }
     
     // Sync with server
     const currentIds = new Set(libraryItems.map(i => i.id));
@@ -602,8 +668,9 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
       }
     }
     
-    loadData();
-  }, [redo, libraryItems, problemId, loadData]);
+    await loadData();
+    applyPositionsSnapshot(targetPositions);
+  }, [redo, libraryItems, problemId, loadData, applyPositionsSnapshot]);
 
   // Handle creating an edge (dependency)
   const handleEdgeCreate = useCallback(
@@ -779,12 +846,19 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
           onItemClick={handleItemClick}
           collapsed={sidebarCollapsed}
           onToggle={() => setSidebarCollapsed(!sidebarCollapsed)}
-          onAddItem={() => handleOpenAddModal()}
+          onAddItem={() => {
+            if (canvasRef.current) {
+              canvasRef.current.openInlineEditorAtCenter();
+            } else {
+              handleOpenAddModal();
+            }
+          }}
         />
 
         {/* Canvas Area */}
         <div className="flex-1 relative">
           <ProofCanvasV2
+            ref={canvasRef}
             nodes={nodes}
             edges={edges}
             selectedNodeId={selectedNodeId}
@@ -792,6 +866,7 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
             onNodeSelect={handleNodeSelect}
             onMultiSelect={handleMultiSelect}
             onNodeMove={handleNodeMove}
+            onNodesMove={handleNodesMove}
             onNodeDoubleClick={handleNodeDoubleClick}
             onNodeCreate={handleQuickCreateNode}
             onNodeUpdate={handleQuickUpdateNode}

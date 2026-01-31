@@ -43,7 +43,7 @@ export function WorkspaceSidebar() {
 				{/* Logo */}
 				<Link href="/dashboard" className="flex items-center gap-3 px-2 mb-8 hover:opacity-80 transition-opacity">
 					<div className="w-6 h-6 bg-[var(--text-primary)] rounded-md flex items-center justify-center text-[var(--bg-primary)]">
-						<span className="font-[var(--font-math)] italic text-sm">∑</span>
+						<span className="font-[var(--font-math)] italic text-sm logo-rho">&rho;</span>
 					</div>
 					<span className="text-sm font-medium tracking-tight text-[var(--text-primary)]">PROOFMESH</span>
 				</Link>

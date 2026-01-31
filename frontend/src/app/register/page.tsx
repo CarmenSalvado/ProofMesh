@@ -39,7 +39,7 @@ export default function RegisterPage() {
 				<div className="flex justify-center mb-12">
 					<Link href="/" className="flex items-center gap-2">
 						<div className="w-6 h-6 bg-[var(--text-primary)] rounded-md flex items-center justify-center text-[var(--bg-primary)]">
-							<span className="font-[var(--font-math)] italic text-sm">∑</span>
+							<span className="font-[var(--font-math)] italic text-sm logo-rho">&rho;</span>
 						</div>
 						<span className="text-base font-semibold tracking-tight text-[var(--text-primary)]">ProofMesh</span>
 					</Link>

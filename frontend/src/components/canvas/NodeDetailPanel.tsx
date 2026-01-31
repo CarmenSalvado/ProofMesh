@@ -75,6 +75,7 @@ export function NodeDetailPanel({
   
   const panelRef = useRef<HTMLDivElement>(null);
   const titleRef = useRef<HTMLTextAreaElement>(null);
+  const autosaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
   const typeConfig = NODE_TYPE_CONFIG[node.type] || NODE_TYPE_CONFIG.NOTE;
 
@@ -111,6 +112,28 @@ export function NodeDetailPanel({
     document.addEventListener("keydown", handleEscape);
     return () => document.removeEventListener("keydown", handleEscape);
   }, [onClose]);
+
+  // Autosave changes (debounced)
+  useEffect(() => {
+    if (activeTab !== "edit") return;
+    if (!hasChanges) return;
+    if (!title.trim()) return;
+    if (isSaving) return;
+
+    if (autosaveTimeoutRef.current) {
+      clearTimeout(autosaveTimeoutRef.current);
+    }
+
+    autosaveTimeoutRef.current = setTimeout(() => {
+      handleSave();
+    }, 800);
+
+    return () => {
+      if (autosaveTimeoutRef.current) {
+        clearTimeout(autosaveTimeoutRef.current);
+      }
+    };
+  }, [title, content, formula, status, hasChanges, isSaving, activeTab, handleSave]);
 
   const loadComments = async () => {
     setLoadingComments(true);

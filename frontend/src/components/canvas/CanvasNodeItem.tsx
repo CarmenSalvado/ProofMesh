@@ -4,6 +4,7 @@ import { useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { Bot, MessageSquare, Link2, ExternalLink, FileText, AlertCircle } from "lucide-react";
 import { CanvasNode, NODE_TYPE_CONFIG, STATUS_CONFIG } from "./types";
+import { MarkdownRenderer } from "@/components/ui/MarkdownRenderer";
 
 interface CanvasNodeItemProps {
   node: CanvasNode;
@@ -41,6 +42,34 @@ export function CanvasNodeItem({
   const router = useRouter();
   const typeConfig = NODE_TYPE_CONFIG[node.type] || NODE_TYPE_CONFIG.NOTE;
   const statusConfig = STATUS_CONFIG[node.status] || STATUS_CONFIG.DRAFT;
+
+  const normalizeFormula = (value?: string) => {
+    if (!value) return "";
+    return value.replace(/^\s*\${1,2}/, "").replace(/\${1,2}\s*$/, "").trim();
+  };
+
+  const normalizeContent = (value?: string) => {
+    if (!value) return "";
+    const trimmed = value.trim();
+    if (!trimmed || trimmed.includes("$")) return value;
+
+    const looksMath =
+      /\\[a-zA-Z]+/.test(trimmed) ||
+      /[=<>^_]/.test(trimmed) ||
+      /[+\-*/]/.test(trimmed);
+    const isShort = trimmed.length <= 120;
+    const hasText = /[A-Za-z0-9]/.test(trimmed);
+    const hasSentencePunct = /[.!?]/.test(trimmed);
+
+    if (isShort && hasText && looksMath && !hasSentencePunct) {
+      return `$$${trimmed}$$`;
+    }
+
+    return value;
+  };
+
+  const formulaValue = normalizeFormula(node.formula);
+  const contentValue = normalizeContent(node.content);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault(); // Prevent text selection
@@ -139,19 +168,23 @@ export function CanvasNodeItem({
         </h4>
         
         {/* Formula if present */}
-        {node.formula && (
-          <div className="mt-2 px-2 py-1.5 bg-white/60 rounded-md border border-neutral-200/50">
-            <code className="text-xs font-mono text-neutral-700 break-all">
-              {node.formula.length > 50 ? node.formula.slice(0, 50) + "..." : node.formula}
-            </code>
+        {formulaValue && (
+          <div className="mt-2 px-2 py-1.5 bg-white/60 rounded-md border border-neutral-200/50 overflow-hidden">
+            <MarkdownRenderer
+              content={`$$${formulaValue}$$`}
+              className="text-xs [&_.katex]:text-sm [&_.katex-display]:my-0 [&_.katex-display]:mx-0"
+            />
           </div>
         )}
         
-        {/* Content preview */}
-        {node.content && !node.formula && (
-          <p className="text-xs text-neutral-600 line-clamp-2 mt-1">
-            {node.content}
-          </p>
+        {/* Content preview (supports LaTeX) */}
+        {contentValue && !formulaValue && (
+          <div className="mt-1 text-xs text-neutral-600 max-h-10 overflow-hidden">
+            <MarkdownRenderer
+              content={contentValue}
+              className="text-xs text-neutral-600 [&_p]:m-0 [&_p]:leading-snug [&_.katex]:text-[11px] [&_.katex-display]:m-0"
+            />
+          </div>
         )}
       </div>
 

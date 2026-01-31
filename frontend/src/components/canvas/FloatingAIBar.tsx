@@ -264,7 +264,7 @@ export function FloatingAIBar({
         <button
           onClick={onToggle}
           onDoubleClick={(e) => e.stopPropagation()}
-          className="fixed bottom-6 right-6 z-50 flex items-center gap-2 px-4 py-2.5 bg-white/80 backdrop-blur-xl text-neutral-700 rounded-full shadow-lg shadow-black/5 hover:bg-white hover:shadow-xl transition-all duration-200 group animate-in fade-in slide-in-from-bottom-2 duration-300"
+          className="fixed bottom-24 left-4 z-50 flex items-center gap-2 px-4 py-2.5 bg-white/80 backdrop-blur-xl text-neutral-700 rounded-full shadow-lg shadow-black/5 hover:bg-white hover:shadow-xl transition-all duration-200 group animate-in fade-in slide-in-from-bottom-2 duration-300"
         >
           <Sparkles className="w-4 h-4 text-neutral-400 group-hover:text-neutral-600 transition-colors" />
           <span className="text-sm font-medium">AI</span>

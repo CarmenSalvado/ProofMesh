@@ -24,7 +24,6 @@ import {
   Users,
   Info,
   Check,
-  TrendingUp,
   ArrowLeft,
   AtSign,
 } from "lucide-react";
@@ -158,7 +157,7 @@ export default function NotificationsPage() {
           <div className="flex items-center gap-4">
             <Link href="/dashboard" className="flex items-center gap-2 group">
               <div className="w-6 h-6 bg-neutral-900 rounded-md flex items-center justify-center text-white group-hover:bg-indigo-600 transition-colors">
-                <TrendingUp className="w-3 h-3" />
+                <span className="font-[var(--font-math)] italic text-[12px] leading-none logo-rho">&rho;</span>
               </div>
               <span className="text-sm font-bold tracking-tight">ProofMesh</span>
             </Link>

@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth";
-import { Search, Bell, ChevronDown, TrendingUp, LogOut, User, Settings, HelpCircle } from "lucide-react";
+import { Search, Bell, ChevronDown, LogOut, User, Settings, HelpCircle } from "lucide-react";
 
 function getInitials(name: string) {
 	return name
@@ -36,7 +36,7 @@ export function Header() {
 				<div className="flex items-center gap-6">
 					<Link href={user ? "/dashboard" : "/"} className="flex items-center gap-2 group">
 						<div className="w-6 h-6 bg-neutral-900 rounded-md flex items-center justify-center text-white group-hover:bg-indigo-600 transition-colors">
-							<TrendingUp className="w-3 h-3" />
+							<span className="font-[var(--font-math)] italic text-[12px] leading-none logo-rho">&rho;</span>
 						</div>
 						<span className="text-sm font-bold tracking-tight text-neutral-900">ProofMesh</span>
 					</Link>

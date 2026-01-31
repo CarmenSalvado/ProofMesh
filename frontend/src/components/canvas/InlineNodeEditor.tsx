@@ -1,7 +1,9 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { Check, X, ChevronDown } from "lucide-react";
+import { NODE_TYPE_CONFIG } from "./types";
 
 export interface QuickNodeData {
   title: string;
@@ -19,11 +21,34 @@ interface InlineNodeEditorProps {
 }
 
 const QUICK_TYPES = [
-  { value: "NOTE", label: "Note", color: "bg-neutral-400", border: "border-neutral-300" },
-  { value: "DEFINITION", label: "Definition", color: "bg-sky-400", border: "border-sky-300" },
-  { value: "LEMMA", label: "Lemma", color: "bg-emerald-400", border: "border-emerald-300" },
-  { value: "THEOREM", label: "Theorem", color: "bg-purple-400", border: "border-purple-300" },
-];
+  "DEFINITION",
+  "LEMMA",
+  "THEOREM",
+  "CLAIM",
+  "NOTE",
+  "COUNTEREXAMPLE",
+  "COMPUTATION",
+  "IDEA",
+  "RESOURCE",
+] as const;
+
+const getTypeConfig = (value: string) =>
+  NODE_TYPE_CONFIG[value] || NODE_TYPE_CONFIG.NOTE || NODE_TYPE_CONFIG.note;
+
+const TYPE_DOT_COLOR: Record<string, string> = {
+  DEFINITION: "bg-indigo-500",
+  LEMMA: "bg-emerald-500",
+  THEOREM: "bg-amber-500",
+  CLAIM: "bg-blue-500",
+  NOTE: "bg-neutral-500",
+  COUNTEREXAMPLE: "bg-red-500",
+  COMPUTATION: "bg-purple-500",
+  IDEA: "bg-fuchsia-500",
+  RESOURCE: "bg-slate-500",
+};
+
+const getTypeDotClass = (value: string) =>
+  TYPE_DOT_COLOR[value] || "bg-neutral-500";
 
 export function InlineNodeEditor({
   position,
@@ -35,8 +60,12 @@ export function InlineNodeEditor({
   const [title, setTitle] = useState(initialTitle);
   const [type, setType] = useState(initialType);
   const [showTypes, setShowTypes] = useState(false);
+  const [menuPosition, setMenuPosition] = useState<{ left: number; top: number; width: number } | null>(null);
+  const [isMounted, setIsMounted] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const typeButtonRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   // Focus input on mount
   useEffect(() => {
@@ -44,10 +73,19 @@ export function InlineNodeEditor({
     inputRef.current?.select();
   }, []);
 
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
+
   // Close on outside click
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(target) &&
+        (!menuRef.current || !menuRef.current.contains(target))
+      ) {
         if (title.trim()) {
           onSubmit({ title: title.trim(), type, x: position.x, y: position.y });
         } else {
@@ -70,6 +108,31 @@ export function InlineNodeEditor({
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [onCancel]);
 
+  useEffect(() => {
+    if (!showTypes) {
+      setMenuPosition(null);
+      return;
+    }
+
+    const updateMenuPosition = () => {
+      const rect = typeButtonRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      setMenuPosition({
+        left: rect.left,
+        top: rect.bottom + 6,
+        width: Math.max(160, rect.width),
+      });
+    };
+
+    updateMenuPosition();
+    window.addEventListener("resize", updateMenuPosition);
+    window.addEventListener("scroll", updateMenuPosition, true);
+    return () => {
+      window.removeEventListener("resize", updateMenuPosition);
+      window.removeEventListener("scroll", updateMenuPosition, true);
+    };
+  }, [showTypes]);
+
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === "Enter" && title.trim()) {
@@ -78,55 +141,36 @@ export function InlineNodeEditor({
       } else if (e.key === "Tab") {
         e.preventDefault();
         // Cycle through types
-        const idx = QUICK_TYPES.findIndex((t) => t.value === type);
-        const nextIdx = (idx + 1) % QUICK_TYPES.length;
-        setType(QUICK_TYPES[nextIdx].value);
+        const idx = QUICK_TYPES.findIndex((t) => t === type);
+        const nextIdx = idx === -1 ? 0 : (idx + 1) % QUICK_TYPES.length;
+        setType(QUICK_TYPES[nextIdx]);
       }
     },
     [title, type, position, onSubmit]
   );
 
-  const selectedType = QUICK_TYPES.find((t) => t.value === type) || QUICK_TYPES[0];
+  const selectedTypeConfig = getTypeConfig(type);
 
   return (
     <div
       ref={containerRef}
       className="absolute z-50 animate-in fade-in zoom-in-95 duration-100"
       style={{ left: position.x, top: position.y, transform: "translate(-50%, -50%)" }}
+      onWheel={(e) => e.stopPropagation()}
     >
-      <div className={`w-72 rounded-lg border-2 shadow-xl bg-white overflow-hidden ${selectedType.border}`}>
+      <div className={`w-72 rounded-lg border-2 shadow-xl bg-white overflow-visible ${selectedTypeConfig.borderColor}`}>
         {/* Type selector */}
         <div className="px-3 py-2 border-b border-neutral-100 bg-neutral-50">
           <div className="relative">
             <button
+              ref={typeButtonRef}
               onClick={() => setShowTypes(!showTypes)}
               className="flex items-center gap-2 text-xs font-medium text-neutral-600 hover:text-neutral-900"
             >
-              <span className={`w-2.5 h-2.5 rounded-full ${selectedType.color}`} />
-              {selectedType.label}
+              <span className={`w-2.5 h-2.5 rounded-full ${getTypeDotClass(type)} shadow-[0_0_0_1px_rgba(0,0,0,0.08)]`} />
+              {selectedTypeConfig.label}
               <ChevronDown className={`w-3 h-3 ${showTypes ? "rotate-180" : ""}`} />
             </button>
-            
-            {showTypes && (
-              <div className="absolute top-full left-0 mt-1 bg-white border border-neutral-200 rounded-lg shadow-lg py-1 z-10 min-w-[140px]">
-                {QUICK_TYPES.map((t) => (
-                  <button
-                    key={t.value}
-                    onClick={() => {
-                      setType(t.value);
-                      setShowTypes(false);
-                      inputRef.current?.focus();
-                    }}
-                    className={`w-full flex items-center gap-2 px-3 py-2 text-xs text-left hover:bg-neutral-50 ${
-                      type === t.value ? "bg-neutral-100 font-medium" : ""
-                    }`}
-                  >
-                    <span className={`w-2.5 h-2.5 rounded-full ${t.color}`} />
-                    {t.label}
-                  </button>
-                ))}
-              </div>
-            )}
           </div>
         </div>
 
@@ -167,6 +211,41 @@ export function InlineNodeEditor({
           </div>
         </div>
       </div>
+
+      {showTypes && isMounted && menuPosition
+        ? createPortal(
+            <div
+              ref={menuRef}
+              className="fixed z-[200]"
+              style={{ left: menuPosition.left, top: menuPosition.top, width: menuPosition.width }}
+              onWheel={(e) => e.stopPropagation()}
+            >
+              <div className="bg-white border border-neutral-200 rounded-lg shadow-lg py-1 max-h-56 overflow-y-auto">
+                {QUICK_TYPES.map((t) => {
+                  const config = getTypeConfig(t);
+                  const dotClass = getTypeDotClass(t);
+                  return (
+                    <button
+                      key={t}
+                      onClick={() => {
+                        setType(t);
+                        setShowTypes(false);
+                        inputRef.current?.focus();
+                      }}
+                      className={`w-full flex items-center gap-2 px-3 py-2 text-xs text-left text-neutral-700 hover:bg-neutral-50 ${
+                        type === t ? "bg-neutral-100 font-medium" : ""
+                      }`}
+                    >
+                      <span className={`w-2.5 h-2.5 rounded-full ${dotClass} shadow-[0_0_0_1px_rgba(0,0,0,0.08)]`} />
+                      {config.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
     </div>
   );
 }

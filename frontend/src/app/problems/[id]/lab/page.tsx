@@ -363,8 +363,9 @@ export default function LabPage({ params }: PageProps) {
     const start = selectionContextLines[0]?.line;
     const end = selectionContextLines[selectionContextLines.length - 1]?.line;
     if (!start || !end) return null;
-    return start === end ? `Selection L${start}` : `Selection L${start}-L${end}`;
-  }, [selectionContextLines]);
+    const range = start === end ? `${start}` : `${start}-${end}`;
+    return `${activePath}:${range}`;
+  }, [selectionContextLines, activePath]);
   const [contextDismissed, setContextDismissed] = useState(false);
   const [aiChanges, setAiChanges] = useState<
     Array<{
@@ -435,8 +436,8 @@ export default function LabPage({ params }: PageProps) {
   const aiModelId = aiModelMode === "thinking" ? AI_MODEL_IDS.thinking : AI_MODEL_IDS.flash;
   const selectionContextMeta = useMemo(() => {
     if (!selectionRangeLabel) return "";
-    return `${selectionRangeLabel} (${activePath})`;
-  }, [selectionRangeLabel, activePath]);
+    return selectionRangeLabel;
+  }, [selectionRangeLabel]);
   const activeChat = useMemo(
     () => persistentChats.find((chat) => chat.id === activePersistentChatId) || null,
     [persistentChats, activePersistentChatId]
@@ -3281,7 +3282,7 @@ export default function LabPage({ params }: PageProps) {
         <div className="flex items-center gap-5">
           <Link href="/dashboard" className="flex items-center gap-2 group">
             <div className="w-5 h-5 bg-neutral-700 rounded-sm flex items-center justify-center text-neutral-200 group-hover:bg-neutral-600 transition-colors">
-              <Infinity size={14} />
+              <span className="font-[var(--font-math)] italic text-[12px] leading-none logo-rho">&rho;</span>
             </div>
             <span className="font-medium tracking-tight text-neutral-400 text-sm group-hover:text-neutral-300 transition-colors">ProofMesh</span>
           </Link>
@@ -3570,73 +3571,58 @@ export default function LabPage({ params }: PageProps) {
                       <button className="px-3 py-1.5 rounded-full text-[11px] border border-[#252525] bg-[#111111] text-neutral-500 hover:text-neutral-300 hover:border-[#353535] transition-all">Add file</button>
                       <button className="px-3 py-1.5 rounded-full text-[11px] border border-[#252525] bg-[#111111] text-neutral-500 hover:text-neutral-300 hover:border-[#353535] transition-all">Summarize</button>
                     </div>
-                    <div className="pm-context-block pm-context-inline">
-                      <div className="flex flex-wrap gap-2 items-center">
-                        <span className="inline-flex items-center gap-1 pl-1 pr-2 py-1 rounded-full text-[10px] bg-[#0f141f] text-sky-200 border border-[#22324a]">
-                          <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-[#1a2636] text-sky-200">
-                            <FileCode size={10} />
-                          </span>
+                    <div className="pm-context-line">
+                      {!selectionRangeLabel || contextDismissed ? (
+                        <span className="pm-context-item pm-context-file">
+                          <FileCode size={12} />
                           {activePath}
                         </span>
-                        {selectionRangeLabel && !contextDismissed && (
-                          <span className="inline-flex items-center gap-1 pl-1 pr-2 py-1 rounded-full text-[10px] bg-[#1a1016] text-rose-200 border border-[#3a2230]">
-                            <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-[#2b1922] text-rose-200">
-                              <Check size={9} />
-                            </span>
-                            {selectionRangeLabel}
-                            <button
-                              type="button"
-                              onClick={clearSelectionContext}
-                              className="ml-1 text-rose-300/70 hover:text-rose-200"
-                              aria-label="Remove selection context"
-                            >
-                              ×
-                            </button>
-                          </span>
-                        )}
-                        {persistentMentionFiles.map((path) => (
-                          <span
-                            key={`mention-${path}`}
-                            className="inline-flex items-center gap-1 pl-1 pr-2 py-1 rounded-full text-[10px] bg-[#141014] text-amber-200 border border-[#3a2f1a]"
+                      ) : (
+                        <span className="pm-context-item pm-context-selection">
+                          <FileCode size={12} />
+                          {selectionRangeLabel}
+                          <button
+                            type="button"
+                            onClick={clearSelectionContext}
+                            className="pm-context-remove"
+                            aria-label="Remove selection context"
                           >
-                            <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-[#241a12] text-amber-200">
-                              <FileText size={10} />
-                            </span>
-                            @{path}
-                            <button
-                              type="button"
-                              onClick={() => setPersistentInput((prev) => removeMention(prev, path))}
-                              className="ml-1 text-amber-300/70 hover:text-amber-200"
-                              aria-label={`Remove @${path}`}
-                            >
-                              ×
-                            </button>
-                          </span>
-                        ))}
-                        {attachedImages.map((path) => (
-                          <span
-                            key={`image-${path}`}
-                            className="inline-flex items-center gap-1 pl-1 pr-2 py-1 rounded-full text-[10px] bg-[#0f1512] text-emerald-200 border border-[#233a2c]"
+                            ×
+                          </button>
+                        </span>
+                      )}
+                      {persistentMentionFiles.map((path) => (
+                        <span key={`mention-${path}`} className="pm-context-item pm-context-mention">
+                          <FileText size={11} />
+                          @{path}
+                          <button
+                            type="button"
+                            onClick={() => setPersistentInput((prev) => removeMention(prev, path))}
+                            className="pm-context-remove"
+                            aria-label={`Remove @${path}`}
                           >
-                            <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-[#1a2a21] text-emerald-200">
-                              <ImageIcon size={10} />
-                            </span>
-                            {path}
-                            <button
-                              type="button"
-                              onClick={() => setAttachedImages((prev) => prev.filter((item) => item !== path))}
-                              className="ml-1 text-emerald-300/70 hover:text-emerald-200"
-                              aria-label={`Remove ${path}`}
-                            >
-                              ×
-                            </button>
-                          </span>
-                        ))}
-                      </div>
+                            ×
+                          </button>
+                        </span>
+                      ))}
+                      {attachedImages.map((path) => (
+                        <span key={`image-${path}`} className="pm-context-item pm-context-image">
+                          <ImageIcon size={11} />
+                          {path}
+                          <button
+                            type="button"
+                            onClick={() => setAttachedImages((prev) => prev.filter((item) => item !== path))}
+                            className="pm-context-remove"
+                            aria-label={`Remove ${path}`}
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))}
                     </div>
                     <div className="relative group">
-                      <div className="absolute -inset-0.5 rounded-2xl bg-gradient-to-r from-zinc-700/20 via-zinc-600/10 to-zinc-700/20 blur opacity-20 group-hover:opacity-40 transition duration-500" />
-                      <div className="relative flex flex-col w-full bg-[#09090b] border border-zinc-800 rounded-2xl shadow-xl shadow-black/40 focus-within:ring-1 focus-within:ring-zinc-700 focus-within:border-zinc-700 transition-all duration-200">
+                      <div className="pointer-events-none absolute -inset-0.5 rounded-2xl bg-gradient-to-r from-zinc-700/20 via-zinc-600/10 to-zinc-700/20 blur opacity-10 group-hover:opacity-25 transition-opacity duration-300" />
+                      <div className="relative flex flex-col w-full bg-[#09090b] border border-zinc-800 rounded-2xl shadow-xl shadow-black/40 focus-within:ring-1 focus-within:ring-zinc-700 focus-within:border-zinc-700 group-hover:border-zinc-700 group-hover:bg-[#0b0b0b] transition-colors duration-200">
                         <div className="relative px-2 pt-2">
                           <textarea
                             value={persistentInput}
@@ -4044,73 +4030,58 @@ export default function LabPage({ params }: PageProps) {
                         </div>
                       )}
                       </div>
-                      <div className="pm-context-pill">
-                        <div className="flex flex-wrap gap-2 items-center">
-                          <span className="inline-flex items-center gap-1 pl-1 pr-2 py-1 rounded-full text-[10px] bg-[#0f141f] text-sky-200 border border-[#22324a]">
-                            <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-[#1a2636] text-sky-200">
-                              <FileCode size={10} />
-                            </span>
+                      <div className="pm-context-line pm-context-line--compact">
+                        {!selectionRangeLabel || contextDismissed ? (
+                          <span className="pm-context-item pm-context-file">
+                            <FileCode size={12} />
                             {activePath}
                           </span>
-                          {selectionRangeLabel && !contextDismissed && (
-                            <span className="inline-flex items-center gap-1 pl-1 pr-2 py-1 rounded-full text-[10px] bg-[#1a1016] text-rose-200 border border-[#3a2230]">
-                              <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-[#2b1922] text-rose-200">
-                                <Check size={9} />
-                              </span>
-                              {selectionRangeLabel}
-                              <button
-                                type="button"
-                                onClick={clearSelectionContext}
-                                className="ml-1 text-rose-300/70 hover:text-rose-200"
-                                aria-label="Remove selection context"
-                              >
-                                ×
-                              </button>
-                            </span>
-                          )}
-                          {tempMentionFiles.map((path) => (
-                            <span
-                              key={`mention-temp-${path}`}
-                              className="inline-flex items-center gap-1 pl-1 pr-2 py-1 rounded-full text-[10px] bg-[#141014] text-amber-200 border border-[#3a2f1a]"
+                        ) : (
+                          <span className="pm-context-item pm-context-selection">
+                            <FileCode size={12} />
+                            {selectionRangeLabel}
+                            <button
+                              type="button"
+                              onClick={clearSelectionContext}
+                              className="pm-context-remove"
+                              aria-label="Remove selection context"
                             >
-                              <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-[#241a12] text-amber-200">
-                                <FileText size={10} />
-                              </span>
-                              @{path}
-                              <button
-                                type="button"
-                                onClick={() => setTempInput((prev) => removeMention(prev, path))}
-                                className="ml-1 text-amber-300/70 hover:text-amber-200"
-                                aria-label={`Remove @${path}`}
-                              >
-                                ×
-                              </button>
-                            </span>
-                          ))}
-                          {attachedImages.map((path) => (
-                            <span
-                              key={`image-temp-${path}`}
-                              className="inline-flex items-center gap-1 pl-1 pr-2 py-1 rounded-full text-[10px] bg-[#0f1512] text-emerald-200 border border-[#233a2c]"
+                              ×
+                            </button>
+                          </span>
+                        )}
+                        {tempMentionFiles.map((path) => (
+                          <span key={`mention-temp-${path}`} className="pm-context-item pm-context-mention">
+                            <FileText size={11} />
+                            @{path}
+                            <button
+                              type="button"
+                              onClick={() => setTempInput((prev) => removeMention(prev, path))}
+                              className="pm-context-remove"
+                              aria-label={`Remove @${path}`}
                             >
-                              <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-[#1a2a21] text-emerald-200">
-                                <ImageIcon size={10} />
-                              </span>
-                              {path}
-                              <button
-                                type="button"
-                                onClick={() => setAttachedImages((prev) => prev.filter((item) => item !== path))}
-                                className="ml-1 text-emerald-300/70 hover:text-emerald-200"
-                                aria-label={`Remove ${path}`}
-                              >
-                                ×
-                              </button>
-                            </span>
-                          ))}
-                        </div>
+                              ×
+                            </button>
+                          </span>
+                        ))}
+                        {attachedImages.map((path) => (
+                          <span key={`image-temp-${path}`} className="pm-context-item pm-context-image">
+                            <ImageIcon size={11} />
+                            {path}
+                            <button
+                              type="button"
+                              onClick={() => setAttachedImages((prev) => prev.filter((item) => item !== path))}
+                              className="pm-context-remove"
+                              aria-label={`Remove ${path}`}
+                            >
+                              ×
+                            </button>
+                          </span>
+                        ))}
                       </div>
                       <div className="relative group">
-                        <div className="absolute -inset-0.5 rounded-2xl bg-gradient-to-r from-zinc-700/20 via-zinc-600/10 to-zinc-700/20 blur opacity-20 group-hover:opacity-40 transition duration-500" />
-                        <div className="relative flex flex-col w-full bg-[#09090b] border border-zinc-800 rounded-2xl shadow-xl shadow-black/40 focus-within:ring-1 focus-within:ring-zinc-700 focus-within:border-zinc-700 transition-all duration-200">
+                        <div className="pointer-events-none absolute -inset-0.5 rounded-2xl bg-gradient-to-r from-zinc-700/20 via-zinc-600/10 to-zinc-700/20 blur opacity-10 group-hover:opacity-25 transition-opacity duration-300" />
+                        <div className="relative flex flex-col w-full bg-[#09090b] border border-zinc-800 rounded-2xl shadow-xl shadow-black/40 focus-within:ring-1 focus-within:ring-zinc-700 focus-within:border-zinc-700 group-hover:border-zinc-700 group-hover:bg-[#0b0b0b] transition-colors duration-200">
                           <div className="relative px-2 pt-2">
                             <textarea
                               disabled={aiLoading}

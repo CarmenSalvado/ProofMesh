@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useCallback, useMemo, useEffect } from "react";
+import { useRef, useState, useCallback, useMemo, useEffect, forwardRef, useImperativeHandle } from "react";
 import {
   ZoomIn,
   ZoomOut,
@@ -27,6 +27,7 @@ interface ProofCanvasV2Props {
   onNodeSelect: (nodeId: string | null) => void;
   onMultiSelect?: (nodeIds: Set<string>) => void;
   onNodeMove?: (nodeId: string, x: number, y: number) => void;
+  onNodesMove?: (positions: Record<string, { x: number; y: number }>) => void;
   onNodeDoubleClick?: (nodeId: string) => void;
   onNodeCreate?: (node?: Partial<CanvasNode>) => void;
   onNodeUpdate?: (nodeId: string, updates: Partial<CanvasNode>) => void;
@@ -43,6 +44,10 @@ interface ProofCanvasV2Props {
   nodeAnchorStatus?: Map<string, { hasAnchors: boolean; isStale: boolean; count: number }>;
   collaborators?: Collaborator[];
   readOnly?: boolean;
+}
+
+export interface ProofCanvasHandle {
+  openInlineEditorAtCenter: () => void;
 }
 
 function getEdgePath(from: CanvasNode, to: CanvasNode): { path: string } {
@@ -129,7 +134,7 @@ function getEdgePath(from: CanvasNode, to: CanvasNode): { path: string } {
   };
 }
 
-export function ProofCanvasV2({
+export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(function ProofCanvasV2({
   nodes,
   edges,
   selectedNodeId,
@@ -137,6 +142,7 @@ export function ProofCanvasV2({
   onNodeSelect,
   onMultiSelect,
   onNodeMove,
+  onNodesMove,
   onNodeDoubleClick,
   onNodeCreate,
   onNodeUpdate,
@@ -153,7 +159,7 @@ export function ProofCanvasV2({
   nodeAnchorStatus,
   collaborators = [],
   readOnly = false,
-}: ProofCanvasV2Props) {
+}: ProofCanvasV2Props, ref) {
   const canvasRef = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 50, y: 50 });
@@ -163,6 +169,8 @@ export function ProofCanvasV2({
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
   const [dragPos, setDragPos] = useState<{ x: number; y: number } | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
+  const [dragDelta, setDragDelta] = useState<{ x: number; y: number } | null>(null);
+  const [multiDraggingIds, setMultiDraggingIds] = useState<string[] | null>(null);
   
   // Canvas interaction mode: cursor (selection) or hand (pan)
   const [canvasMode, setCanvasMode] = useState<CanvasMode>("cursor");
@@ -195,6 +203,11 @@ export function ProofCanvasV2({
   const dragOffsetRef = useRef({ x: 0, y: 0 });
   const dragNodeRef = useRef<HTMLDivElement | null>(null);
   const dragStartPosRef = useRef({ x: 0, y: 0 });
+  const dragOriginPosRef = useRef({ x: 0, y: 0 });
+  const multiDragStartPositionsRef = useRef<Record<string, { x: number; y: number }>>({});
+  const multiDragPositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
+  const multiDraggingRef = useRef(false);
+  const multiDraggingIdsRef = useRef<string[]>([]);
   const isDraggingRef = useRef(false);
   const draggedNodeIdRef = useRef<string | null>(null);
   const rafRef = useRef<number | null>(null);
@@ -206,7 +219,23 @@ export function ProofCanvasV2({
   // Create node map for edge lookups, with drag position override
   const nodeMap = useMemo(() => {
     const map = new Map(nodes.map((n) => [n.id, n]));
-    // If dragging, create a modified node with the drag position
+
+    if (multiDraggingIds && dragDelta) {
+      multiDraggingIds.forEach((id) => {
+        const original = map.get(id);
+        const startPos = multiDragStartPositionsRef.current[id];
+        if (original && startPos) {
+          map.set(id, {
+            ...original,
+            x: startPos.x + dragDelta.x,
+            y: startPos.y + dragDelta.y,
+          });
+        }
+      });
+      return map;
+    }
+
+    // If dragging single node, create a modified node with the drag position
     if (draggedNode && dragPos) {
       const originalNode = map.get(draggedNode);
       if (originalNode) {
@@ -214,7 +243,7 @@ export function ProofCanvasV2({
       }
     }
     return map;
-  }, [nodes, draggedNode, dragPos]);
+  }, [nodes, draggedNode, dragPos, dragDelta, multiDraggingIds]);
   
   // Memoize edge paths to avoid recalculating on every render
   const edgePaths = useMemo(() => {
@@ -232,16 +261,32 @@ export function ProofCanvasV2({
   
   // Memoize minimap nodes to avoid recalculation
   const minimapNodes = useMemo(() => {
-    return nodes.map((node) => {
-      const config = NODE_TYPE_CONFIG[node.type] || NODE_TYPE_CONFIG.note;
-      return {
-        id: node.id,
-        left: Math.max(0, Math.min(95, (node.x / 2500) * 100)),
-        top: Math.max(0, Math.min(90, (node.y / 1800) * 100)),
-        bgColor: config.bgColor,
-      };
-    });
+    return nodes.map((node) => ({
+      id: node.id,
+      left: Math.max(0, Math.min(95, (node.x / 2500) * 100)),
+      top: Math.max(0, Math.min(90, (node.y / 1800) * 100)),
+    }));
   }, [nodes]);
+
+  // Memoize multi-drag positions for rendering
+  const multiDragPositions = useMemo(() => {
+    if (!multiDraggingIds || !dragDelta) return null;
+    const map = new Map<string, { x: number; y: number }>();
+    multiDraggingIds.forEach((id) => {
+      const startPos = multiDragStartPositionsRef.current[id];
+      if (startPos) {
+        map.set(id, {
+          x: startPos.x + dragDelta.x,
+          y: startPos.y + dragDelta.y,
+        });
+      }
+    });
+    return map;
+  }, [multiDraggingIds, dragDelta]);
+
+  useEffect(() => {
+    multiDragPositionsRef.current = multiDragPositions || new Map();
+  }, [multiDragPositions]);
   
   // Memoize minimap viewport
   const minimapViewport = useMemo(() => {
@@ -290,6 +335,18 @@ export function ProofCanvasV2({
       y: (canvasHeight - height * scale) / 2 - minY * scale + 50,
     });
   }, [nodes]);
+
+  const openInlineEditorAtCenter = useCallback(() => {
+    if (readOnly) return;
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (rect) {
+      setInlineEditor({ x: rect.width / 2, y: rect.height / 2 });
+    }
+  }, [readOnly]);
+
+  useImperativeHandle(ref, () => ({
+    openInlineEditorAtCenter,
+  }), [openInlineEditorAtCenter]);
 
   // Wheel zoom
   useEffect(() => {
@@ -364,13 +421,7 @@ export function ProofCanvasV2({
       } else if (e.key === "n" || e.key === "N") {
         if (!readOnly && !inlineEditor) {
           e.preventDefault();
-          // Open inline editor at center of viewport
-          const rect = canvasRef.current?.getBoundingClientRect();
-          if (rect) {
-            const centerX = rect.width / 2;
-            const centerY = rect.height / 2;
-            setInlineEditor({ x: centerX, y: centerY });
-          }
+          openInlineEditorAtCenter();
         }
       } else if ((e.key === "z" || e.key === "Z") && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
@@ -433,7 +484,7 @@ export function ProofCanvasV2({
     
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [selectedNodeId, selectedNodeIds, selectedEdgeId, onNodeDelete, onMultiDelete, onEdgeDelete, readOnly, handleFit, onNodeSelect, onMultiSelect, inlineEditor, onUndo, onRedo, nodes, clipboard, onNodeCreate]);
+  }, [selectedNodeId, selectedNodeIds, selectedEdgeId, onNodeDelete, onMultiDelete, onEdgeDelete, readOnly, handleFit, onNodeSelect, onMultiSelect, inlineEditor, onUndo, onRedo, nodes, clipboard, onNodeCreate, openInlineEditorAtCenter]);
 
   // Convert screen coords to canvas coords
   const screenToCanvas = useCallback((screenX: number, screenY: number) => {
@@ -625,18 +676,25 @@ export function ProofCanvasV2({
         });
       } else if (isDraggingRef.current && dragNodeRef.current) {
         const canvasCoords = screenToCanvas(e.clientX, e.clientY);
-        const newX = Math.max(0, canvasCoords.x - dragOffsetRef.current.x);
-        const newY = Math.max(0, canvasCoords.y - dragOffsetRef.current.y);
+        const newX = canvasCoords.x - dragOffsetRef.current.x;
+        const newY = canvasCoords.y - dragOffsetRef.current.y;
         
         dragNodeRef.current.style.left = `${newX}px`;
         dragNodeRef.current.style.top = `${newY}px`;
         dragStartPosRef.current = { x: newX, y: newY };
+        const delta = {
+          x: newX - dragOriginPosRef.current.x,
+          y: newY - dragOriginPosRef.current.y,
+        };
         
         if (rafRef.current) {
           cancelAnimationFrame(rafRef.current);
         }
         rafRef.current = requestAnimationFrame(() => {
           setDragPos({ x: newX, y: newY });
+          if (multiDraggingRef.current) {
+            setDragDelta(delta);
+          }
         });
       }
     },
@@ -686,13 +744,43 @@ export function ProofCanvasV2({
     }
     
     // Commit the drag position to state only on mouse up
-    if (isDraggingRef.current && draggedNodeIdRef.current && onNodeMove) {
-      onNodeMove(draggedNodeIdRef.current, dragStartPosRef.current.x, dragStartPosRef.current.y);
+    if (isDraggingRef.current && draggedNodeIdRef.current) {
+      if (multiDraggingRef.current && onNodesMove) {
+        const updatedPositions: Record<string, { x: number; y: number }> = {};
+        const delta = {
+          x: dragStartPosRef.current.x - dragOriginPosRef.current.x,
+          y: dragStartPosRef.current.y - dragOriginPosRef.current.y,
+        };
+
+        if (delta.x !== 0 || delta.y !== 0) {
+          multiDraggingIdsRef.current.forEach((id) => {
+            const startPos = multiDragStartPositionsRef.current[id];
+            if (startPos) {
+              updatedPositions[id] = {
+                x: startPos.x + delta.x,
+                y: startPos.y + delta.y,
+              };
+            }
+          });
+        }
+
+        if (Object.keys(updatedPositions).length > 0) {
+          onNodesMove(updatedPositions);
+        } else if (onNodeMove) {
+          onNodeMove(draggedNodeIdRef.current, dragStartPosRef.current.x, dragStartPosRef.current.y);
+        }
+      } else if (onNodeMove) {
+        onNodeMove(draggedNodeIdRef.current, dragStartPosRef.current.x, dragStartPosRef.current.y);
+      }
     }
     
     setIsPanning(false);
     setDraggedNode(null);
     setDragPos(null);
+    setDragDelta(null);
+    setMultiDraggingIds(null);
+    multiDraggingRef.current = false;
+    multiDraggingIdsRef.current = [];
     isDraggingRef.current = false;
     dragNodeRef.current = null;
     draggedNodeIdRef.current = null;
@@ -725,8 +813,8 @@ export function ProofCanvasV2({
         return;
       }
       
-      // Clear multi-selection on regular click
-      if (selectedNodeIds.size > 0 && onMultiSelect) {
+      // Clear multi-selection on regular click if clicking a non-selected node
+      if (selectedNodeIds.size > 0 && onMultiSelect && !selectedNodeIds.has(node.id)) {
         onMultiSelect(new Set());
       }
       
@@ -744,8 +832,30 @@ export function ProofCanvasV2({
         y: canvasCoords.y - node.y,
       };
       dragStartPosRef.current = { x: node.x, y: node.y };
+      dragOriginPosRef.current = { x: node.x, y: node.y };
+
+      const isMultiDrag = selectedNodeIds.size > 1 && selectedNodeIds.has(node.id);
+      if (isMultiDrag) {
+        const ids = Array.from(selectedNodeIds);
+        setMultiDraggingIds(ids);
+        multiDraggingRef.current = true;
+        multiDraggingIdsRef.current = ids;
+        const startPositions: Record<string, { x: number; y: number }> = {};
+        nodes.forEach((n) => {
+          if (selectedNodeIds.has(n.id)) {
+            startPositions[n.id] = { x: n.x, y: n.y };
+          }
+        });
+        multiDragStartPositionsRef.current = startPositions;
+        setDragDelta({ x: 0, y: 0 });
+      } else {
+        setMultiDraggingIds(null);
+        setDragDelta(null);
+        multiDraggingRef.current = false;
+        multiDraggingIdsRef.current = [];
+      }
     },
-    [readOnly, onNodeSelect, screenToCanvas, onMultiSelect, selectedNodeIds]
+    [readOnly, onNodeSelect, screenToCanvas, onMultiSelect, selectedNodeIds, nodes]
   );
 
   const handleNodeConnectionStart = useCallback(
@@ -869,12 +979,7 @@ export function ProofCanvasV2({
           <div className="w-px h-6 bg-neutral-200/80" />
           
           <button
-            onClick={() => {
-              const rect = canvasRef.current?.getBoundingClientRect();
-              if (rect) {
-                setInlineEditor({ x: rect.width / 2, y: rect.height / 2 });
-              }
-            }}
+            onClick={openInlineEditorAtCenter}
             className="flex items-center gap-1.5 px-3 py-2 rounded-md text-neutral-600 hover:bg-neutral-100 transition-colors"
             title="Add Node (N)"
           >
@@ -1148,10 +1253,13 @@ export function ProofCanvasV2({
         </svg>
 
         {/* Nodes */}
-        {nodes.map((node) => (
+        {nodes.map((node) => {
+          const overridePos = multiDragPositions?.get(node.id);
+          const renderNode = overridePos ? { ...node, x: overridePos.x, y: overridePos.y } : node;
+          return (
           <CanvasNodeItem
             key={node.id}
-            node={node}
+            node={renderNode}
             isSelected={selectedNodeId === node.id}
             isMultiSelected={selectedNodeIds.has(node.id)}
             isDragging={draggedNode === node.id}
@@ -1164,7 +1272,8 @@ export function ProofCanvasV2({
             onContextMenu={(e: React.MouseEvent) => handleContextMenu(e, node)}
             onOpenComments={onOpenComments}
           />
-        ))}
+        );
+        })}
 
         {/* Collaborator Cursors */}
         {collaborators.map((collab) => (
@@ -1204,7 +1313,7 @@ export function ProofCanvasV2({
 
       {/* Minimap */}
       <div 
-        className="absolute bottom-4 right-4 w-36 h-24 bg-white border border-neutral-200 rounded-lg shadow-sm overflow-hidden z-30"
+        className="absolute bottom-24 right-4 w-36 h-24 bg-white border border-neutral-200 rounded-lg shadow-sm overflow-hidden z-30"
         onDoubleClick={(e) => e.stopPropagation()}
       >
         <div className="px-2 py-1 text-[9px] font-semibold text-neutral-400 uppercase tracking-wider border-b border-neutral-100">
@@ -1214,11 +1323,11 @@ export function ProofCanvasV2({
           {minimapNodes.map((node) => (
             <div
               key={node.id}
-              className={`absolute rounded-sm ${node.bgColor}`}
+              className="absolute rounded-full bg-neutral-300/80"
               style={{
                 left: `${node.left}%`,
                 top: `${node.top}%`,
-                width: "6px",
+                width: "4px",
                 height: "4px",
               }}
             />
@@ -1296,4 +1405,6 @@ export function ProofCanvasV2({
       )}
     </div>
   );
-}
+});
+
+ProofCanvasV2.displayName = "ProofCanvasV2";
