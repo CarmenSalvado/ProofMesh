@@ -84,6 +84,8 @@ services:
       S3_SECURE: ${S3_SECURE}
       LATEX_COMPILER_URL: ${LATEX_COMPILER_URL}
       LATEX_COMPILE_TIMEOUT: ${LATEX_COMPILE_TIMEOUT}
+      LEAN_RUNNER_URL: ${LEAN_RUNNER_URL:-http://lean-runner:9008}
+      LEAN_TIMEOUT: ${LEAN_TIMEOUT:-60}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
     depends_on:
       postgres:
@@ -92,6 +94,21 @@ services:
         condition: service_healthy
       minio:
         condition: service_started
+      lean-runner:
+        condition: service_started
+
+  # Lean runner service (isolated)
+  lean-runner:
+    build:
+      context: .
+      dockerfile: lean-runner/Dockerfile
+    container_name: proofmesh-lean-runner
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      LEAN_PROJECT_DIR: /workspace/mesh_project
+      LEAN_TIMEOUT: ${LEAN_TIMEOUT:-60}
 
   # TeXLive compiler service
   texlive-compiler:

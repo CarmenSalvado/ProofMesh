@@ -25,6 +25,14 @@ export interface CanvasEdge {
   label?: string;
 }
 
+export interface CanvasBlock {
+  id: string;
+  name: string;
+  nodeIds: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface Collaborator {
   id: string;
   name: string;

@@ -42,7 +42,8 @@ alembic upgrade head
 echo "✅ Migrations complete!"
 
 # Setup Lean Project dependencies in background (non-blocking)
-if [ -d "/app/mesh/mesh_project" ]; then
+# Skip if Lean is delegated to external runner
+if [ -z "${LEAN_RUNNER_URL}" ] && [ -d "/app/mesh/mesh_project" ]; then
     echo "🔧 Setting up Lean project in background..."
     (
         cd /app/mesh/mesh_project
@@ -50,6 +51,8 @@ if [ -d "/app/mesh/mesh_project" ]; then
         lake exe cache get || echo "⚠️ Warning: Failed to fetch cache"
     ) &
     echo "✅ Lean setup initiated (running in background)"
+else
+    echo "⏭️ Skipping Lean setup in backend (LEAN_RUNNER_URL is set)"
 fi
 
 # Start the application

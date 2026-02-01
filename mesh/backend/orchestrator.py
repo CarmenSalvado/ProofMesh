@@ -206,7 +206,7 @@ class Orchestrator:
             LeanResult with success status
         """
         # Run in thread pool to not block
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             None, 
             self.lean.run, 

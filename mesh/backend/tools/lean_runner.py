@@ -3,11 +3,14 @@ Lean 4 Runner - Deterministic tool for executing Lean code.
 This is NOT an agent. This is infrastructure.
 """
 
+import json
 import subprocess
 import tempfile
 import os
 import time
 import shutil
+import uuid
+from urllib import request, error
 from pathlib import Path
 from typing import Optional
 
@@ -23,7 +26,8 @@ class LeanRunner:
         lake_path: Optional[str] = None, 
         timeout_seconds: int = 60,
         workspace_dir: Optional[str] = None,
-        use_project_context: bool = True
+        use_project_context: bool = True,
+        remote_url: Optional[str] = None
     ):
         # Try to find executables if not provided
         self.lean_path = lean_path or shutil.which("lean") or "lean"
@@ -32,6 +36,9 @@ class LeanRunner:
         self.timeout = timeout_seconds
         self.workspace_dir = workspace_dir
         self.use_project_context = use_project_context # If True, uses 'lake env lean'
+        self.remote_url = (remote_url or os.getenv("LEAN_RUNNER_URL") or "").strip() or None
+        if self.remote_url:
+            self.remote_url = self.remote_url.rstrip("/")
         
         # If no workspace provided, create temp
         if not self.workspace_dir and not self.use_project_context:
@@ -41,6 +48,9 @@ class LeanRunner:
         """
         Execute Lean 4 code and return the result.
         """
+        if self.remote_url:
+            return self._run_remote(code)
+
         start_time = time.time()
         
         # Determine working directory
@@ -53,15 +63,15 @@ class LeanRunner:
         # If using project context, we should write to a file that lake knows about
         # typically Main.lean or a temp file in the project
         
-        filename = "Test.lean"
+        filename = f"Test_{uuid.uuid4().hex}.lean"
         if self.use_project_context and self.workspace_dir:
-             # Ensure we write to the project dir
-             file_path = Path(self.workspace_dir) / filename
+            # Ensure we write to the project dir
+            file_path = Path(self.workspace_dir) / filename
         elif self.workspace_dir:
-             file_path = Path(self.workspace_dir) / filename
+            file_path = Path(self.workspace_dir) / filename
         else:
-             # Temp file in current dir if no workspace
-             file_path = Path(os.getcwd()) / filename
+            # Temp file in current dir if no workspace
+            file_path = Path(cwd or os.getcwd()) / filename
 
         file_path.write_text(code)
 
@@ -77,7 +87,7 @@ class LeanRunner:
                 capture_output=True,
                 text=True,
                 timeout=self.timeout,
-                cwd=self.workspace_dir or os.getcwd()
+                cwd=cwd or os.getcwd()
             )
             
             execution_time = int((time.time() - start_time) * 1000)
@@ -125,6 +135,43 @@ class LeanRunner:
                 success=False,
                 code=code,
                 error=str(e)
+            )
+        finally:
+            try:
+                file_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    def _run_remote(self, code: str) -> LeanResult:
+        payload = json.dumps({"code": code, "timeout_seconds": self.timeout}).encode("utf-8")
+        req = request.Request(
+            f"{self.remote_url}/verify",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with request.urlopen(req, timeout=self.timeout + 5) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            return LeanResult(
+                success=bool(data.get("success")),
+                code=code,
+                log=data.get("log") or "",
+                error=data.get("error"),
+                execution_time_ms=int(data.get("execution_time_ms") or 0),
+            )
+        except error.HTTPError as exc:
+            body = exc.read().decode("utf-8", errors="ignore")
+            return LeanResult(
+                success=False,
+                code=code,
+                error=f"Lean runner HTTP {exc.code}: {body}",
+            )
+        except Exception as exc:
+            return LeanResult(
+                success=False,
+                code=code,
+                error=str(exc),
             )
     
     def check_syntax(self, code: str) -> bool:

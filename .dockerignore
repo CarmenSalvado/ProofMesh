@@ -1,0 +1,11 @@
+.git
+**/.git
+**/__pycache__
+**/.mypy_cache
+**/.pytest_cache
+**/.lake
+node_modules
+frontend/node_modules
+backend/.venv
+.env
+video

@@ -674,6 +674,8 @@ export async function createLibraryItem(
 		content: string;
 		formula?: string;
 		lean_code?: string;
+		authors?: Array<{ type: "human" | "agent"; id: string; name?: string }>;
+		source?: { file_path?: string; cell_id?: string; agent_run_id?: string };
 		dependencies?: string[];
 	}
 ): Promise<LibraryItem> {
@@ -1304,8 +1306,30 @@ export interface OrchestrationProposal {
 	id: string;
 	content: string;
 	reasoning: string;
+	diagram?: OrchestrationDiagram | null;
 	score: number;
 	iteration: number;
+}
+
+export interface OrchestrationDiagramNode {
+	id: string;
+	type: string;
+	title: string;
+	content?: string | null;
+	formula?: string | null;
+	lean_code?: string | null;
+}
+
+export interface OrchestrationDiagramEdge {
+	from: string;
+	to: string;
+	type?: string | null;
+	label?: string | null;
+}
+
+export interface OrchestrationDiagram {
+	nodes: OrchestrationDiagramNode[];
+	edges: OrchestrationDiagramEdge[];
 }
 
 export interface ExploreResponse {

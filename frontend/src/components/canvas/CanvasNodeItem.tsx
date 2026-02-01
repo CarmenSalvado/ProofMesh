@@ -42,6 +42,7 @@ export function CanvasNodeItem({
   const router = useRouter();
   const typeConfig = NODE_TYPE_CONFIG[node.type] || NODE_TYPE_CONFIG.NOTE;
   const statusConfig = STATUS_CONFIG[node.status] || STATUS_CONFIG.DRAFT;
+  const isHighlighted = isSelected || isMultiSelected;
 
   const normalizeFormula = (value?: string) => {
     if (!value) return "";
@@ -68,6 +69,15 @@ export function CanvasNodeItem({
     return value;
   };
 
+  const extractImageSrc = (value?: string) => {
+    if (!value) return null;
+    const trimmed = value.trim();
+    if (trimmed.startsWith("data:image")) return trimmed;
+    const match = trimmed.match(/!\[[^\]]*]\(([^)]+)\)/);
+    if (match && match[1]) return match[1];
+    return null;
+  };
+
   // Extract confidence score from content if present (e.g., "**Confidence: 85%**")
   const extractConfidence = (content?: string): number | null => {
     if (!content) return null;
@@ -79,6 +89,8 @@ export function CanvasNodeItem({
   };
 
   const confidence = extractConfidence(node.content);
+
+  const imageSrc = extractImageSrc(node.content);
 
   const formulaValue = normalizeFormula(node.formula);
   const contentValue = normalizeContent(node.content);
@@ -110,8 +122,7 @@ export function CanvasNodeItem({
       data-node-id={node.id}
       className={`absolute rounded-xl border cursor-pointer group select-none
         ${typeConfig.bgColor} ${typeConfig.borderColor}
-        ${isSelected ? "ring-2 ring-indigo-500 ring-offset-1 shadow-lg z-40" : "hover:shadow-md"}
-        ${isMultiSelected ? "ring-2 ring-emerald-500 ring-offset-1 z-30" : ""}
+        ${isHighlighted ? "ring-2 ring-indigo-500 ring-offset-1 shadow-lg z-40" : "hover:shadow-md"}
         ${isDragging ? "shadow-xl cursor-grabbing z-50" : ""}
         ${isConnecting ? "ring-2 ring-emerald-500" : ""}
       `}
@@ -199,16 +210,27 @@ export function CanvasNodeItem({
 
         {/* Formula if present */}
         {formulaValue && (
-          <div className="mt-2 px-2 py-1.5 bg-white/60 rounded-md border border-neutral-200/50 overflow-hidden">
+          <div className="mt-2 px-2 py-1.5 bg-white rounded-md border border-neutral-300">
             <MarkdownRenderer
               content={`$$${formulaValue}$$`}
-              className="text-xs [&_.katex]:text-sm [&_.katex-display]:my-0 [&_.katex-display]:mx-0"
+              className="text-neutral-900"
+            />
+          </div>
+        )}
+
+        {/* Image preview */}
+        {imageSrc && !formulaValue && (
+          <div className="mt-2 bg-white rounded-md border border-neutral-200 p-2">
+            <img
+              src={imageSrc}
+              alt={node.title}
+              className="w-full h-28 object-contain"
             />
           </div>
         )}
 
         {/* Content preview (supports LaTeX) */}
-        {contentValue && !formulaValue && (
+        {contentValue && !formulaValue && !imageSrc && (
           <div className="mt-1 text-xs text-neutral-600 max-h-10 overflow-hidden">
             <MarkdownRenderer
               content={contentValue}

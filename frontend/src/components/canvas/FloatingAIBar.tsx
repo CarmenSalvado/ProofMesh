@@ -36,6 +36,7 @@ interface FloatingInsight {
   content: string;
   nodeRef?: string;
   score?: number;
+  runId?: string;
   timestamp: Date;
 }
 
@@ -51,9 +52,213 @@ interface FloatingAIBarProps {
   selectedNodes?: CanvasNode[];
   isVisible: boolean;
   onToggle: () => void;
-  onCreateNode?: (data: { type: string; title: string; content: string; formula?: string; x?: number; y?: number; dependencies?: string[] }) => void;
-  onUpdateNode?: (nodeId: string, updates: { formula?: string; leanCode?: string; status?: "PROPOSED" | "VERIFIED" | "REJECTED" }) => void;
+  onCreateNode?: (data: { type: string; title: string; content: string; formula?: string; leanCode?: string; x?: number; y?: number; dependencies?: string[]; authors?: Array<{ type: "human" | "agent"; id: string; name?: string }>; source?: { file_path?: string; cell_id?: string; agent_run_id?: string } }) => Promise<{ id: string } | void>;
+  onUpdateNode?: (nodeId: string, updates: { formula?: string; leanCode?: string; status?: "PROPOSED" | "VERIFIED" | "REJECTED"; verification?: { method: string; logs: string; status: string }; dependencies?: string[] }) => Promise<void> | void;
+  onCreateBlock?: (name: string, nodeIds: string[]) => void;
 }
+
+const AI_AUTHOR = { type: "agent", id: "orchestrator", name: "AI Pipeline" } as const;
+const buildAISource = (runId?: string) => (runId ? { agent_run_id: runId } : undefined);
+
+const isImageContent = (value?: string) => {
+  if (!value) return false;
+  if (value.startsWith("data:image")) return true;
+  return /!\[[^\]]*]\((data:image|https?:\/\/)/i.test(value);
+};
+
+const readFileAsDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => resolve(String(reader.result || ""));
+  reader.onerror = () => reject(new Error("Failed to read image"));
+  reader.readAsDataURL(file);
+});
+
+const stripMarkdown = (value: string) => value
+  .replace(/`{1,3}[^`]*`{1,3}/g, " ")
+  .replace(/\[(.*?)\]\(.*?\)/g, "$1")
+  .replace(/[*_>#~\-]+/g, " ")
+  .replace(/\s+/g, " ")
+  .trim();
+
+const deriveGroupTitle = (value: string, fallback = "Proposal") => {
+  const cleaned = stripMarkdown(value || "");
+  if (!cleaned) return fallback;
+  const firstLine = cleaned.split("\n").find((line) => line.trim()) || cleaned;
+  const sentence = firstLine.split(/[.!?]/)[0] || firstLine;
+  const words = sentence.trim().split(/\s+/).slice(0, 8).join(" ");
+  if (!words) return fallback;
+  return words.length < sentence.length ? `${words}…` : words;
+};
+
+interface ChatMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  timestamp: Date;
+}
+
+const buildChatContext = (messages: ChatMessage[]) => {
+  if (messages.length === 0) return "";
+  return `Insights context:\n${messages
+    .slice(-8)
+    .map((msg) => `${msg.role === "user" ? "User" : "Assistant"}: ${msg.content}`)
+    .join("\n")}`;
+};
+
+type DiagramNodeSpec = {
+  id: string;
+  type?: string | null;
+  title: string;
+  content?: string | null;
+  formula?: string | null;
+  lean_code?: string | null;
+  leanCode?: string | null;
+};
+
+type DiagramEdgeSpec = {
+  from: string;
+  to: string;
+  type?: string | null;
+  label?: string | null;
+};
+
+type DiagramSpec = {
+  nodes: DiagramNodeSpec[];
+  edges?: DiagramEdgeSpec[] | null;
+};
+
+const EDGE_TYPES = new Set(["uses", "implies", "contradicts", "references"]);
+
+const normalizeNodeType = (value?: string | null) => {
+  if (!value) return "NOTE";
+  const upper = String(value).trim().toUpperCase();
+  if (NODE_TYPE_CONFIG[upper]) return upper;
+  if (NODE_TYPE_CONFIG[upper.toLowerCase()]) return upper;
+  return "NOTE";
+};
+
+const normalizeEdgeType = (value?: string | null) => {
+  const lowered = String(value || "uses").trim().toLowerCase();
+  return EDGE_TYPES.has(lowered) ? lowered : "uses";
+};
+
+const sanitizeDiagram = (diagram?: DiagramSpec | null) => {
+  if (!diagram || !Array.isArray(diagram.nodes)) return null;
+  const nodes = diagram.nodes
+    .map((node, index) => ({
+      id: String(node.id || `n${index + 1}`),
+      type: normalizeNodeType(node.type),
+      title: String(node.title || "").trim(),
+      content: node.content ? String(node.content).trim() : "",
+      formula: node.formula ? String(node.formula).trim() : undefined,
+      leanCode: node.lean_code || node.leanCode || undefined,
+    }))
+    .filter((node) => node.title.length > 0);
+
+  if (nodes.length < 2) return null;
+
+  const seen = new Set<string>();
+  const uniqueNodes: typeof nodes = [];
+  nodes.forEach((node) => {
+    const key = `${node.type.toLowerCase()}::${node.title.toLowerCase()}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    uniqueNodes.push(node);
+  });
+
+  const finalNodes = uniqueNodes.length >= 2 ? uniqueNodes : nodes;
+
+  const nodeIds = new Set(finalNodes.map((n) => n.id));
+  const edges = Array.isArray(diagram.edges)
+    ? diagram.edges
+      .map((edge) => ({
+        from: String(edge.from || "").trim(),
+        to: String(edge.to || "").trim(),
+        type: normalizeEdgeType(edge.type),
+        label: edge.label ? String(edge.label).trim() : undefined,
+      }))
+      .filter((edge) => edge.from && edge.to && edge.from !== edge.to && nodeIds.has(edge.from) && nodeIds.has(edge.to))
+    : [];
+
+  if (edges.length === 0) {
+    for (let i = 1; i < finalNodes.length; i += 1) {
+      edges.push({ from: finalNodes[i - 1].id, to: finalNodes[i].id, type: "implies" });
+    }
+  }
+
+  return { nodes: finalNodes, edges };
+};
+
+const layoutDiagram = (nodes: Array<{ id: string }>, edges: Array<{ from: string; to: string }>, baseX: number, baseY: number) => {
+  const incoming = new Map<string, number>();
+  const adjacency = new Map<string, string[]>();
+
+  nodes.forEach((node) => {
+    incoming.set(node.id, 0);
+    adjacency.set(node.id, []);
+  });
+
+  edges.forEach((edge) => {
+    if (!incoming.has(edge.to) || !incoming.has(edge.from)) return;
+    incoming.set(edge.to, (incoming.get(edge.to) || 0) + 1);
+    adjacency.get(edge.from)?.push(edge.to);
+  });
+
+  const depths = new Map<string, number>();
+  const queue: string[] = [];
+  nodes.forEach((node) => {
+    if ((incoming.get(node.id) || 0) === 0) {
+      depths.set(node.id, 0);
+      queue.push(node.id);
+    }
+  });
+
+  while (queue.length > 0) {
+    const current = queue.shift() as string;
+    const depth = depths.get(current) || 0;
+    const neighbors = adjacency.get(current) || [];
+    neighbors.forEach((next) => {
+      const nextDepth = Math.max(depths.get(next) || 0, depth + 1);
+      depths.set(next, nextDepth);
+      incoming.set(next, (incoming.get(next) || 1) - 1);
+      if ((incoming.get(next) || 0) <= 0) {
+        queue.push(next);
+      }
+    });
+  }
+
+  const groups = new Map<number, string[]>();
+  nodes.forEach((node) => {
+    const depth = depths.get(node.id) ?? 0;
+    if (!groups.has(depth)) groups.set(depth, []);
+    groups.get(depth)?.push(node.id);
+  });
+
+  const positions: Record<string, { x: number; y: number }> = {};
+  const xSpacing = 320;
+  const ySpacing = 190;
+
+  Array.from(groups.entries()).forEach(([depth, ids]) => {
+    ids.forEach((id, index) => {
+      const offset = index - (ids.length - 1) / 2;
+      positions[id] = {
+        x: baseX + depth * xSpacing,
+        y: baseY + offset * ySpacing,
+      };
+    });
+  });
+
+  nodes.forEach((node, index) => {
+    if (!positions[node.id]) {
+      positions[node.id] = {
+        x: baseX + (index % 3) * xSpacing,
+        y: baseY + Math.floor(index / 3) * ySpacing,
+      };
+    }
+  });
+
+  return positions;
+};
 
 export function FloatingAIBar({
   problemId,
@@ -63,6 +268,7 @@ export function FloatingAIBar({
   onToggle,
   onCreateNode,
   onUpdateNode,
+  onCreateBlock,
 }: FloatingAIBarProps) {
   const [command, setCommand] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -71,12 +277,29 @@ export function FloatingAIBar({
   const [activeAction, setActiveAction] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const [contextNodes, setContextNodes] = useState<ContextNode[]>([]);
-  const [attachedImages, setAttachedImages] = useState<File[]>([]);
   const [currentLeanCode, setCurrentLeanCode] = useState<string | null>(null);
   const [verificationResult, setVerificationResult] = useState<{ success: boolean; log: string } | null>(null);
   const [isPipelineRunning, setIsPipelineRunning] = useState(false);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [isChatLoading, setIsChatLoading] = useState(false);
+  const [isInputFocused, setIsInputFocused] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const chatEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Sync selection -> context (single or multi)
+  useEffect(() => {
+    const selection = selectedNodes.length > 0
+      ? selectedNodes
+      : selectedNode
+        ? [selectedNode]
+        : [];
+    setContextNodes(selection.map((node) => ({
+      id: node.id,
+      title: node.title,
+      type: node.type,
+    })));
+  }, [selectedNode, selectedNodes]);
 
   // Check orchestration status
   useEffect(() => {
@@ -84,6 +307,12 @@ export function FloatingAIBar({
       .then((status) => setIsOrchestrationAvailable(status.available))
       .catch(() => setIsOrchestrationAvailable(false));
   }, []);
+
+  useEffect(() => {
+    if (isInputFocused) {
+      chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [chatMessages, isInputFocused]);
 
   // Manual add context - user clicks to add selected nodes
   const handleAddContext = useCallback(() => {
@@ -121,66 +350,156 @@ export function FloatingAIBar({
   }, []);
 
   const handleExplore = useCallback(async () => {
-    if (!command.trim() || !problemId) return;
+    if (!problemId) return;
+    if (!command.trim() && chatMessages.length === 0 && contextNodes.length === 0) return;
 
     setIsLoading(true);
     setActiveAction("explore");
 
     try {
-      // Build rich context including node content
+      // Build rich context including node content + chat
       let contextStr = "";
       if (contextNodes.length > 0) {
         const contextDetails = contextNodes.map(n => {
           const fullNode = selectedNode?.id === n.id ? selectedNode : selectedNodes.find(sn => sn.id === n.id);
-          const content = fullNode?.content ? ` - ${fullNode.content}` : "";
+          const content = fullNode?.content
+            ? isImageContent(fullNode.content)
+              ? " - [image]"
+              : ` - ${fullNode.content}`
+            : "";
           return `${n.title} (${n.type})${content}`;
         }).join("\n");
         contextStr = `Context nodes:\n${contextDetails}\n\n`;
       }
+      const chatContext = buildChatContext(chatMessages);
+      const fullContext = [contextStr, chatContext, command.trim()].filter(Boolean).join("\n\n");
 
       const result = await exploreContext({
         problem_id: problemId,
-        context: contextStr + command,
+        context: fullContext,
         max_iterations: 3,
       });
+      const runId = result.run_id;
 
-      // Calculate base position for new nodes
       const baseX = selectedNode?.x ?? 400;
       const baseY = selectedNode?.y ?? 300;
-      const dependencyIds = contextNodes.map(n => n.id);
+      const dependencyIds = contextNodes.length > 0
+        ? contextNodes.map((n) => n.id)
+        : selectedNode
+          ? [selectedNode.id]
+          : [];
 
-      // Create one node per proposal
-      result.proposals.forEach((proposal, index) => {
-        // Add as insight for display
+      for (let index = 0; index < result.proposals.length; index += 1) {
+        const proposal = result.proposals[index];
+
         addInsight({
           type: "proposal",
           title: `Proposal ${index + 1}`,
           content: proposal.content,
           score: proposal.score,
+          runId,
         });
 
-        // Auto-create a canvas node for each proposal
-        if (onCreateNode) {
-          // Fan out positions for multiple proposals
-          const angle = ((index - (result.proposals.length - 1) / 2) * 45) * (Math.PI / 180);
-          const distance = 300;
-          const nodeX = baseX + Math.sin(angle) * distance;
-          const nodeY = baseY + distance * 0.7;
-
-          // Format content with confidence score
-          const confidencePercent = Math.round(proposal.score * 100);
-          const nodeContent = `**Confidence: ${confidencePercent}%**\n\n${proposal.content}\n\n---\n*Reasoning: ${proposal.reasoning}*`;
-
-          onCreateNode({
-            type: "NOTE",
-            title: proposal.content.slice(0, 60) + (proposal.content.length > 60 ? "..." : ""),
-            content: nodeContent,
-            x: nodeX,
-            y: nodeY,
-            dependencies: dependencyIds,
-          });
+        if (!onCreateNode) {
+          continue;
         }
-      });
+
+        const diagram = sanitizeDiagram((proposal as { diagram?: DiagramSpec }).diagram);
+        if (diagram) {
+          const diagramBaseY = baseY + index * 420;
+          const positions = layoutDiagram(diagram.nodes, diagram.edges || [], baseX, diagramBaseY);
+          const incomingCounts = new Map<string, number>();
+
+          diagram.nodes.forEach((node) => {
+            incomingCounts.set(node.id, 0);
+          });
+          diagram.edges?.forEach((edge) => {
+            incomingCounts.set(edge.to, (incomingCounts.get(edge.to) || 0) + 1);
+          });
+
+          const diagramIdToActualId = new Map<string, string>();
+          const baseDepsByActualId = new Map<string, string[]>();
+          const createdNodeIds: string[] = [];
+
+          for (const node of diagram.nodes) {
+            const position = positions[node.id] || { x: baseX, y: diagramBaseY };
+            const baseDeps = (incomingCounts.get(node.id) || 0) === 0 ? dependencyIds : [];
+            const nodeContent = node.content || proposal.content || node.title;
+
+            const created = await Promise.resolve(onCreateNode({
+              type: node.type,
+              title: node.title,
+              content: nodeContent,
+              formula: node.formula,
+              leanCode: node.leanCode,
+              x: position.x,
+              y: position.y,
+              dependencies: baseDeps,
+              authors: [AI_AUTHOR],
+              source: buildAISource(runId),
+            }));
+
+            if (created && typeof created === "object" && "id" in created && created.id) {
+              diagramIdToActualId.set(node.id, created.id);
+              baseDepsByActualId.set(created.id, baseDeps);
+              createdNodeIds.push(created.id);
+            }
+          }
+
+          if (onUpdateNode && diagram.edges && diagram.edges.length > 0) {
+            const depsByActualId = new Map<string, Set<string>>();
+
+            diagram.edges.forEach((edge) => {
+              const fromActual = diagramIdToActualId.get(edge.from);
+              const toActual = diagramIdToActualId.get(edge.to);
+              if (!fromActual || !toActual) return;
+              if (!depsByActualId.has(toActual)) {
+                depsByActualId.set(toActual, new Set());
+              }
+              depsByActualId.get(toActual)?.add(fromActual);
+            });
+
+            await Promise.all(
+              Array.from(depsByActualId.entries()).map(([actualId, deps]) => {
+                const baseDeps = baseDepsByActualId.get(actualId) || [];
+                const merged = Array.from(new Set([...baseDeps, ...Array.from(deps)]));
+                return Promise.resolve(onUpdateNode(actualId, { dependencies: merged }));
+              })
+            );
+          }
+
+          if (onCreateBlock && createdNodeIds.length > 0) {
+            const titleSeed = proposal.content || diagram.nodes[0]?.title || "Proposal";
+            const groupTitle = deriveGroupTitle(titleSeed);
+            onCreateBlock(groupTitle, createdNodeIds);
+          }
+
+          continue;
+        }
+
+        const angle = ((index - (result.proposals.length - 1) / 2) * 45) * (Math.PI / 180);
+        const distance = 300;
+        const nodeX = baseX + Math.sin(angle) * distance;
+        const nodeY = baseY + distance * 0.7;
+        const confidencePercent = Math.round(proposal.score * 100);
+        const nodeContent = `**Confidence: ${confidencePercent}%**\n\n${proposal.content}\n\n---\n*Reasoning: ${proposal.reasoning}*`;
+
+        const created = await Promise.resolve(onCreateNode({
+          type: "NOTE",
+          title: proposal.content.slice(0, 60) + (proposal.content.length > 60 ? "..." : ""),
+          content: nodeContent,
+          x: nodeX,
+          y: nodeY,
+          dependencies: dependencyIds,
+          authors: [AI_AUTHOR],
+          source: buildAISource(runId),
+        }));
+
+        if (onCreateBlock && created && typeof created === "object" && "id" in created && created.id) {
+          const groupTitle = deriveGroupTitle(proposal.content);
+          onCreateBlock(groupTitle, [created.id]);
+        }
+      }
 
       setCommand("");
       // Clear context after creating nodes
@@ -195,7 +514,69 @@ export function FloatingAIBar({
       setIsLoading(false);
       setActiveAction(null);
     }
-  }, [command, problemId, contextNodes, selectedNode, selectedNodes, addInsight, onCreateNode]);
+  }, [command, problemId, contextNodes, selectedNode, selectedNodes, chatMessages, addInsight, onCreateNode, onUpdateNode, onCreateBlock]);
+
+  const handleChatSend = useCallback(async () => {
+    const trimmed = command.trim();
+    if (!trimmed || !problemId || isChatLoading || !isOrchestrationAvailable) return;
+
+    const userMessage: ChatMessage = {
+      id: crypto.randomUUID(),
+      role: "user",
+      content: trimmed,
+      timestamp: new Date(),
+    };
+
+    const history = [...chatMessages, userMessage].slice(-8);
+    setChatMessages(history);
+    setCommand("");
+    setIsChatLoading(true);
+
+    try {
+      const contextNodesText = contextNodes.length > 0
+        ? `Context nodes:\n${contextNodes.map((n) => `${n.title} (${n.type})`).join("\n")}\n\n`
+        : "";
+      const prompt = `${contextNodesText}${buildChatContext(history)}\n\nAssistant: Provide guidance and exploration directions.`;
+
+      const result = await exploreContext({
+        problem_id: problemId,
+        context: prompt,
+        max_iterations: 1,
+      });
+
+      const reply = result.proposals?.[0];
+      const content = reply
+        ? `${reply.content}${reply.reasoning ? `\n\nReasoning: ${reply.reasoning}` : ""}`
+        : "No response available.";
+
+      setChatMessages((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content,
+          timestamp: new Date(),
+        },
+      ].slice(-10));
+    } catch (err) {
+      setChatMessages((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: err instanceof Error ? err.message : "Chat failed.",
+          timestamp: new Date(),
+        },
+      ].slice(-10));
+    } finally {
+      setIsChatLoading(false);
+    }
+  }, [command, problemId, isChatLoading, isOrchestrationAvailable, chatMessages, contextNodes]);
+
+  const handleUseChatInExplore = useCallback((content: string) => {
+    setCommand(content);
+    inputRef.current?.focus();
+  }, []);
 
   const handleQuickInsight = useCallback(async () => {
     if (contextNodes.length === 0) return;
@@ -245,6 +626,7 @@ export function FloatingAIBar({
           content: result.lean_code,
           score: result.confidence,
           nodeRef: node.id,
+          runId: result.run_id,
         });
       } else {
         addInsight({
@@ -253,6 +635,7 @@ export function FloatingAIBar({
           content: result.lean_code,
           score: result.confidence,
           nodeRef: node.id,
+          runId: result.run_id,
         });
       }
     } catch (err) {
@@ -300,8 +683,8 @@ export function FloatingAIBar({
   }, [currentLeanCode, problemId, addInsight]);
 
   const handleFullPipeline = useCallback(async () => {
-    if (!command.trim() && contextNodes.length === 0) return;
     if (!problemId) return;
+    if (!command.trim() && contextNodes.length === 0 && chatMessages.length === 0) return;
 
     setIsPipelineRunning(true);
     setActiveAction("pipeline");
@@ -316,9 +699,18 @@ export function FloatingAIBar({
       if (contextNodes.length > 0) {
         const contextDetails = contextNodes.map(n => {
           const fullNode = selectedNode?.id === n.id ? selectedNode : selectedNodes.find(sn => sn.id === n.id);
-          return `${n.title} (${n.type})${fullNode?.content ? `: ${fullNode.content}` : ""}`;
+          const content = fullNode?.content
+            ? isImageContent(fullNode.content)
+              ? " [image]"
+              : `: ${fullNode.content}`
+            : "";
+          return `${n.title} (${n.type})${content}`;
         }).join("\n");
         contextStr = contextDetails + (contextStr ? `\n\n${contextStr}` : "");
+      }
+      const chatContext = buildChatContext(chatMessages);
+      if (chatContext) {
+        contextStr = `${chatContext}${contextStr ? `\n\n${contextStr}` : ""}`;
       }
 
       const exploration = await exploreContext({
@@ -326,6 +718,7 @@ export function FloatingAIBar({
         context: contextStr,
         max_iterations: 3,
       });
+      const explorationRunId = exploration.run_id;
 
       if (!exploration.proposals || exploration.proposals.length === 0) {
         addInsight({ type: "insight", title: "Pipeline Failed", content: "No proposals generated" });
@@ -333,7 +726,13 @@ export function FloatingAIBar({
       }
 
       const bestProposal = exploration.proposals[0];
-      addInsight({ type: "proposal", title: "Proposal Generated", content: bestProposal.content, score: bestProposal.score });
+      addInsight({
+        type: "proposal",
+        title: "Proposal Generated",
+        content: bestProposal.content,
+        score: bestProposal.score,
+        runId: explorationRunId,
+      });
 
       // Step 2: Critique
       addInsight({ type: "insight", title: "🔄 Pipeline: Critiquing...", content: "Evaluating proposal..." });
@@ -378,7 +777,15 @@ export function FloatingAIBar({
         // Update the selected node's leanCode field instead of creating a new node
         if (onUpdateNode && contextNodes.length > 0) {
           const targetNodeId = contextNodes[0].id;
-          onUpdateNode(targetNodeId, { leanCode: formalization.lean_code, status: "VERIFIED" });
+          onUpdateNode(targetNodeId, {
+            leanCode: formalization.lean_code,
+            status: "VERIFIED",
+            verification: {
+              method: "lean4",
+              logs: verification.log || verification.error || "",
+              status: "pass",
+            },
+          });
           addInsight({
             type: "insight",
             title: "✓ Node Updated",
@@ -392,10 +799,12 @@ export function FloatingAIBar({
             type: "LEMMA",
             title: bestProposal.content.slice(0, 60) + (bestProposal.content.length > 60 ? "..." : ""),
             content: `**Verified ✓**\n\n${bestProposal.content}\n\n---\n*Confidence: ${(formalization.confidence * 100).toFixed(0)}%*`,
-            formula: formalization.lean_code,
+            leanCode: formalization.lean_code,
             x: baseX,
             y: baseY + 200,
             dependencies: contextNodes.map(n => n.id),
+            authors: [AI_AUTHOR],
+            source: buildAISource(explorationRunId),
           });
         }
       } else {
@@ -419,7 +828,7 @@ export function FloatingAIBar({
       setIsPipelineRunning(false);
       setActiveAction(null);
     }
-  }, [command, contextNodes, selectedNode, selectedNodes, problemId, addInsight, onCreateNode, onUpdateNode]);
+  }, [command, contextNodes, selectedNode, selectedNodes, chatMessages, problemId, addInsight, onCreateNode, onUpdateNode]);
 
   const handleCopy = useCallback((id: string, content: string) => {
     navigator.clipboard.writeText(content);
@@ -434,11 +843,13 @@ export function FloatingAIBar({
   const handleCreateFromInsight = useCallback((insight: FloatingInsight) => {
     if (!onCreateNode) return;
 
-    onCreateNode({
+    void onCreateNode({
       type: insight.type === "code" ? "LEMMA" : "NOTE",
       title: insight.title,
       content: insight.content,
       dependencies: [],
+      authors: [AI_AUTHOR],
+      source: buildAISource(insight.runId),
     });
 
     handleDismissInsight(insight.id);
@@ -453,13 +864,36 @@ export function FloatingAIBar({
   }, []);
 
   const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []);
-    setAttachedImages(prev => [...prev, ...files].slice(0, 3));
-  }, []);
+    const files = Array.from(e.target.files || []).filter((file) => file.type.startsWith("image/"));
+    if (files.length === 0) return;
+    if (!onCreateNode) return;
 
-  const handleRemoveImage = useCallback((index: number) => {
-    setAttachedImages(prev => prev.filter((_, i) => i !== index));
-  }, []);
+    const baseX = selectedNode?.x ?? 400;
+    const baseY = selectedNode?.y ?? 300;
+
+    void (async () => {
+      try {
+        for (let index = 0; index < files.length; index += 1) {
+          const file = files[index];
+          const dataUrl = await readFileAsDataUrl(file);
+          if (!dataUrl) continue;
+          const title = file.name.replace(/\.[^/.]+$/, "") || "Image";
+          await Promise.resolve(onCreateNode({
+            type: "RESOURCE",
+            title,
+            content: `![${title}](${dataUrl})`,
+            x: baseX + index * 40,
+            y: baseY + index * 30,
+            dependencies: [],
+          }));
+        }
+      } finally {
+        if (e.target) {
+          e.target.value = "";
+        }
+      }
+    })();
+  }, [onCreateNode, selectedNode]);
 
   if (!isVisible) {
     return (
@@ -497,6 +931,41 @@ export function FloatingAIBar({
         onDoubleClick={(e) => e.stopPropagation()}
       >
         <div className="bg-white/90 backdrop-blur-xl rounded-2xl shadow-2xl shadow-black/10 overflow-hidden pointer-events-auto animate-in fade-in slide-in-from-bottom-4 duration-300">
+          {(isInputFocused && (command.trim().length > 0 || chatMessages.length > 0)) || isChatLoading ? (
+            <div className="border-b border-neutral-100">
+              <div className="max-h-48 overflow-y-auto px-3 py-3 space-y-2">
+                {chatMessages.map((msg) => {
+                  const isUser = msg.role === "user";
+                  return (
+                    <div key={msg.id} className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
+                      <div className={`max-w-[80%] rounded-xl px-3 py-2 text-xs leading-relaxed whitespace-pre-wrap ${
+                        isUser
+                          ? "bg-neutral-900 text-white"
+                          : "bg-neutral-50 border border-neutral-200 text-neutral-700"
+                      }`}>
+                        {msg.content}
+                        {!isUser && (
+                          <div className="mt-2">
+                            <button
+                              onClick={() => handleUseChatInExplore(msg.content)}
+                              className="text-[10px] text-indigo-600 hover:text-indigo-700"
+                            >
+                              Usar en exploración
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+                {isChatLoading && (
+                  <div className="text-xs text-neutral-400">Pensando...</div>
+                )}
+                <div ref={chatEndRef} />
+              </div>
+            </div>
+          ) : null}
+
           {/* Context nodes */}
           {contextNodes.length > 0 && (
             <div className="flex items-center gap-2 px-4 py-2 overflow-x-auto scrollbar-hide">
@@ -533,27 +1002,6 @@ export function FloatingAIBar({
             </div>
           )}
 
-          {/* Attached images preview */}
-          {attachedImages.length > 0 && (
-            <div className="flex items-center gap-2 px-4 py-2">
-              {attachedImages.map((file, index) => (
-                <div key={index} className="relative group">
-                  <img
-                    src={URL.createObjectURL(file)}
-                    alt={`Attachment ${index + 1}`}
-                    className="w-12 h-12 object-cover rounded-lg"
-                  />
-                  <button
-                    onClick={() => handleRemoveImage(index)}
-                    className="absolute -top-1 -right-1 w-4 h-4 bg-neutral-800 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                  >
-                    <X className="w-2.5 h-2.5" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-
           {/* Main Input */}
           <div className="flex items-center gap-3 px-4 py-3">
             <Sparkles className="w-5 h-5 text-neutral-400 flex-shrink-0" />
@@ -563,15 +1011,17 @@ export function FloatingAIBar({
               type="text"
               value={command}
               onChange={(e) => setCommand(e.target.value)}
+              onFocus={() => setIsInputFocused(true)}
+              onBlur={() => setIsInputFocused(false)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
-                  handleExplore();
+                  handleChatSend();
                 }
               }}
-              placeholder={contextNodes.length > 0 ? `Ask about ${contextNodes[0].title}...` : "Ask anything..."}
+              placeholder={contextNodes.length > 0 ? `Insights about ${contextNodes[0].title}...` : "Insights..."}
               className="flex-1 text-sm bg-transparent outline-none border-none ring-0 focus:outline-none focus:ring-0 focus:border-none placeholder:text-neutral-400 text-neutral-800"
-              disabled={isLoading}
+              disabled={isChatLoading}
               autoFocus
             />
 
@@ -593,14 +1043,14 @@ export function FloatingAIBar({
                 <ImageIcon className="w-4 h-4" />
               </button>
 
-              {isLoading ? (
+              {isChatLoading ? (
                 <div className="p-2">
                   <Loader2 className="w-4 h-4 text-neutral-400 animate-spin" />
                 </div>
               ) : (
                 <button
-                  onClick={handleExplore}
-                  disabled={!command.trim()}
+                  onClick={handleChatSend}
+                  disabled={!command.trim() || !isOrchestrationAvailable || isChatLoading}
                   className="p-2 text-neutral-500 hover:text-neutral-700 rounded-full transition-colors disabled:opacity-30"
                 >
                   <Send className="w-4 h-4" />
@@ -622,7 +1072,7 @@ export function FloatingAIBar({
               icon={Compass}
               label="Explore"
               onClick={handleExplore}
-              disabled={!command.trim() || isLoading}
+              disabled={(!command.trim() && chatMessages.length === 0 && contextNodes.length === 0) || isLoading}
               active={activeAction === "explore"}
             />
 
@@ -656,7 +1106,7 @@ export function FloatingAIBar({
               icon={Zap}
               label="Pipeline"
               onClick={handleFullPipeline}
-              disabled={(!command.trim() && contextNodes.length === 0) || !isOrchestrationAvailable || isLoading || isPipelineRunning}
+              disabled={(!command.trim() && contextNodes.length === 0 && chatMessages.length === 0) || !isOrchestrationAvailable || isLoading || isPipelineRunning}
               active={activeAction === "pipeline"}
             />
 

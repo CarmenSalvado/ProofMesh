@@ -1,7 +1,7 @@
 """
 Explorer Agent - Proposes local mathematical steps.
 Robust against global problems and model content blocking.
-Refined for difficult problems with Chain-of-Thought and relaxed validation.
+Refined for diagram-style reasoning and relaxed validation.
 """
 
 import json
@@ -14,24 +14,34 @@ from .base import Agent, LoopAgent
 from ..models.types import Proposal, ExplorationResult, AgentResponse
 
 
-# SYSTEM PROMPT MEJORADO: Chain-of-Thought + JSON
+# SYSTEM PROMPT: Local step + diagram JSON
 EXPLORER_SYSTEM_PROMPT = """You are an expert mathematical exploration agent.
 
-Your goal is to propose ONE solid, logical step forward.
-Do NOT try to verify or prove the entire statement instantly.
+Your goal is to propose ONE solid, local next step (lemma, simplification, variable change, or case split).
+Do NOT try to complete the entire proof.
 
-Guidelines:
-1. **Analyze**: first think about difficulty and possible strategies in the "thought" field.
-2. **Propose**: generate a distinct mathematical step (lemma, simplification, variable change, or case split).
-3. **Local**: the step must be self-contained and valid, but does not need to complete the proof.
-
-Format your response as CLEAN JSON:
+Output CLEAN JSON with a compact reasoning diagram:
 {
-    "thought": "Brief analysis of the current state and why this step is useful...",
-    "proposal": "The proposed mathematical step...",
-    "reasoning": "Why this step is valid and useful",
-    "score": 0.0 to 1.0 (confidence this is the best next step)
+  "proposal": "One-sentence next step",
+  "rationale": "1-2 sentences explaining why this step helps",
+  "score": 0.0 to 1.0,
+  "diagram": {
+    "nodes": [
+      {"id": "n1", "type": "DEFINITION|LEMMA|CLAIM|THEOREM|COUNTEREXAMPLE|COMPUTATION|IDEA|NOTE|RESOURCE|CONTENT", "title": "Short title", "content": "1-3 sentences", "formula": "(optional LaTeX)"},
+      {"id": "n2", "type": "...", "title": "...", "content": "..."}
+    ],
+    "edges": [
+      {"from": "n1", "to": "n2", "type": "uses|implies|contradicts|references", "label": "(optional)"}
+    ]
+  }
 }
+
+Rules:
+- 3-7 nodes, at least 2 different types.
+- At least 2 edges connecting the nodes.
+- Keep content short and local.
+- Avoid using NOTE for every node; choose the most specific type.
+- If you use LaTeX, escape backslashes (e.g., "\\\\sum").
 """
 
 # REGEX RELAJADO
@@ -43,6 +53,21 @@ GLOBAL_CLOSURE_PATTERNS = [
     r"We have shown the statement",
     r"^proven$",
 ]
+
+ALLOWED_NODE_TYPES = {
+    "DEFINITION",
+    "LEMMA",
+    "CLAIM",
+    "THEOREM",
+    "COUNTEREXAMPLE",
+    "COMPUTATION",
+    "IDEA",
+    "NOTE",
+    "RESOURCE",
+    "CONTENT",
+}
+
+ALLOWED_EDGE_TYPES = {"uses", "implies", "contradicts", "references"}
 
 class ExplorerAgent:
     """
@@ -139,6 +164,87 @@ class ExplorerAgent:
 
         return None
 
+    def _normalize_node_type(self, value: Optional[str]) -> str:
+        if not value:
+            return "NOTE"
+        upper = str(value).strip().upper()
+        if upper in ALLOWED_NODE_TYPES:
+            return upper
+        # Simple synonym mapping
+        if upper in {"ASSUMPTION", "AXIOM"}:
+            return "CLAIM"
+        if upper in {"OBSERVATION", "COMMENT"}:
+            return "NOTE"
+        if upper in {"GOAL", "RESULT"}:
+            return "THEOREM"
+        return "NOTE"
+
+    def _normalize_edge_type(self, value: Optional[str]) -> str:
+        if not value:
+            return "uses"
+        lowered = str(value).strip().lower()
+        return lowered if lowered in ALLOWED_EDGE_TYPES else "uses"
+
+    def _parse_diagram(self, diagram: Optional[dict]) -> Optional[dict]:
+        if not isinstance(diagram, dict):
+            return None
+
+        raw_nodes = diagram.get("nodes")
+        raw_edges = diagram.get("edges")
+        if not isinstance(raw_nodes, list) or len(raw_nodes) < 2:
+            return None
+
+        nodes: List[dict] = []
+        for idx, raw in enumerate(raw_nodes):
+            if not isinstance(raw, dict):
+                continue
+            node_id = str(raw.get("id") or f"n{idx+1}").strip()
+            title = str(raw.get("title") or "").strip()
+            if not title:
+                continue
+            nodes.append({
+                "id": node_id,
+                "type": self._normalize_node_type(raw.get("type")),
+                "title": title,
+                "content": str(raw.get("content") or "").strip() or None,
+                "formula": str(raw.get("formula") or "").strip() or None,
+                "lean_code": str(raw.get("lean_code") or "").strip() or None,
+            })
+
+        if len(nodes) < 2:
+            return None
+
+        node_ids = {n["id"] for n in nodes}
+        edges: List[dict] = []
+        if isinstance(raw_edges, list):
+            for raw in raw_edges:
+                if not isinstance(raw, dict):
+                    continue
+                from_id = str(raw.get("from") or raw.get("source") or "").strip()
+                to_id = str(raw.get("to") or raw.get("target") or "").strip()
+                if not from_id or not to_id or from_id == to_id:
+                    continue
+                if from_id not in node_ids or to_id not in node_ids:
+                    continue
+                label = str(raw.get("label") or "").strip()
+                edges.append({
+                    "from": from_id,
+                    "to": to_id,
+                    "type": self._normalize_edge_type(raw.get("type")),
+                    "label": label or None,
+                })
+
+        if not edges:
+            for i in range(1, len(nodes)):
+                edges.append({
+                    "from": nodes[i - 1]["id"],
+                    "to": nodes[i]["id"],
+                    "type": "implies",
+                    "label": None,
+                })
+
+        return {"nodes": nodes, "edges": edges}
+
     # ---------- MAIN API ----------
 
     async def explore(
@@ -157,8 +263,7 @@ class ExplorerAgent:
 Previous Known Facts/Steps:
 {memory_str}
 
-Task: provide a valid next local step.
-Remember to use the "thought" field to plan your strategy before proposing.
+Task: provide a valid next local step and a small reasoning diagram.
 IMPORTANT: you are writing JSON. If you use LaTeX, you MUST escape backslashes (e.g., use "\\\\sum" instead of "\\sum").
 """
 
@@ -179,12 +284,12 @@ IMPORTANT: you are writing JSON. If you use LaTeX, you MUST escape backslashes (
             data = self._parse_json(response.content)
             
             if not data:
+                print(f"[Explorer] JSON parse error at iteration {i}")
                 # Increased debug length to 500 characters to see what went wrong
                 proposals.append(self._create_blocked_proposal(i, "JSON Parse Error", raw_content=response.content[:500]))
                 continue
 
             proposal_text = data.get("proposal", "").strip()
-            thought_process = data.get("thought", "")
             
             if not proposal_text:
                 proposals.append(self._create_blocked_proposal(i, "Empty proposal text"))
@@ -199,12 +304,20 @@ IMPORTANT: you are writing JSON. If you use LaTeX, you MUST escape backslashes (
             except (ValueError, TypeError):
                 score = 0.5
 
-            full_reasoning = f"Thought: {thought_process}\nReasoning: {data.get('reasoning', '')}"
+            rationale = data.get("rationale") or data.get("reasoning") or ""
+            full_reasoning = str(rationale).strip()
+            diagram = self._parse_diagram(data.get("diagram") or data.get("graph"))
+            if diagram:
+                node_types = sorted({n.get("type") for n in diagram.get("nodes", []) if n.get("type")})
+                print(f"[Explorer] Diagram parsed: nodes={len(diagram.get('nodes', []))} edges={len(diagram.get('edges', []))} types={node_types}")
+            else:
+                print(f"[Explorer] Diagram missing/invalid for proposal {i}. keys={list(data.keys())}")
 
             proposal = Proposal(
                 id=f"prop-{i}",
                 content=proposal_text,
-                reasoning=full_reasoning.strip(),
+                reasoning=full_reasoning,
+                diagram=diagram,
                 score=score,
                 iteration=i,
                 blocked=False,

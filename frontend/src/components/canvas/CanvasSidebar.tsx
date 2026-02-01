@@ -17,9 +17,12 @@ import {
   CheckCircle,
   AlertCircle,
   Clock,
+  Layers,
+  Edit2,
+  Trash2,
 } from "lucide-react";
 import { LibraryItem } from "@/lib/api";
-import { NODE_TYPE_CONFIG, STATUS_CONFIG } from "./types";
+import { NODE_TYPE_CONFIG, STATUS_CONFIG, type CanvasBlock } from "./types";
 
 interface CanvasSidebarProps {
   items: LibraryItem[];
@@ -28,6 +31,13 @@ interface CanvasSidebarProps {
   collapsed: boolean;
   onToggle: () => void;
   onAddItem?: () => void;
+  blocks?: CanvasBlock[];
+  selectedBlockId?: string | null;
+  selectedNodeCount?: number;
+  onBlockSelect?: (blockId: string) => void;
+  onCreateBlock?: (name: string, nodeIds?: string[]) => void;
+  onRenameBlock?: (blockId: string, name: string) => void;
+  onDeleteBlock?: (blockId: string) => void;
 }
 
 const KIND_ICONS: Record<string, typeof FileText> = {
@@ -63,11 +73,22 @@ export function CanvasSidebar({
   collapsed,
   onToggle,
   onAddItem,
+  blocks = [],
+  selectedBlockId = null,
+  selectedNodeCount = 0,
+  onBlockSelect,
+  onCreateBlock,
+  onRenameBlock,
+  onDeleteBlock,
 }: CanvasSidebarProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
     new Set(["definitions", "lemmas", "theorems", "other"])
   );
+  const [isCreatingBlock, setIsCreatingBlock] = useState(false);
+  const [blockName, setBlockName] = useState("");
+  const [editingBlockId, setEditingBlockId] = useState<string | null>(null);
+  const [editingBlockName, setEditingBlockName] = useState("");
 
   const filteredItems = useMemo(() => {
     if (!searchQuery.trim()) return items;
@@ -126,6 +147,24 @@ export function CanvasSidebar({
           <PanelLeft className="w-4 h-4" />
         </button>
         <div className="w-px h-4 bg-neutral-200" />
+        {blocks.length > 0 && (
+          <div className="flex flex-col gap-1">
+            {blocks.slice(0, 5).map((block) => (
+              <button
+                key={block.id}
+                onClick={() => onBlockSelect?.(block.id)}
+                className={`w-6 h-6 rounded flex items-center justify-center text-[10px] font-bold transition-colors ${
+                  selectedBlockId === block.id
+                    ? "bg-indigo-100 text-indigo-700"
+                    : "bg-neutral-100 text-neutral-500 hover:bg-neutral-200"
+                }`}
+                title={block.name}
+              >
+                <Layers className="w-3 h-3" />
+              </button>
+            ))}
+          </div>
+        )}
         {/* Mini item indicators */}
         <div className="flex flex-col gap-1">
           {items.slice(0, 8).map((item) => {
@@ -175,6 +214,136 @@ export function CanvasSidebar({
             className="w-full pl-8 pr-3 py-1.5 bg-neutral-50 border border-neutral-200 rounded-md text-xs text-neutral-900 placeholder:text-neutral-400 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500"
           />
         </div>
+      </div>
+
+      {/* Blocks */}
+      <div className="border-b border-neutral-100 p-3">
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-2">
+            <Layers className="w-3.5 h-3.5 text-neutral-400" />
+            <span className="text-xs font-semibold text-neutral-700">Blocks</span>
+            <span className="text-[10px] text-neutral-400">{blocks.length}</span>
+          </div>
+          <button
+            onClick={() => setIsCreatingBlock(true)}
+            disabled={selectedNodeCount === 0}
+            className="p-1 text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100 rounded disabled:opacity-40"
+            title={selectedNodeCount === 0 ? "Select nodes to create a block" : "Create block"}
+          >
+            <Plus className="w-3.5 h-3.5" />
+          </button>
+        </div>
+
+        {isCreatingBlock && (
+          <div className="flex items-center gap-2 mb-2">
+            <input
+              value={blockName}
+              onChange={(e) => setBlockName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  if (blockName.trim() && selectedNodeCount > 0) {
+                    onCreateBlock?.(blockName);
+                    setBlockName("");
+                    setIsCreatingBlock(false);
+                  }
+                } else if (e.key === "Escape") {
+                  setBlockName("");
+                  setIsCreatingBlock(false);
+                }
+              }}
+              placeholder="Block name"
+              className="flex-1 px-2 py-1 text-xs border border-neutral-200 rounded-md focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              autoFocus
+            />
+            <button
+              onClick={() => {
+                if (blockName.trim() && selectedNodeCount > 0) {
+                  onCreateBlock?.(blockName);
+                  setBlockName("");
+                  setIsCreatingBlock(false);
+                }
+              }}
+              className="text-xs px-2 py-1 bg-indigo-600 text-white rounded-md"
+            >
+              Add
+            </button>
+          </div>
+        )}
+
+        {blocks.length === 0 ? (
+          <p className="text-[11px] text-neutral-400">
+            Select nodes and create a block.
+          </p>
+        ) : (
+          <div className="space-y-1">
+            {blocks.map((block) => {
+              const isSelected = selectedBlockId === block.id;
+              const isEditing = editingBlockId === block.id;
+              return (
+                <div
+                  key={block.id}
+                  className={`flex items-center gap-2 px-2 py-1.5 rounded-md ${
+                    isSelected ? "bg-indigo-50 border border-indigo-200" : "hover:bg-neutral-50 border border-transparent"
+                  }`}
+                >
+                  <button
+                    onClick={() => onBlockSelect?.(block.id)}
+                    className="flex-1 flex items-center gap-2 text-left"
+                  >
+                    <span className="text-[11px] text-neutral-500">{block.nodeIds.length}</span>
+                    {isEditing ? (
+                      <input
+                        value={editingBlockName}
+                        onChange={(e) => setEditingBlockName(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            if (editingBlockName.trim()) {
+                              onRenameBlock?.(block.id, editingBlockName);
+                            }
+                            setEditingBlockId(null);
+                          } else if (e.key === "Escape") {
+                            setEditingBlockId(null);
+                          }
+                        }}
+                        onBlur={() => {
+                          if (editingBlockName.trim()) {
+                            onRenameBlock?.(block.id, editingBlockName);
+                          }
+                          setEditingBlockId(null);
+                        }}
+                        className="flex-1 text-xs bg-white border border-neutral-200 rounded px-1 py-0.5"
+                        autoFocus
+                      />
+                    ) : (
+                      <span className={`text-xs font-medium ${isSelected ? "text-indigo-900" : "text-neutral-700"}`}>
+                        {block.name}
+                      </span>
+                    )}
+                  </button>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => {
+                        setEditingBlockId(block.id);
+                        setEditingBlockName(block.name);
+                      }}
+                      className="p-1 text-neutral-400 hover:text-neutral-600"
+                      title="Rename block"
+                    >
+                      <Edit2 className="w-3 h-3" />
+                    </button>
+                    <button
+                      onClick={() => onDeleteBlock?.(block.id)}
+                      className="p-1 text-neutral-400 hover:text-red-500"
+                      title="Delete block"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Items List */}

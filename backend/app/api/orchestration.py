@@ -23,7 +23,7 @@ from app.database import get_db
 from app.models.problem import Problem, ProblemVisibility
 from app.models.library_item import LibraryItem, LibraryItemKind, LibraryItemStatus
 from app.models.user import User
-from app.api.deps import get_current_user_optional, get_current_user
+from app.api.deps import get_current_user
 
 # Add mesh backend to path
 # In Docker: /app/mesh, locally: ../../../mesh relative to this file
@@ -70,6 +70,7 @@ class ProposalResponse(BaseModel):
     id: str
     content: str
     reasoning: str
+    diagram: dict | None = None
     score: float
     iteration: int
 
@@ -178,7 +179,7 @@ def get_orchestrator():
 async def explore(
     data: ExploreRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_current_user_optional),
+    current_user: User = Depends(get_current_user),
 ):
     """
     Explore a mathematical context and generate proposals.
@@ -205,12 +206,23 @@ async def explore(
                 id=p.id,
                 content=p.content or "",
                 reasoning=p.reasoning,
+                diagram=p.diagram,
                 score=p.score,
                 iteration=p.iteration,
             )
             for p in result.proposals
             if p.is_valid()
         ]
+
+        if proposals:
+            diagram_counts = []
+            for p in proposals:
+                nodes = p.diagram.get("nodes", []) if p.diagram else []
+                edges = p.diagram.get("edges", []) if p.diagram else []
+                diagram_counts.append((len(nodes), len(edges)))
+            print(f"[Orchestration] Explore proposals={len(proposals)} diagrams={diagram_counts}")
+        else:
+            print("[Orchestration] Explore returned 0 valid proposals")
         
         return ExploreResponse(
             run_id=str(uuid.uuid4()),
@@ -227,7 +239,7 @@ async def explore(
 async def formalize(
     data: FormalizeRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_current_user_optional),
+    current_user: User = Depends(get_current_user),
 ):
     """
     Formalize mathematical text into Lean 4 code.
@@ -260,7 +272,7 @@ async def formalize(
 async def critique(
     data: CritiqueRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_current_user_optional),
+    current_user: User = Depends(get_current_user),
 ):
     """
     Get critique and feedback on a proposal.
@@ -298,7 +310,7 @@ async def critique(
 async def verify(
     data: VerifyRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_current_user_optional),
+    current_user: User = Depends(get_current_user),
 ):
     """
     Verify Lean 4 code.

@@ -11,8 +11,9 @@ import {
   FileText,
   MousePointer2,
   Hand,
+  Trash2,
 } from "lucide-react";
-import { CanvasNode, CanvasEdge, Collaborator, NODE_TYPE_CONFIG } from "./types";
+import { CanvasNode, CanvasEdge, Collaborator, NODE_TYPE_CONFIG, type CanvasBlock } from "./types";
 import { CanvasNodeItem } from "./CanvasNodeItem";
 import { InlineNodeEditor, QuickNodeData } from "./InlineNodeEditor";
 import { CanvasContextMenu } from "./CanvasContextMenu";
@@ -24,8 +25,13 @@ interface ProofCanvasV2Props {
   edges: CanvasEdge[];
   selectedNodeId: string | null;
   selectedNodeIds?: Set<string>;
+  blocks?: CanvasBlock[];
+  selectedBlockId?: string | null;
   onNodeSelect: (nodeId: string | null) => void;
   onMultiSelect?: (nodeIds: Set<string>) => void;
+  onBlockSelect?: (blockId: string) => void;
+  onCreateBlock?: (name: string, nodeIds?: string[]) => void;
+  onDeleteBlock?: (blockId: string) => void;
   onNodeMove?: (nodeId: string, x: number, y: number) => void;
   onNodesMove?: (positions: Record<string, { x: number; y: number }>) => void;
   onNodeDoubleClick?: (nodeId: string) => void;
@@ -134,13 +140,25 @@ function getEdgePath(from: CanvasNode, to: CanvasNode): { path: string } {
   };
 }
 
+const readFileAsDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => resolve(String(reader.result || ""));
+  reader.onerror = () => reject(new Error("Failed to read image"));
+  reader.readAsDataURL(file);
+});
+
 export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(function ProofCanvasV2({
   nodes,
   edges,
   selectedNodeId,
   selectedNodeIds = new Set(),
+  blocks = [],
+  selectedBlockId = null,
   onNodeSelect,
   onMultiSelect,
+  onBlockSelect,
+  onCreateBlock,
+  onDeleteBlock,
   onNodeMove,
   onNodesMove,
   onNodeDoubleClick,
@@ -180,6 +198,12 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
   
   // Inline editor state
   const [inlineEditor, setInlineEditor] = useState<{ x: number; y: number } | null>(null);
+
+  // Group creation state
+  const [groupDraft, setGroupDraft] = useState<{ x: number; y: number; nodeIds: string[] } | null>(null);
+  const [groupName, setGroupName] = useState("");
+  const groupDraftRef = useRef<HTMLDivElement | null>(null);
+  const groupInputRef = useRef<HTMLInputElement | null>(null);
   
   // Context menu state
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; node?: CanvasNode } | null>(null);
@@ -210,6 +234,9 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
   const multiDraggingIdsRef = useRef<string[]>([]);
   const isDraggingRef = useRef(false);
   const draggedNodeIdRef = useRef<string | null>(null);
+  const groupDraggingRef = useRef(false);
+  const groupDragStartRef = useRef<{ x: number; y: number } | null>(null);
+  const lastMousePosRef = useRef<{ x: number; y: number } | null>(null);
   const rafRef = useRef<number | null>(null);
   const panStartRef = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
   
@@ -287,6 +314,26 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
   useEffect(() => {
     multiDragPositionsRef.current = multiDragPositions || new Map();
   }, [multiDragPositions]);
+
+  useEffect(() => {
+    if (!groupDraft) return;
+    groupInputRef.current?.focus();
+    groupInputRef.current?.select();
+  }, [groupDraft]);
+
+  useEffect(() => {
+    if (!groupDraft) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (groupDraftRef.current && groupDraftRef.current.contains(e.target as Node)) return;
+      if (groupName.trim() && onCreateBlock) {
+        onCreateBlock(groupName.trim(), groupDraft.nodeIds);
+      }
+      setGroupDraft(null);
+      setGroupName("");
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [groupDraft, groupName, onCreateBlock]);
   
   // Memoize minimap viewport
   const minimapViewport = useMemo(() => {
@@ -370,13 +417,84 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
     return () => canvas.removeEventListener("wheel", handleWheel);
   }, []);
 
+  // Convert screen coords to canvas coords
+  const screenToCanvas = useCallback((screenX: number, screenY: number) => {
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) return { x: 0, y: 0 };
+    return {
+      x: (screenX - rect.left - pan.x) / zoom,
+      y: (screenY - rect.top - pan.y) / zoom,
+    };
+  }, [pan, zoom]);
+
+  const canvasToScreen = useCallback((x: number, y: number) => {
+    return {
+      x: x * zoom + pan.x,
+      y: y * zoom + pan.y,
+    };
+  }, [pan, zoom]);
+
+  const getNodesBounds = useCallback((ids: string[]) => {
+    const nodesToMeasure = ids.map((id) => nodeMap.get(id)).filter(Boolean) as CanvasNode[];
+    if (nodesToMeasure.length === 0) return null;
+
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+
+    nodesToMeasure.forEach((node) => {
+      const width = node.width || 260;
+      const height = node.height || 140;
+      minX = Math.min(minX, node.x);
+      minY = Math.min(minY, node.y);
+      maxX = Math.max(maxX, node.x + width);
+      maxY = Math.max(maxY, node.y + height);
+    });
+
+    return { minX, minY, maxX, maxY };
+  }, [nodeMap]);
+
+  const openGroupCreator = useCallback((nodeIds: string[]) => {
+    if (!onCreateBlock || nodeIds.length === 0) return;
+    const bounds = getNodesBounds(nodeIds);
+    if (!bounds) return;
+    const centerX = (bounds.minX + bounds.maxX) / 2;
+    const centerY = (bounds.minY + bounds.maxY) / 2;
+    const screenPos = canvasToScreen(centerX, centerY);
+    setGroupDraft({ x: screenPos.x, y: screenPos.y, nodeIds });
+    setGroupName("");
+  }, [canvasToScreen, getNodesBounds, onCreateBlock]);
+
+  const handleCreateGroup = useCallback(() => {
+    if (!groupDraft || !onCreateBlock) return;
+    const trimmed = groupName.trim();
+    if (!trimmed) return;
+    onCreateBlock(trimmed, groupDraft.nodeIds);
+    setGroupDraft(null);
+    setGroupName("");
+  }, [groupDraft, groupName, onCreateBlock]);
+
+  const handleCancelGroup = useCallback(() => {
+    setGroupDraft(null);
+    setGroupName("");
+  }, []);
+
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (groupDraft) {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          handleCancelGroup();
+        }
+        return;
+      }
+
       // Don't handle if typing in input
-      if ((e.target as HTMLElement).tagName === "INPUT" || 
+      if ((e.target as HTMLElement).tagName === "INPUT" ||
           (e.target as HTMLElement).tagName === "TEXTAREA") return;
-      
+
       if (e.key === "Delete" || e.key === "Backspace") {
         if (!readOnly) {
           e.preventDefault();
@@ -384,7 +502,7 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
           if (selectedEdgeId && onEdgeDelete) {
             onEdgeDelete(selectedEdgeId);
             setSelectedEdgeId(null);
-          } 
+          }
           // Multi-delete if multiple nodes selected
           else if (selectedNodeIds.size > 0 && onMultiDelete) {
             onMultiDelete(Array.from(selectedNodeIds));
@@ -436,6 +554,19 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
         // Ctrl+Y = Redo (alternative)
         e.preventDefault();
         onRedo?.();
+      } else if ((e.key === "g" || e.key === "G") && (e.ctrlKey || e.metaKey)) {
+        // Ctrl+G = Group selected nodes
+        if (!readOnly && onCreateBlock) {
+          e.preventDefault();
+          const nodeIds = selectedNodeIds.size > 0
+            ? Array.from(selectedNodeIds)
+            : selectedNodeId
+              ? [selectedNodeId]
+              : [];
+          if (nodeIds.length > 0) {
+            openGroupCreator(nodeIds);
+          }
+        }
       } else if (e.key === "a" && (e.ctrlKey || e.metaKey)) {
         // Ctrl+A = Select all
         e.preventDefault();
@@ -459,15 +590,15 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
         }
       } else if (e.key === "v" && (e.ctrlKey || e.metaKey)) {
         // Ctrl+V = Paste nodes
-        e.preventDefault();
         if (!readOnly && clipboard.length > 0 && onNodeCreate) {
+          e.preventDefault();
           // Find bounding box of clipboard nodes
           const minX = Math.min(...clipboard.map(n => n.x));
           const minY = Math.min(...clipboard.map(n => n.y));
-          
+
           // Calculate paste offset (slightly offset from original)
           const pasteOffset = 40;
-          
+
           // Create new nodes
           clipboard.forEach((node, index) => {
             onNodeCreate({
@@ -481,20 +612,69 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
         }
       }
     };
-    
+
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [selectedNodeId, selectedNodeIds, selectedEdgeId, onNodeDelete, onMultiDelete, onEdgeDelete, readOnly, handleFit, onNodeSelect, onMultiSelect, inlineEditor, onUndo, onRedo, nodes, clipboard, onNodeCreate, openInlineEditorAtCenter]);
+  }, [groupDraft, handleCancelGroup, selectedNodeId, selectedNodeIds, selectedEdgeId, onNodeDelete, onMultiDelete, onEdgeDelete, readOnly, handleFit, onNodeSelect, onMultiSelect, inlineEditor, onUndo, onRedo, nodes, clipboard, onNodeCreate, openInlineEditorAtCenter, onCreateBlock, openGroupCreator]);
 
-  // Convert screen coords to canvas coords
-  const screenToCanvas = useCallback((screenX: number, screenY: number) => {
-    const rect = canvasRef.current?.getBoundingClientRect();
-    if (!rect) return { x: 0, y: 0 };
-    return {
-      x: (screenX - rect.left - pan.x) / zoom,
-      y: (screenY - rect.top - pan.y) / zoom,
+  useEffect(() => {
+    const handlePaste = (e: ClipboardEvent) => {
+      if (readOnly || !onNodeCreate) return;
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
+        return;
+      }
+      const items = Array.from(e.clipboardData?.items || []);
+      const imageItems = items.filter((item) => item.kind === "file" && item.type.startsWith("image/"));
+      if (imageItems.length === 0) return;
+
+      e.preventDefault();
+
+      const rect = canvasRef.current?.getBoundingClientRect();
+      const fallbackScreen = rect ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 } : { x: 0, y: 0 };
+      const screenPos = lastMousePosRef.current || fallbackScreen;
+      const base = screenToCanvas(screenPos.x, screenPos.y);
+
+      void (async () => {
+        for (let index = 0; index < imageItems.length; index += 1) {
+          const file = imageItems[index].getAsFile();
+          if (!file) continue;
+          const dataUrl = await readFileAsDataUrl(file);
+          if (!dataUrl) continue;
+          const title = file.name?.replace(/\.[^/.]+$/, "") || "Pasted Image";
+          await Promise.resolve(onNodeCreate({
+            type: "RESOURCE",
+            title,
+            content: `![${title}](${dataUrl})`,
+            x: base.x + index * 40,
+            y: base.y + index * 30,
+          }));
+        }
+      })();
     };
-  }, [pan, zoom]);
+
+    document.addEventListener("paste", handlePaste);
+    return () => document.removeEventListener("paste", handlePaste);
+  }, [readOnly, onNodeCreate, screenToCanvas]);
+
+  const blockLayouts = useMemo(() => {
+    if (blocks.length === 0) return [];
+    const padding = 24;
+    return blocks.reduce((acc, block) => {
+      const bounds = getNodesBounds(block.nodeIds);
+      if (!bounds) return acc;
+      acc.push({
+        id: block.id,
+        name: block.name,
+        nodeIds: block.nodeIds,
+        left: bounds.minX - padding,
+        top: bounds.minY - padding,
+        width: bounds.maxX - bounds.minX + padding * 2,
+        height: bounds.maxY - bounds.minY + padding * 2,
+      });
+      return acc;
+    }, [] as Array<{ id: string; name: string; nodeIds: string[]; left: number; top: number; width: number; height: number }>);
+  }, [blocks, getNodesBounds]);
 
   // Handle double-click to create node
   const handleCanvasClick = useCallback((e: React.MouseEvent) => {
@@ -617,6 +797,7 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
     (e: React.MouseEvent) => {
       const rect = canvasRef.current?.getBoundingClientRect();
       if (!rect) return;
+      lastMousePosRef.current = { x: e.clientX, y: e.clientY };
       
       // Track mouse for connection line
       if (connectingFrom) {
@@ -663,6 +844,28 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
               selectionUpdateRef.current = null;
             });
           }
+        }
+        return;
+      }
+
+      if (groupDraggingRef.current && isDraggingRef.current) {
+        const canvasCoords = screenToCanvas(e.clientX, e.clientY);
+        const start = groupDragStartRef.current;
+        if (start) {
+          const delta = {
+            x: canvasCoords.x - start.x,
+            y: canvasCoords.y - start.y,
+          };
+          dragStartPosRef.current = {
+            x: dragOriginPosRef.current.x + delta.x,
+            y: dragOriginPosRef.current.y + delta.y,
+          };
+          if (rafRef.current) {
+            cancelAnimationFrame(rafRef.current);
+          }
+          rafRef.current = requestAnimationFrame(() => {
+            setDragDelta(delta);
+          });
         }
         return;
       }
@@ -784,11 +987,64 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
     isDraggingRef.current = false;
     dragNodeRef.current = null;
     draggedNodeIdRef.current = null;
+    groupDraggingRef.current = false;
+    groupDragStartRef.current = null;
     
     if (connectingFrom) {
       setConnectingFrom(null);
     }
   }, [connectingFrom, onNodeMove, selectionBox, onMultiSelect, onNodeSelect]);
+
+  const handleBlockMouseDown = useCallback(
+    (e: React.MouseEvent, block: { id: string; nodeIds: string[] }) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+
+      setContextMenu(null);
+      setEdgeContextMenu(null);
+      setSelectedEdgeId(null);
+
+      if (onBlockSelect) {
+        onBlockSelect(block.id);
+      } else if (onMultiSelect && block.nodeIds.length > 0) {
+        onMultiSelect(new Set(block.nodeIds));
+      }
+
+      if (readOnly) return;
+
+      const nodeIds = block.nodeIds.filter((id) => nodeMap.has(id));
+      if (nodeIds.length === 0) return;
+
+      const primaryNode = nodeMap.get(nodeIds[0]);
+      if (!primaryNode) return;
+
+      const startPositions: Record<string, { x: number; y: number }> = {};
+      nodeIds.forEach((id) => {
+        const node = nodeMap.get(id);
+        if (node) {
+          startPositions[id] = { x: node.x, y: node.y };
+        }
+      });
+
+      setMultiDraggingIds(nodeIds);
+      multiDraggingRef.current = true;
+      multiDraggingIdsRef.current = nodeIds;
+      multiDragStartPositionsRef.current = startPositions;
+      setDragDelta({ x: 0, y: 0 });
+
+      isDraggingRef.current = true;
+      draggedNodeIdRef.current = primaryNode.id;
+      setDraggedNode(primaryNode.id);
+      dragOriginPosRef.current = { x: primaryNode.x, y: primaryNode.y };
+      dragStartPosRef.current = { x: primaryNode.x, y: primaryNode.y };
+      dragNodeRef.current = null;
+
+      groupDraggingRef.current = true;
+      groupDragStartRef.current = screenToCanvas(e.clientX, e.clientY);
+    },
+    [nodeMap, onBlockSelect, onMultiSelect, readOnly, screenToCanvas]
+  );
 
   // Node handlers
   const handleNodeMouseDown = useCallback(
@@ -1035,7 +1291,7 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
         className="absolute top-4 right-4 text-[11px] text-neutral-500 bg-white px-3 py-1.5 rounded-md border border-neutral-200 shadow-sm z-30"
         onDoubleClick={(e) => e.stopPropagation()}
       >
-        Double-click to add · <kbd className="font-mono">V</kbd> select · <kbd className="font-mono">H</kbd> hand · Right-click for menu
+        Double-click to add · <kbd className="font-mono">V</kbd> select · <kbd className="font-mono">H</kbd> hand · <span className="font-mono">Ctrl/Cmd+G</span> group · Right-click for menu
       </div>
 
       {/* Zoom Controls - moved to bottom left */}
@@ -1078,6 +1334,49 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
           willChange: 'transform',
         }}
       >
+        {/* Blocks */}
+        {blockLayouts.map((block) => {
+          const isSelected = selectedBlockId === block.id;
+          return (
+            <div
+              key={block.id}
+              data-block-id={block.id}
+              className={`absolute rounded-2xl border-2 ${
+                isSelected
+                  ? "border-indigo-400 bg-indigo-50/30"
+                  : "border-neutral-200/80 bg-white/30 border-dashed"
+              } ${readOnly ? "" : "cursor-grab"} select-none`}
+              style={{
+                left: block.left,
+                top: block.top,
+                width: block.width,
+                height: block.height,
+              }}
+              onMouseDown={(e) => handleBlockMouseDown(e, block)}
+            >
+              <div
+                className={`absolute -top-3 left-3 flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold shadow-sm ${
+                  isSelected ? "bg-indigo-600 text-white" : "bg-neutral-900 text-white"
+                }`}
+              >
+                <span>{block.name}</span>
+                {!readOnly && isSelected && onDeleteBlock && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDeleteBlock(block.id);
+                    }}
+                    className="ml-1 rounded-full bg-white/20 p-0.5 hover:bg-white/30"
+                    title="Ungroup"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+
         {/* SVG for Edges - reduced size for better performance */}
         <svg className="absolute inset-0 w-[5000px] h-[5000px] overflow-visible" style={{ willChange: 'transform' }}>
           <defs>
@@ -1260,8 +1559,8 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
           <CanvasNodeItem
             key={node.id}
             node={renderNode}
-            isSelected={selectedNodeId === node.id}
-            isMultiSelected={selectedNodeIds.has(node.id)}
+            isSelected={selectedNodeId === node.id || selectedNodeIds.has(node.id)}
+            isMultiSelected={false}
             isDragging={draggedNode === node.id}
             isConnecting={connectingFrom === node.id}
             anchorStatus={nodeAnchorStatus?.get(node.id)}
@@ -1351,6 +1650,63 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
           onSubmit={handleInlineSubmit}
           onCancel={() => setInlineEditor(null)}
         />
+      )}
+
+      {/* Group Creation */}
+      {groupDraft && (
+        <div
+          ref={groupDraftRef}
+          className="absolute z-50 animate-in fade-in zoom-in-95 duration-100"
+          style={{ left: groupDraft.x, top: groupDraft.y, transform: "translate(-50%, -50%)" }}
+          onWheel={(e) => e.stopPropagation()}
+        >
+          <div className="w-64 rounded-lg border border-neutral-200 bg-white shadow-xl overflow-hidden">
+            <div className="px-3 py-2 border-b border-neutral-100 text-[10px] font-semibold text-neutral-500 uppercase tracking-wider">
+              Create group
+            </div>
+            <div className="p-3">
+              <input
+                ref={groupInputRef}
+                type="text"
+                value={groupName}
+                onChange={(e) => setGroupName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    handleCreateGroup();
+                  } else if (e.key === "Escape") {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    handleCancelGroup();
+                  }
+                }}
+                placeholder="Group name"
+                className="w-full bg-transparent text-sm text-neutral-900 placeholder:text-neutral-400 focus:outline-none"
+              />
+            </div>
+            <div className="px-3 py-2 border-t border-neutral-100 bg-neutral-50 flex items-center justify-between">
+              <span className="text-[10px] text-neutral-400">
+                Enter create · Esc cancel
+              </span>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={handleCancelGroup}
+                  className="px-2 py-1 text-[10px] text-neutral-500 hover:text-neutral-700"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleCreateGroup}
+                  disabled={!groupName.trim()}
+                  className="px-2 py-1 text-[10px] font-semibold rounded bg-indigo-600 text-white disabled:opacity-40"
+                >
+                  Create
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Context Menu */}

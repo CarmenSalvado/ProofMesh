@@ -19,8 +19,8 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    pass
+    op.add_column('library_items', sa.Column('lean_code', sa.Text(), nullable=True))
 
 
 def downgrade() -> None:
-    pass
+    op.drop_column('library_items', 'lean_code')

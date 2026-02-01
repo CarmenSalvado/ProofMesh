@@ -142,6 +142,8 @@ export interface LibraryItem {
 	source: {
 		canvas_id?: UUID;
 		line_id?: UUID;
+		file_path?: string;
+		cell_id?: string;
 		agent_run_id?: UUID;
 	} | null;
 	dependencies: UUID[];
@@ -161,6 +163,11 @@ export interface LibraryItemCreate {
 	formula?: string;
 	lean_code?: string;
 	authors?: AuthorInfo[];
+	source?: {
+		file_path?: string;
+		cell_id?: string;
+		agent_run_id?: UUID;
+	};
 	dependencies?: UUID[];
 }
 

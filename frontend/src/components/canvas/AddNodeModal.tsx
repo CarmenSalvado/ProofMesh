@@ -19,13 +19,17 @@ export interface NewNodeData {
   content: string;
   formula?: string;
   leanCode?: string;
+  x?: number;
+  y?: number;
   dependencies: string[];
+  authors?: Array<{ type: "human" | "agent"; id: string; name?: string }>;
+  source?: { file_path?: string; cell_id?: string; agent_run_id?: string };
 }
 
 interface AddNodeModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSubmit: (data: NewNodeData) => Promise<void>;
+  onSubmit: (data: NewNodeData) => Promise<{ id: string } | void>;
   existingNodes: Array<{ id: string; title: string; type: string }>;
   defaultPosition?: { x: number; y: number };
 }

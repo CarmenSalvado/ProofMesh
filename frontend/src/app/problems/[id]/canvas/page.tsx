@@ -35,13 +35,14 @@ import { CanvasSidebar } from "@/components/canvas/CanvasSidebar";
 import { AddNodeModal, NewNodeData } from "@/components/canvas/AddNodeModal";
 import { CommitToDocumentModal } from "@/components/canvas/CommitToDocumentModal";
 import { NodeDetailPanel } from "@/components/canvas/NodeDetailPanel";
-import { CanvasNode, CanvasEdge } from "@/components/canvas/types";
+import { CanvasNode, CanvasEdge, type CanvasBlock } from "@/components/canvas/types";
 import { useCanvasHistory } from "@/hooks/useCanvasHistory";
 
 // Store positions locally (keyed by item id)
 type PositionMap = Record<string, { x: number; y: number }>;
 
 const POSITIONS_STORAGE_KEY = "proofmesh_canvas_positions";
+const BLOCKS_STORAGE_KEY = "proofmesh_canvas_blocks";
 
 function loadPositions(problemId: string): PositionMap {
   if (typeof window === "undefined") return {};
@@ -62,6 +63,25 @@ function savePositions(problemId: string, positions: PositionMap) {
   }
 }
 
+function loadBlocks(problemId: string): CanvasBlock[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const stored = localStorage.getItem(`${BLOCKS_STORAGE_KEY}_${problemId}`);
+    return stored ? JSON.parse(stored) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveBlocks(problemId: string, blocks: CanvasBlock[]) {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(`${BLOCKS_STORAGE_KEY}_${problemId}`, JSON.stringify(blocks));
+  } catch {
+    // Ignore storage errors
+  }
+}
+
 interface PageProps {
   params: Promise<{ id: string }>;
 }
@@ -77,6 +97,8 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
+  const [blocks, setBlocks] = useState<CanvasBlock[]>([]);
+  const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
   const [nodeAnchorStatus, setNodeAnchorStatus] = useState<Map<string, { hasAnchors: boolean; isStale: boolean; count: number }>>(new Map());
   const [aiBarVisible, setAiBarVisible] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -155,6 +177,7 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
       setProblem(problemData);
       setLibraryItems(libraryData.items);
       setPositions(loadPositions(problemId));
+      setBlocks(loadBlocks(problemId));
 
       // Load anchor status for all nodes
       if (libraryData.items.length > 0) {
@@ -181,6 +204,36 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
   }, [problemId]);
 
   useEffect(() => {
+    if (libraryItems.length === 0) return;
+    const existingIds = new Set(libraryItems.map((item) => item.id));
+    setBlocks((prev) => {
+      let changed = false;
+      const next = prev
+        .map((block) => {
+          const filtered = block.nodeIds.filter((id) => existingIds.has(id));
+          if (filtered.length !== block.nodeIds.length) {
+            changed = true;
+            return { ...block, nodeIds: filtered, updatedAt: new Date().toISOString() };
+          }
+          return block;
+        })
+        .filter((block) => {
+          if (block.nodeIds.length > 0) return true;
+          changed = true;
+          return false;
+        });
+
+      if (changed) {
+        saveBlocks(problemId, next);
+        if (selectedBlockId && !next.find((b) => b.id === selectedBlockId)) {
+          setSelectedBlockId(null);
+        }
+      }
+      return next;
+    });
+  }, [libraryItems, problemId, selectedBlockId]);
+
+  useEffect(() => {
     loadData();
   }, [loadData]);
 
@@ -197,6 +250,9 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
 
   const handleNodeSelect = useCallback((nodeId: string | null) => {
     setSelectedNodeId(nodeId);
+    if (nodeId !== null) {
+      setSelectedBlockId(null);
+    }
     // Clear multi-selection when single-selecting
     if (nodeId) {
       setSelectedNodeIds((prev) => {
@@ -208,11 +264,76 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
 
   const handleMultiSelect = useCallback((nodeIds: Set<string>) => {
     setSelectedNodeIds(nodeIds);
+    if (nodeIds.size > 0) {
+      setSelectedBlockId(null);
+    }
     // If multi-selecting, clear single selection
     if (nodeIds.size > 0) {
       setSelectedNodeId(null);
     }
   }, []);
+
+  const handleCreateBlock = useCallback((name: string, nodeIdsOverride?: string[]) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const nodeIds = nodeIdsOverride ?? (
+      selectedNodeIds.size > 0
+        ? Array.from(selectedNodeIds)
+        : selectedNodeId
+          ? [selectedNodeId]
+          : []
+    );
+    if (nodeIds.length === 0) return;
+    const now = new Date().toISOString();
+    const newBlock: CanvasBlock = {
+      id: crypto.randomUUID(),
+      name: trimmed,
+      nodeIds,
+      createdAt: now,
+      updatedAt: now,
+    };
+    setBlocks((prev) => {
+      const next = [newBlock, ...prev];
+      saveBlocks(problemId, next);
+      return next;
+    });
+    setSelectedBlockId(newBlock.id);
+    setSelectedNodeId(null);
+    setSelectedNodeIds(new Set(nodeIds));
+  }, [problemId, selectedNodeId, selectedNodeIds]);
+
+  const handleSelectBlock = useCallback((blockId: string) => {
+    const block = blocks.find((b) => b.id === blockId);
+    if (!block) return;
+    setSelectedBlockId(blockId);
+    setSelectedNodeId(null);
+    setSelectedNodeIds(new Set(block.nodeIds));
+  }, [blocks]);
+
+  const handleRenameBlock = useCallback((blockId: string, name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    setBlocks((prev) => {
+      const next = prev.map((block) =>
+        block.id === blockId
+          ? { ...block, name: trimmed, updatedAt: new Date().toISOString() }
+          : block
+      );
+      saveBlocks(problemId, next);
+      return next;
+    });
+  }, [problemId]);
+
+  const handleDeleteBlock = useCallback((blockId: string) => {
+    setBlocks((prev) => {
+      const next = prev.filter((block) => block.id !== blockId);
+      saveBlocks(problemId, next);
+      return next;
+    });
+    if (selectedBlockId === blockId) {
+      setSelectedBlockId(null);
+    }
+  }, [problemId, selectedBlockId]);
 
   const handleOpenCommitModal = useCallback((nodeIds: string[]) => {
     // Add the node IDs to selection and open modal
@@ -270,8 +391,8 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
   }, []);
 
   const handleItemClick = useCallback((itemId: string) => {
-    setSelectedNodeId(itemId);
-  }, []);
+    handleNodeSelect(itemId);
+  }, [handleNodeSelect]);
 
   // Handle node movement with debounced position saving
   const handleNodeMove = useCallback(
@@ -339,8 +460,9 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
   // Handle creating a new node
   const handleCreateNode = useCallback(
     async (data: NewNodeData) => {
-      const beforeItems = [...libraryItems];
-      const beforePositions = { ...positions };
+      const nodePosition = data.x !== undefined && data.y !== undefined
+        ? { x: data.x, y: data.y }
+        : newNodePosition;
 
       const newItem = await createLibraryItem(problemId, {
         title: data.title,
@@ -349,19 +471,25 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
         formula: data.formula,
         lean_code: data.leanCode,
         dependencies: data.dependencies,
+        authors: data.authors,
+        source: data.source,
       });
 
       // Add to local state
-      const afterItems = [newItem, ...libraryItems];
-      setLibraryItems(afterItems);
+      setLibraryItems((prev) => {
+        const afterItems = [newItem, ...prev];
+        const beforePositions = { ...positions };
+        const afterPositions = { ...beforePositions, [newItem.id]: nodePosition };
+        recordCreate(prev, afterItems, beforePositions, afterPositions, newItem.title);
+        return afterItems;
+      });
 
       // Set position for new node
-      const afterPositions = { ...positions, [newItem.id]: newNodePosition };
-      setPositions(afterPositions);
-      savePositions(problemId, afterPositions);
-
-      // Record for undo
-      recordCreate(beforeItems, afterItems, beforePositions, afterPositions, newItem.title);
+      setPositions((prev) => {
+        const afterPositions = { ...prev, [newItem.id]: nodePosition };
+        savePositions(problemId, afterPositions);
+        return afterPositions;
+      });
 
       // Broadcast to collaborators
       collaboration?.sendNodeCreate?.({
@@ -369,16 +497,17 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
         type: newItem.kind,
         title: newItem.title,
         content: newItem.content,
-        x: newNodePosition.x,
-        y: newNodePosition.y,
+        x: nodePosition.x,
+        y: nodePosition.y,
         status: newItem.status,
         dependencies: newItem.dependencies || [],
       });
 
       // Select the new node
       setSelectedNodeId(newItem.id);
+      return newItem;
     },
-    [problemId, newNodePosition, collaboration, libraryItems, positions, recordCreate]
+    [problemId, newNodePosition, collaboration, positions, recordCreate]
   );
 
   // Handle opening add modal from canvas
@@ -402,9 +531,6 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
       }
 
       try {
-        const beforeItems = [...libraryItems];
-        const beforePositions = { ...positions };
-
         const newItem = await createLibraryItem(problemId, {
           title: nodeData.title,
           kind: (nodeData.type?.toUpperCase() || "NOTE") as LibraryItem["kind"],
@@ -414,16 +540,20 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
           dependencies: nodeData.dependencies || [],
         });
 
-        const afterItems = [newItem, ...libraryItems];
-        setLibraryItems(afterItems);
-
         const pos = { x: nodeData.x || 300, y: nodeData.y || 200 };
-        const afterPositions = { ...positions, [newItem.id]: pos };
-        setPositions(afterPositions);
-        savePositions(problemId, afterPositions);
+        setLibraryItems((prev) => {
+          const afterItems = [newItem, ...prev];
+          const beforePositions = { ...positions };
+          const afterPositions = { ...beforePositions, [newItem.id]: pos };
+          recordCreate(prev, afterItems, beforePositions, afterPositions, newItem.title);
+          return afterItems;
+        });
 
-        // Record for undo
-        recordCreate(beforeItems, afterItems, beforePositions, afterPositions, newItem.title);
+        setPositions((prev) => {
+          const afterPositions = { ...prev, [newItem.id]: pos };
+          savePositions(problemId, afterPositions);
+          return afterPositions;
+        });
 
         collaboration?.sendNodeCreate?.({
           id: newItem.id,
@@ -441,16 +571,13 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
         console.error("Failed to create node:", err);
       }
     },
-    [problemId, collaboration, handleOpenAddModal, libraryItems, positions, recordCreate]
+    [problemId, collaboration, handleOpenAddModal, positions, recordCreate]
   );
 
   // Handle quick update from context menu (type/status changes)
   const handleQuickUpdateNode = useCallback(
-    async (nodeId: string, updates: Partial<CanvasNode>) => {
+    async (nodeId: string, updates: Partial<CanvasNode> & { verification?: { method: string; logs: string; status: string } }) => {
       try {
-        const currentItem = libraryItems.find((item) => item.id === nodeId);
-        if (!currentItem) return;
-
         const updateData: Parameters<typeof updateLibraryItem>[2] = {};
 
         if (updates.status) {
@@ -469,12 +596,21 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
         if (updates.leanCode !== undefined) {
           updateData.lean_code = updates.leanCode;
         }
+        if (updates.verification !== undefined) {
+          updateData.verification = updates.verification;
+        }
+        if (updates.dependencies !== undefined) {
+          updateData.dependencies = updates.dependencies;
+        }
 
         const updatedItem = await updateLibraryItem(problemId, nodeId, updateData);
 
-        setLibraryItems((prev) =>
-          prev.map((item) => (item.id === nodeId ? updatedItem : item))
-        );
+        setLibraryItems((prev) => {
+          const exists = prev.some((item) => item.id === nodeId);
+          return exists
+            ? prev.map((item) => (item.id === nodeId ? updatedItem : item))
+            : [updatedItem, ...prev];
+        });
 
         const pos = positions[nodeId] || { x: 200, y: 200 };
         collaboration?.sendNodeUpdate?.({
@@ -498,7 +634,7 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
   const handleUpdateNode = useCallback(
     async (
       nodeId: string,
-      data: { title: string; content: string; formula?: string; leanCode?: string; status?: "PROPOSED" | "VERIFIED" | "REJECTED" }
+      data: { title: string; content: string; formula?: string; leanCode?: string; status?: "PROPOSED" | "VERIFIED" | "REJECTED"; verification?: { method: string; logs: string; status: string } }
     ) => {
       // Status is already uppercase, pass directly
       // Convert leanCode to lean_code for API
@@ -510,6 +646,9 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
       };
       if (data.leanCode !== undefined) {
         apiData.lean_code = data.leanCode;
+      }
+      if (data.verification !== undefined) {
+        apiData.verification = data.verification;
       }
       const updatedItem = await updateLibraryItem(problemId, nodeId, apiData);
 
@@ -762,6 +901,10 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
   const selectedNode = useMemo(() => {
     return nodes.find((n) => n.id === selectedNodeId) || null;
   }, [nodes, selectedNodeId]);
+  const blockSelectionCount = useMemo(() => {
+    if (selectedNodeIds.size > 0) return selectedNodeIds.size;
+    return selectedNodeId ? 1 : 0;
+  }, [selectedNodeIds, selectedNodeId]);
 
   if (loading) {
     return (
@@ -865,6 +1008,13 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
           onItemClick={handleItemClick}
           collapsed={sidebarCollapsed}
           onToggle={() => setSidebarCollapsed(!sidebarCollapsed)}
+          blocks={blocks}
+          selectedBlockId={selectedBlockId}
+          selectedNodeCount={blockSelectionCount}
+          onBlockSelect={handleSelectBlock}
+          onCreateBlock={handleCreateBlock}
+          onRenameBlock={handleRenameBlock}
+          onDeleteBlock={handleDeleteBlock}
           onAddItem={() => {
             if (canvasRef.current) {
               canvasRef.current.openInlineEditorAtCenter();
@@ -882,8 +1032,13 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
             edges={edges}
             selectedNodeId={selectedNodeId}
             selectedNodeIds={selectedNodeIds}
+            blocks={blocks}
+            selectedBlockId={selectedBlockId}
             onNodeSelect={handleNodeSelect}
             onMultiSelect={handleMultiSelect}
+            onBlockSelect={handleSelectBlock}
+            onCreateBlock={handleCreateBlock}
+            onDeleteBlock={handleDeleteBlock}
             onNodeMove={handleNodeMove}
             onNodesMove={handleNodesMove}
             onNodeDoubleClick={handleNodeDoubleClick}
@@ -930,8 +1085,9 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
           selectedNodes={Array.from(selectedNodeIds).map(id => nodes.find(n => n.id === id)).filter(Boolean) as CanvasNode[]}
           isVisible={aiBarVisible}
           onToggle={() => setAiBarVisible(!aiBarVisible)}
-          onCreateNode={(data: { type: string; title: string; content: string; formula?: string; x?: number; y?: number; dependencies?: string[] }) => handleCreateNode({ ...data, dependencies: data.dependencies || [] })}
-          onUpdateNode={(nodeId: string, updates: { formula?: string; leanCode?: string; status?: "PROPOSED" | "VERIFIED" | "REJECTED" }) => handleQuickUpdateNode(nodeId, updates)}
+          onCreateNode={(data: { type: string; title: string; content: string; formula?: string; x?: number; y?: number; dependencies?: string[]; authors?: Array<{ type: "human" | "agent"; id: string; name?: string }>; source?: { file_path?: string; cell_id?: string; agent_run_id?: string } }) => handleCreateNode({ ...data, dependencies: data.dependencies || [] })}
+          onUpdateNode={(nodeId: string, updates: { formula?: string; leanCode?: string; status?: "PROPOSED" | "VERIFIED" | "REJECTED"; verification?: { method: string; logs: string; status: string }; dependencies?: string[] }) => handleQuickUpdateNode(nodeId, updates)}
+          onCreateBlock={handleCreateBlock}
         />
       </div>
 

@@ -87,7 +87,7 @@ async def create_library_item(
         raise HTTPException(status_code=403, detail="Not authorized")
     
     # Add current user as author if not specified
-    authors = [a.model_dump() for a in data.authors]
+    authors = [a.model_dump(mode="json") for a in data.authors]
     if not authors:
         authors = [{"type": "human", "id": str(current_user.id), "name": current_user.username}]
     
@@ -100,7 +100,7 @@ async def create_library_item(
         lean_code=data.lean_code,
         status=LibraryItemStatus.PROPOSED,
         authors=authors,
-        source=data.source.model_dump() if data.source else None,
+        source=data.source.model_dump(mode="json") if data.source else None,
         dependencies=data.dependencies,
     )
     db.add(item)
@@ -182,7 +182,7 @@ async def update_library_item(
     if data.status is not None:
         item.status = data.status
     if data.verification is not None:
-        item.verification = data.verification.model_dump()
+        item.verification = data.verification.model_dump(mode="json")
     if data.dependencies is not None:
         item.dependencies = [str(dep) for dep in data.dependencies]
     

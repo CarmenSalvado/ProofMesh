@@ -39,6 +39,7 @@ interface NodeDetailPanelProps {
     formula?: string;
     leanCode?: string;
     status?: "PROPOSED" | "VERIFIED" | "REJECTED";
+    verification?: { method: string; logs: string; status: string };
   }) => Promise<void>;
   onDelete: (nodeId: string) => Promise<void>;
 }

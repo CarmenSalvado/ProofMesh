@@ -30,6 +30,7 @@ class Proposal(BaseModel):
     id: str
     content: Optional[str] = None  # None if blocked
     reasoning: str = ""
+    diagram: Optional[dict] = None
     score: float = Field(default=0.0, ge=0.0, le=1.0)
     iteration: int = 0
     blocked: bool = False
