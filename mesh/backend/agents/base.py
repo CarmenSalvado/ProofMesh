@@ -1,17 +1,32 @@
 """
 Base Agent classes with Gemini integration (using google-genai).
 These are the building blocks for all agents in the system.
+
+Supports both regular and streaming responses for real-time
+reasoning visibility in the UI.
 """
 
 import asyncio
 import os
 import time
-from typing import Optional, Callable, Any, List, Union
+from typing import Optional, Callable, Any, List, Union, AsyncIterator
+from dataclasses import dataclass, field
 
 from google import genai
 from google.genai import types
 
 from ..models.types import AgentResponse
+
+
+@dataclass
+class StreamingChunk:
+    """A chunk of streaming response from the agent."""
+    text: str
+    is_complete: bool = False
+    step_type: Optional[str] = None  # 'thinking', 'retrieval', 'generation', 'verification'
+    agent_name: Optional[str] = None
+    kg_nodes_used: list[str] = field(default_factory=list)
+    metadata: dict = field(default_factory=dict)
 
 
 class Agent:
@@ -20,7 +35,12 @@ class Agent:
     
     This wraps the Gemini API and provides a consistent interface
     for all agents in the system.
+    
+    Supports both regular and streaming responses.
     """
+    
+    # Agent name for identification in traces
+    agent_name: str = "base"
     
     def __init__(
         self,
@@ -161,6 +181,125 @@ class Agent:
         return AgentResponse(
             success=False,
             content=f"Error after {self.retries + 1} attempts: {last_exception}",
+            model=self.model_name
+        )
+    
+    async def run_streaming(
+        self, 
+        prompt: str, 
+        context: Optional[dict] = None,
+        step_type: str = "generation",
+        on_chunk: Optional[Callable[[StreamingChunk], None]] = None
+    ) -> AsyncIterator[StreamingChunk]:
+        """
+        Run the agent with streaming response.
+        
+        Yields StreamingChunk objects as the response is generated,
+        enabling real-time visibility of reasoning in the UI.
+        
+        Args:
+            prompt: The input prompt
+            context: Optional context dict to include
+            step_type: Type of reasoning step ('thinking', 'retrieval', 'generation', 'verification')
+            on_chunk: Optional callback for each chunk
+            
+        Yields:
+            StreamingChunk objects with partial response text
+        """
+        # Build full prompt with context
+        full_prompt = prompt
+        if context:
+            context_str = "\n".join(f"{k}: {v}" for k, v in context.items())
+            full_prompt = f"Context:\n{context_str}\n\n{prompt}"
+
+        generation_config = types.GenerateContentConfig(
+            temperature=self.temperature,
+            max_output_tokens=self.max_tokens,
+            system_instruction=self.system_prompt if self.system_prompt else None,
+            safety_settings=self.safety_settings
+        )
+
+        accumulated_text = ""
+        
+        try:
+            async for response in self.client.aio.models.generate_content_stream(
+                model=self.model_name,
+                contents=full_prompt,
+                config=generation_config
+            ):
+                if response.text:
+                    accumulated_text += response.text
+                    chunk = StreamingChunk(
+                        text=response.text,
+                        is_complete=False,
+                        step_type=step_type,
+                        agent_name=self.agent_name
+                    )
+                    
+                    if on_chunk:
+                        on_chunk(chunk)
+                    
+                    yield chunk
+            
+            # Final chunk to signal completion
+            final_chunk = StreamingChunk(
+                text="",
+                is_complete=True,
+                step_type=step_type,
+                agent_name=self.agent_name,
+                metadata={"full_response": accumulated_text}
+            )
+            
+            if on_chunk:
+                on_chunk(final_chunk)
+            
+            yield final_chunk
+                
+        except Exception as e:
+            error_chunk = StreamingChunk(
+                text=f"Error: {str(e)}",
+                is_complete=True,
+                step_type="error",
+                agent_name=self.agent_name,
+                metadata={"error": str(e)}
+            )
+            
+            if on_chunk:
+                on_chunk(error_chunk)
+            
+            yield error_chunk
+    
+    async def run_with_trace(
+        self,
+        prompt: str,
+        context: Optional[dict] = None,
+        step_type: str = "generation",
+        trace_callback: Optional[Callable[[StreamingChunk], None]] = None
+    ) -> AgentResponse:
+        """
+        Run the agent while capturing a full trace.
+        
+        Collects streaming chunks and returns a complete AgentResponse
+        while optionally streaming to a callback.
+        
+        Args:
+            prompt: The input prompt
+            context: Optional context dict
+            step_type: Type of reasoning step
+            trace_callback: Called for each streaming chunk
+            
+        Returns:
+            Complete AgentResponse after streaming finishes
+        """
+        full_text = ""
+        
+        async for chunk in self.run_streaming(prompt, context, step_type, trace_callback):
+            if not chunk.is_complete:
+                full_text += chunk.text
+        
+        return AgentResponse(
+            success=True,
+            content=full_text,
             model=self.model_name
         )
     

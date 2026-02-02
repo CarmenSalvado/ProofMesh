@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 from enum import Enum
-from sqlalchemy import String, Text, DateTime, ForeignKey, ARRAY
+from sqlalchemy import String, Text, DateTime, ForeignKey, ARRAY, Float
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID, ENUM, JSONB
 
@@ -53,6 +53,10 @@ class LibraryItem(Base):
         nullable=False,
         default=LibraryItemStatus.PROPOSED
     )
+    
+    # Canvas position (optional, for visual layout)
+    x: Mapped[float | None] = mapped_column(Float, nullable=True)
+    y: Mapped[float | None] = mapped_column(Float, nullable=True)
     
     # JSON fields
     authors: Mapped[dict] = mapped_column(JSONB, nullable=False, default=list)

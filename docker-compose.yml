@@ -1,7 +1,7 @@
 services:
-  # PostgreSQL Database
+  # PostgreSQL Database with pgvector extension
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     container_name: proofmesh-db
     restart: unless-stopped
     env_file:
@@ -97,6 +97,33 @@ services:
       lean-runner:
         condition: service_started
 
+  # Canvas AI Worker (background job processor)
+  canvas-ai-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    container_name: proofmesh-canvas-worker
+    restart: unless-stopped
+    command: python -m app.workers.canvas_ai_worker
+    env_file:
+      - .env
+    volumes:
+      - ./backend/app:/app/app:cached
+      - ./mesh:/app/mesh:cached
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: ${REDIS_URL}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      GOOGLE_GENERATIVE_AI_API_KEY: ${GOOGLE_GENERATIVE_AI_API_KEY}
+      LEAN_RUNNER_URL: ${LEAN_RUNNER_URL:-http://lean-runner:9008}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      lean-runner:
+        condition: service_started
+
   # Lean runner service (isolated)
   lean-runner:
     build:
@@ -109,6 +136,9 @@ services:
     environment:
       LEAN_PROJECT_DIR: /workspace/mesh_project
       LEAN_TIMEOUT: ${LEAN_TIMEOUT:-60}
+    volumes:
+      - lean-elan:/root/.elan
+      - lean-lake-cache:/workspace/mesh_project/.lake
 
   # TeXLive compiler service
   texlive-compiler:
@@ -158,3 +188,5 @@ volumes:
   postgres_data:
   redis_data:
   minio_data:
+  lean-elan:
+  lean-lake-cache:

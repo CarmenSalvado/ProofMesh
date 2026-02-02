@@ -26,7 +26,7 @@ export enum MessageType {
 }
 
 export interface UserPresence {
-  user_id: number;
+  user_id: string | number;  // Backend sends string, but we handle both
   username: string;
   display_name?: string;
   avatar_color: string;
@@ -99,8 +99,8 @@ export function useCollaboration({
 }: UseCollaborationOptions) {
   const [isConnected, setIsConnected] = useState(false);
   const [users, setUsers] = useState<UserPresence[]>([]);
-  const [cursors, setCursors] = useState<Map<number, { x: number; y: number; file?: string }>>(new Map());
-  const [selections, setSelections] = useState<Map<number, { start: number; end: number; file?: string }>>(new Map());
+  const [cursors, setCursors] = useState<Map<string | number, { x: number; y: number; file?: string }>>(new Map());
+  const [selections, setSelections] = useState<Map<string | number, { start: number; end: number; file?: string }>>(new Map());
   const [error, setError] = useState<string | null>(null);
   
   const wsRef = useRef<WebSocket | null>(null);
@@ -197,7 +197,7 @@ export function useCollaboration({
       case MessageType.CURSOR_MOVE:
         setCursors((prev) => {
           const next = new Map(prev);
-          const userId = message.user_id as number;
+          const userId = message.user_id as string | number;
           next.set(userId, {
             x: message.cursor_x as number,
             y: message.cursor_y as number,
@@ -210,7 +210,7 @@ export function useCollaboration({
       case MessageType.SELECTION:
         setSelections((prev) => {
           const next = new Map(prev);
-          const userId = message.user_id as number;
+          const userId = message.user_id as string | number;
           if (message.selection_start !== undefined && message.selection_end !== undefined) {
             next.set(userId, {
               start: message.selection_start as number,
@@ -426,8 +426,8 @@ export function useCollaboration({
   }, [send]);
 
   // Get user by ID helper
-  const getUserById = useCallback((userId: number): UserPresence | undefined => {
-    return users.find((u) => u.user_id === userId);
+  const getUserById = useCallback((userId: string | number): UserPresence | undefined => {
+    return users.find((u) => String(u.user_id) === String(userId));
   }, [users]);
 
   return {

@@ -120,20 +120,18 @@ export function CanvasNodeItem({
   return (
     <div
       data-node-id={node.id}
-      className={`absolute rounded-xl border cursor-pointer group select-none
+      className={`absolute top-0 left-0 rounded-xl border cursor-pointer group select-none transition-shadow duration-100
         ${typeConfig.bgColor} ${typeConfig.borderColor}
         ${isHighlighted ? "ring-2 ring-indigo-500 ring-offset-1 shadow-lg z-40" : "hover:shadow-md"}
         ${isDragging ? "shadow-xl cursor-grabbing z-50" : ""}
         ${isConnecting ? "ring-2 ring-emerald-500" : ""}
       `}
       style={{
-        left: node.x,
-        top: node.y,
+        transform: `translate3d(${node.x}px, ${node.y}px, 0)`,
         width: node.width || 260,
         minHeight: node.height || 140,
         userSelect: "none",
         WebkitUserSelect: "none",
-        willChange: isDragging ? "left, top" : "auto",
       }}
       onMouseDown={handleMouseDown}
       onMouseUp={onMouseUp}
@@ -261,9 +259,39 @@ export function CanvasNodeItem({
 
           {/* Authors */}
           {node.authors && node.authors.length > 0 && !node.agentId && (
-            <span className="text-[10px] text-neutral-400">
-              {node.authors[0]}
-            </span>
+            <div className="flex items-center gap-1">
+              {/* Show avatar for first author if available */}
+              {(() => {
+                const firstAuthor = node.authors[0];
+                const authorInfo = typeof firstAuthor === 'string' 
+                  ? { name: firstAuthor, avatar_url: null } 
+                  : firstAuthor;
+                return (
+                  <>
+                    {authorInfo?.avatar_url ? (
+                      <img 
+                        src={authorInfo.avatar_url} 
+                        alt={authorInfo?.name || 'Author'} 
+                        className="w-4 h-4 rounded-full object-cover border border-neutral-200"
+                      />
+                    ) : (
+                      <div className="w-4 h-4 rounded-full bg-neutral-200 flex items-center justify-center text-[8px] font-medium text-neutral-500">
+                        {(authorInfo?.name || 'U')[0].toUpperCase()}
+                      </div>
+                    )}
+                    <span className="text-[10px] text-neutral-400">
+                      {authorInfo?.name || 'Unknown'}
+                    </span>
+                  </>
+                );
+              })()}
+              {/* Show +N if multiple authors */}
+              {node.authors.length > 1 && (
+                <span className="text-[9px] text-neutral-400 bg-neutral-100 px-1 rounded">
+                  +{node.authors.length - 1}
+                </span>
+              )}
+            </div>
           )}
         </div>
 

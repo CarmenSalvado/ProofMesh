@@ -27,6 +27,7 @@ class AuthorInfo(BaseModel):
     type: str  # "human" or "agent"
     id: str
     name: str | None = None
+    avatar_url: str | None = None
 
 
 class SourceInfo(BaseModel):
@@ -47,6 +48,8 @@ class LibraryItemCreate(BaseModel):
     content: str
     formula: str | None = None
     lean_code: str | None = None
+    x: float | None = None
+    y: float | None = None
     authors: list[AuthorInfo] = []
     source: SourceInfo | None = None
     dependencies: list[UUID] = []
@@ -60,6 +63,8 @@ class LibraryItemUpdate(BaseModel):
     status: LibraryItemStatus | None = None
     verification: VerificationInfo | None = None
     dependencies: list[UUID] | None = None
+    x: float | None = None
+    y: float | None = None
 
 
 class LibraryItemResponse(BaseModel):
@@ -73,12 +78,31 @@ class LibraryItemResponse(BaseModel):
     formula: str | None
     lean_code: str | None
     status: LibraryItemStatus
-    authors: list[dict]
+    x: float | None
+    y: float | None
+    authors: list[AuthorInfo]
     source: dict | None
     dependencies: list[UUID]
     verification: dict | None
     created_at: datetime
     updated_at: datetime
+
+
+class NodeActivityEntry(BaseModel):
+    """Activity entry for node history/timeline"""
+    id: str
+    type: str  # "created", "updated", "verified", "commented", "agent_generated"
+    user: AuthorInfo | None = None
+    description: str
+    timestamp: datetime
+    metadata: dict | None = None
+
+
+class NodeActivityHistoryResponse(BaseModel):
+    """Response for node activity history"""
+    node_id: UUID
+    activities: list[NodeActivityEntry]
+    total: int
 
 
 class LibraryItemListResponse(BaseModel):

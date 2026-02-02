@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import {
   Sparkles,
   Send,
@@ -19,7 +19,10 @@ import {
   Zap,
   CheckCircle,
   XCircle,
+  AlertCircle,
+  Brain,
 } from "lucide-react";
+import { useChat, Message } from "@ai-sdk/react";
 import { CanvasNode, NODE_TYPE_CONFIG } from "./types";
 import {
   getOrchestrationStatus,
@@ -27,7 +30,15 @@ import {
   formalizeText,
   verifyLeanCode,
   critiqueProposal,
+  getCanvasAIChatHistory,
+  createCanvasAIRun,
+  type CanvasAIMessage,
+  type CanvasAIRun,
 } from "@/lib/api";
+import { queueCanvasOperation } from "@/lib/asyncQueue";
+
+// Using CanvasAIMessage as ChatMessage
+type ChatMessage = CanvasAIMessage;
 
 interface FloatingInsight {
   id: string;
@@ -89,13 +100,6 @@ const deriveGroupTitle = (value: string, fallback = "Proposal") => {
   if (!words) return fallback;
   return words.length < sentence.length ? `${words}…` : words;
 };
-
-interface ChatMessage {
-  id: string;
-  role: "user" | "assistant";
-  content: string;
-  timestamp: Date;
-}
 
 const buildChatContext = (messages: ChatMessage[]) => {
   if (messages.length === 0) return "";
@@ -182,7 +186,7 @@ const sanitizeDiagram = (diagram?: DiagramSpec | null) => {
 
   if (edges.length === 0) {
     for (let i = 1; i < finalNodes.length; i += 1) {
-      edges.push({ from: finalNodes[i - 1].id, to: finalNodes[i].id, type: "implies" });
+      edges.push({ from: finalNodes[i - 1].id, to: finalNodes[i].id, type: "implies", label: undefined });
     }
   }
 
@@ -235,8 +239,8 @@ const layoutDiagram = (nodes: Array<{ id: string }>, edges: Array<{ from: string
   });
 
   const positions: Record<string, { x: number; y: number }> = {};
-  const xSpacing = 320;
-  const ySpacing = 190;
+  const xSpacing = 420; // Increased from 320 for better separation
+  const ySpacing = 280; // Increased from 190 for better separation
 
   Array.from(groups.entries()).forEach(([depth, ids]) => {
     ids.forEach((id, index) => {
@@ -283,9 +287,90 @@ export function FloatingAIBar({
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [isInputFocused, setIsInputFocused] = useState(false);
+  const [activeRuns, setActiveRuns] = useState<CanvasAIRun[]>([]);
+  const [showThinking, setShowThinking] = useState(true);
   const inputRef = useRef<HTMLInputElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Build context for AI from selected nodes
+  const aiContext = useMemo(() => {
+    if (contextNodes.length === 0) return "";
+    const details = contextNodes.map(n => {
+      const fullNode = selectedNode?.id === n.id ? selectedNode : selectedNodes.find(sn => sn.id === n.id);
+      const content = fullNode?.content
+        ? isImageContent(fullNode.content)
+          ? " [image attached]"
+          : ` - ${fullNode.content.slice(0, 500)}`
+        : "";
+      return `${n.title} (${n.type})${content}`;
+    }).join("\n");
+    return details;
+  }, [contextNodes, selectedNode, selectedNodes]);
+
+  // AI SDK useChat for streaming exploration
+  const {
+    messages: aiMessages,
+    append: appendAiMessage,
+    isLoading: isAiLoading,
+    setMessages: setAiMessages,
+  } = useChat({
+    api: "/api/canvas-ai/explore",
+    id: `canvas-explore-${problemId}`,
+    body: {
+      context: aiContext,
+      problem_id: problemId,
+    },
+    onFinish: (message) => {
+      // Parse thinking tags and final response
+      const content = message.content;
+      const hasThinking = content.includes("<thinking>") && content.includes("</thinking>");
+      
+      if (hasThinking) {
+        // Extract final response (after all thinking tags)
+        const parts = content.split(/<\/thinking>/);
+        const finalResponse = parts[parts.length - 1].trim();
+        
+        if (finalResponse) {
+          addInsight({
+            type: "proposal",
+            title: "AI Exploration Complete",
+            content: finalResponse.slice(0, 300) + (finalResponse.length > 300 ? "..." : ""),
+          });
+        }
+      } else {
+        addInsight({
+          type: "proposal",
+          title: "AI Exploration Complete",
+          content: content.slice(0, 300) + (content.length > 300 ? "..." : ""),
+        });
+      }
+    },
+  });
+
+  // Extract current thinking and response from streaming
+  const currentThinking = useMemo(() => {
+    const lastMessage = aiMessages[aiMessages.length - 1];
+    if (!lastMessage || lastMessage.role !== "assistant") return null;
+    
+    const content = lastMessage.content;
+    const thinkingMatch = content.match(/<thinking>([\s\S]*?)(<\/thinking>|$)/g);
+    if (!thinkingMatch) return null;
+    
+    // Get the last (potentially incomplete) thinking block
+    const lastThinking = thinkingMatch[thinkingMatch.length - 1];
+    return lastThinking.replace(/<\/?thinking>/g, "").trim();
+  }, [aiMessages]);
+
+  const currentResponse = useMemo(() => {
+    const lastMessage = aiMessages[aiMessages.length - 1];
+    if (!lastMessage || lastMessage.role !== "assistant") return null;
+    
+    const content = lastMessage.content;
+    // Remove all thinking tags and get remaining content
+    const withoutThinking = content.replace(/<thinking>[\s\S]*?<\/thinking>/g, "").trim();
+    return withoutThinking || null;
+  }, [aiMessages]);
 
   // Sync selection -> context (single or multi)
   useEffect(() => {
@@ -308,11 +393,31 @@ export function FloatingAIBar({
       .catch(() => setIsOrchestrationAvailable(false));
   }, []);
 
+  // Load chat history on mount
+  useEffect(() => {
+    if (!problemId || !isVisible) return;
+    
+    const loadHistory = async () => {
+      try {
+        const data = await getCanvasAIChatHistory(problemId);
+        setChatMessages(data.messages || []);
+      } catch (err) {
+        console.error("Failed to load chat history:", err);
+      }
+    };
+    
+    loadHistory();
+    
+    // Refresh history periodically while visible
+    const interval = setInterval(loadHistory, 5000);
+    return () => clearInterval(interval);
+  }, [problemId, isVisible]);
+
   useEffect(() => {
     if (isInputFocused) {
       chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }
-  }, [chatMessages, isInputFocused]);
+  }, [chatMessages, activeRuns, isInputFocused]);
 
   // Manual add context - user clicks to add selected nodes
   const handleAddContext = useCallback(() => {
@@ -350,13 +455,36 @@ export function FloatingAIBar({
   }, []);
 
   const handleExplore = useCallback(async () => {
-    if (!problemId) return;
-    if (!command.trim() && chatMessages.length === 0 && contextNodes.length === 0) return;
+    console.log("[FloatingAIBar] handleExplore called:", {
+      problemId,
+      command: command.trim(),
+      hasCommand: !!command.trim(),
+      chatMessagesLength: chatMessages.length,
+      contextNodesLength: contextNodes.length,
+      shouldProceed: !!(command.trim() || chatMessages.length > 0 || contextNodes.length > 0)
+    });
+
+    if (!problemId) {
+      console.error("[FloatingAIBar] No problemId provided");
+      return;
+    }
+    
+    if (!command.trim() && chatMessages.length === 0 && contextNodes.length === 0) {
+      console.warn("[FloatingAIBar] Cannot explore: no command, no chat messages, and no context nodes");
+      addInsight({
+        type: "insight",
+        title: "Cannot Explore",
+        content: "Please provide a command or select nodes to explore their context.",
+      });
+      return;
+    }
 
     setIsLoading(true);
     setActiveAction("explore");
 
     try {
+      console.log("[FloatingAIBar] Starting exploration with context...");
+
       // Build rich context including node content + chat
       let contextStr = "";
       if (contextNodes.length > 0) {
@@ -374,11 +502,19 @@ export function FloatingAIBar({
       const chatContext = buildChatContext(chatMessages);
       const fullContext = [contextStr, chatContext, command.trim()].filter(Boolean).join("\n\n");
 
+      console.log("[FloatingAIBar] Calling exploreContext API...");
       const result = await exploreContext({
         problem_id: problemId,
         context: fullContext,
         max_iterations: 3,
       });
+      
+      console.log("[FloatingAIBar] exploreContext result:", {
+        proposalsCount: result.proposals?.length,
+        runId: result.run_id,
+        hasDiagrams: result.proposals?.some((p: any) => p.diagram)
+      });
+      
       const runId = result.run_id;
 
       const baseX = selectedNode?.x ?? 400;
@@ -389,8 +525,27 @@ export function FloatingAIBar({
           ? [selectedNode.id]
           : [];
 
+      if (!result.proposals || result.proposals.length === 0) {
+        console.warn("[FloatingAIBar] No proposals received from API");
+        addInsight({
+          type: "insight",
+          title: "No Proposals",
+          content: "The AI didn't generate any proposals. Try a different prompt or add more context nodes.",
+        });
+        return;
+      }
+
+      console.log(`[FloatingAIBar] Processing ${result.proposals.length} proposals...`);
+      
       for (let index = 0; index < result.proposals.length; index += 1) {
         const proposal = result.proposals[index];
+        
+        console.log(`[FloatingAIBar] Processing proposal ${index + 1}:`, {
+          content: proposal.content,
+          score: proposal.score,
+          hasDiagram: !!(proposal as { diagram?: DiagramSpec }).diagram,
+          diagramNodeCount: (proposal as { diagram?: DiagramSpec }).diagram?.nodes?.length
+        });
 
         addInsight({
           type: "proposal",
@@ -401,12 +556,19 @@ export function FloatingAIBar({
         });
 
         if (!onCreateNode) {
+          console.warn("[FloatingAIBar] onCreateNode callback not provided, skipping node creation");
           continue;
         }
 
         const diagram = sanitizeDiagram((proposal as { diagram?: DiagramSpec }).diagram);
         if (diagram) {
-          const diagramBaseY = baseY + index * 420;
+          console.log(`[FloatingAIBar] ✨ Creating diagram for proposal ${index + 1}:`, {
+            nodesCount: diagram.nodes.length,
+            edgesCount: diagram.edges?.length || 0,
+            nodes: diagram.nodes.map(n => ({ id: n.id, type: n.type, title: n.title }))
+          });
+          
+          const diagramBaseY = baseY + index * 650; // Increased from 420 for better separation between proposals
           const positions = layoutDiagram(diagram.nodes, diagram.edges || [], baseX, diagramBaseY);
           const incomingCounts = new Map<string, number>();
 
@@ -417,62 +579,87 @@ export function FloatingAIBar({
             incomingCounts.set(edge.to, (incomingCounts.get(edge.to) || 0) + 1);
           });
 
-          const diagramIdToActualId = new Map<string, string>();
-          const baseDepsByActualId = new Map<string, string[]>();
-          const createdNodeIds: string[] = [];
+          // Ejecutar la creación del diagrama completo en la cola
+          await queueCanvasOperation(
+            `create-diagram-${proposal.content.slice(0, 30)}`,
+            async () => {
+              const diagramIdToActualId = new Map<string, string>();
+              const baseDepsByActualId = new Map<string, string[]>();
+              const createdNodeIds: string[] = [];
 
-          for (const node of diagram.nodes) {
-            const position = positions[node.id] || { x: baseX, y: diagramBaseY };
-            const baseDeps = (incomingCounts.get(node.id) || 0) === 0 ? dependencyIds : [];
-            const nodeContent = node.content || proposal.content || node.title;
+              // Crear todos los nodos del diagrama
+              for (const node of diagram.nodes) {
+                const position = positions[node.id] || { x: baseX, y: diagramBaseY };
+                const baseDeps = (incomingCounts.get(node.id) || 0) === 0 ? dependencyIds : [];
+                const nodeContent = node.content || proposal.content || node.title;
 
-            const created = await Promise.resolve(onCreateNode({
-              type: node.type,
-              title: node.title,
-              content: nodeContent,
-              formula: node.formula,
-              leanCode: node.leanCode,
-              x: position.x,
-              y: position.y,
-              dependencies: baseDeps,
-              authors: [AI_AUTHOR],
-              source: buildAISource(runId),
-            }));
+                const created = await onCreateNode({
+                  type: node.type,
+                  title: node.title,
+                  content: nodeContent,
+                  formula: node.formula,
+                  leanCode: node.leanCode,
+                  x: position.x,
+                  y: position.y,
+                  dependencies: baseDeps,
+                  authors: [AI_AUTHOR],
+                  source: buildAISource(runId),
+                });
 
-            if (created && typeof created === "object" && "id" in created && created.id) {
-              diagramIdToActualId.set(node.id, created.id);
-              baseDepsByActualId.set(created.id, baseDeps);
-              createdNodeIds.push(created.id);
-            }
-          }
-
-          if (onUpdateNode && diagram.edges && diagram.edges.length > 0) {
-            const depsByActualId = new Map<string, Set<string>>();
-
-            diagram.edges.forEach((edge) => {
-              const fromActual = diagramIdToActualId.get(edge.from);
-              const toActual = diagramIdToActualId.get(edge.to);
-              if (!fromActual || !toActual) return;
-              if (!depsByActualId.has(toActual)) {
-                depsByActualId.set(toActual, new Set());
+                if (created && typeof created === "object" && "id" in created && created.id) {
+                  diagramIdToActualId.set(node.id, created.id);
+                  baseDepsByActualId.set(created.id, baseDeps);
+                  createdNodeIds.push(created.id);
+                }
               }
-              depsByActualId.get(toActual)?.add(fromActual);
-            });
 
-            await Promise.all(
-              Array.from(depsByActualId.entries()).map(([actualId, deps]) => {
-                const baseDeps = baseDepsByActualId.get(actualId) || [];
-                const merged = Array.from(new Set([...baseDeps, ...Array.from(deps)]));
-                return Promise.resolve(onUpdateNode(actualId, { dependencies: merged }));
-              })
-            );
-          }
+              // Actualizar edges (dependencies) después de crear todos los nodos
+              if (onUpdateNode && diagram.edges && diagram.edges.length > 0) {
+                const depsByActualId = new Map<string, Set<string>>();
 
-          if (onCreateBlock && createdNodeIds.length > 0) {
-            const titleSeed = proposal.content || diagram.nodes[0]?.title || "Proposal";
-            const groupTitle = deriveGroupTitle(titleSeed);
-            onCreateBlock(groupTitle, createdNodeIds);
-          }
+                diagram.edges.forEach((edge) => {
+                  const fromActual = diagramIdToActualId.get(edge.from);
+                  const toActual = diagramIdToActualId.get(edge.to);
+                  if (!fromActual || !toActual) return;
+                  if (!depsByActualId.has(toActual)) {
+                    depsByActualId.set(toActual, new Set());
+                  }
+                  depsByActualId.get(toActual)?.add(fromActual);
+                });
+
+                // Actualizar todas las dependencias en paralelo
+                await Promise.all(
+                  Array.from(depsByActualId.entries()).map(async ([actualId, deps]) => {
+                    const baseDeps = baseDepsByActualId.get(actualId) || [];
+                    const merged = Array.from(new Set([...baseDeps, ...Array.from(deps)]));
+                    await onUpdateNode(actualId, { dependencies: merged });
+                  })
+                );
+              }
+
+              // Crear bloque con todos los nodos creados
+              if (onCreateBlock && createdNodeIds.length > 0) {
+                const titleSeed = proposal.content || diagram.nodes[0]?.title || "Proposal";
+                const groupTitle = deriveGroupTitle(titleSeed);
+                onCreateBlock(groupTitle, createdNodeIds);
+              }
+
+              return { diagramIdToActualId, createdNodeIds };
+            },
+            {
+              onSuccess: (result) => {
+                console.log(`[FloatingAIBar] ✅ Diagram created successfully:`, result);
+              },
+              onError: (error) => {
+                console.error(`[FloatingAIBar] ❌ Error creating diagram:`, error);
+                addInsight({
+                  type: "insight",
+                  title: "Error creando diagrama",
+                  content: error.message,
+                });
+              },
+            }
+          );
 
           continue;
         }
@@ -484,27 +671,53 @@ export function FloatingAIBar({
         const confidencePercent = Math.round(proposal.score * 100);
         const nodeContent = `**Confidence: ${confidencePercent}%**\n\n${proposal.content}\n\n---\n*Reasoning: ${proposal.reasoning}*`;
 
-        const created = await Promise.resolve(onCreateNode({
-          type: "NOTE",
-          title: proposal.content.slice(0, 60) + (proposal.content.length > 60 ? "..." : ""),
-          content: nodeContent,
-          x: nodeX,
-          y: nodeY,
-          dependencies: dependencyIds,
-          authors: [AI_AUTHOR],
-          source: buildAISource(runId),
-        }));
+        console.log(`[FloatingAIBar] Creating single node for proposal ${index + 1}`);
+        
+        // Crear nodo individual en la cola
+        await queueCanvasOperation(
+          `create-single-node-${proposal.content.slice(0, 30)}`,
+          async () => {
+            const created = await onCreateNode({
+              type: "NOTE",
+              title: proposal.content.slice(0, 60) + (proposal.content.length > 60 ? "..." : ""),
+              content: nodeContent,
+              x: nodeX,
+              y: nodeY,
+              dependencies: dependencyIds,
+              authors: [AI_AUTHOR],
+              source: buildAISource(runId),
+            });
 
-        if (onCreateBlock && created && typeof created === "object" && "id" in created && created.id) {
-          const groupTitle = deriveGroupTitle(proposal.content);
-          onCreateBlock(groupTitle, [created.id]);
-        }
+            if (onCreateBlock && created && typeof created === "object" && "id" in created && created.id) {
+              const groupTitle = deriveGroupTitle(proposal.content);
+              onCreateBlock(groupTitle, [created.id]);
+            }
+
+            return created;
+          },
+          {
+            onSuccess: (created) => {
+              console.log(`[FloatingAIBar] ✅ Single node created successfully:`, created);
+            },
+            onError: (error) => {
+              console.error(`[FloatingAIBar] ❌ Error creating single node:`, error);
+              addInsight({
+                type: "insight",
+                title: "Error creando nodo",
+                content: error.message,
+              });
+            },
+          }
+        );
       }
 
       setCommand("");
       // Clear context after creating nodes
       setContextNodes([]);
+      
+      console.log("[FloatingAIBar] ✅ Exploration completed successfully");
     } catch (err) {
+      console.error("[FloatingAIBar] ❌ Exploration failed:", err);
       addInsight({
         type: "insight",
         title: "Error",
@@ -518,60 +731,16 @@ export function FloatingAIBar({
 
   const handleChatSend = useCallback(async () => {
     const trimmed = command.trim();
-    if (!trimmed || !problemId || isChatLoading || !isOrchestrationAvailable) return;
+    if (!trimmed || !problemId || isAiLoading) return;
 
-    const userMessage: ChatMessage = {
-      id: crypto.randomUUID(),
+    setCommand("");
+    
+    // Use AI SDK streaming instead of backend worker
+    await appendAiMessage({
       role: "user",
       content: trimmed,
-      timestamp: new Date(),
-    };
-
-    const history = [...chatMessages, userMessage].slice(-8);
-    setChatMessages(history);
-    setCommand("");
-    setIsChatLoading(true);
-
-    try {
-      const contextNodesText = contextNodes.length > 0
-        ? `Context nodes:\n${contextNodes.map((n) => `${n.title} (${n.type})`).join("\n")}\n\n`
-        : "";
-      const prompt = `${contextNodesText}${buildChatContext(history)}\n\nAssistant: Provide guidance and exploration directions.`;
-
-      const result = await exploreContext({
-        problem_id: problemId,
-        context: prompt,
-        max_iterations: 1,
-      });
-
-      const reply = result.proposals?.[0];
-      const content = reply
-        ? `${reply.content}${reply.reasoning ? `\n\nReasoning: ${reply.reasoning}` : ""}`
-        : "No response available.";
-
-      setChatMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          content,
-          timestamp: new Date(),
-        },
-      ].slice(-10));
-    } catch (err) {
-      setChatMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          content: err instanceof Error ? err.message : "Chat failed.",
-          timestamp: new Date(),
-        },
-      ].slice(-10));
-    } finally {
-      setIsChatLoading(false);
-    }
-  }, [command, problemId, isChatLoading, isOrchestrationAvailable, chatMessages, contextNodes]);
+    });
+  }, [command, problemId, isAiLoading, appendAiMessage]);
 
   const handleUseChatInExplore = useCallback((content: string) => {
     setCommand(content);
@@ -589,7 +758,7 @@ export function FloatingAIBar({
       type: "insight",
       title: "Quick Insight",
       content: `Node "${node.title}" is a ${NODE_TYPE_CONFIG[node.type]?.label || node.type}. ${node.type === "AXIOM" ? "This serves as a foundational assumption." :
-        node.type === "LEMMA" ? "This is a helper result for proving larger theorems." :
+        node.type === "LEMMA" ? "This is a helper result for proving larger.orems." :
           node.type === "THEOREM" ? "This represents a main result in the proof." :
             node.type === "DEFINITION" ? "This establishes key terminology." :
               "This is part of the proof structure."
@@ -617,7 +786,7 @@ export function FloatingAIBar({
 
       setCurrentLeanCode(result.lean_code);
 
-      // Update the node's leanCode field if we have onUpdateNode
+      // Update node's leanCode field if we have onUpdateNode
       if (onUpdateNode && selectedNode) {
         onUpdateNode(selectedNode.id, { leanCode: result.lean_code });
         addInsight({
@@ -774,7 +943,7 @@ export function FloatingAIBar({
           score: 1,
         });
 
-        // Update the selected node's leanCode field instead of creating a new node
+        // Update selected node's leanCode field instead of creating a new node
         if (onUpdateNode && contextNodes.length > 0) {
           const targetNodeId = contextNodes[0].id;
           onUpdateNode(targetNodeId, {
@@ -931,38 +1100,113 @@ export function FloatingAIBar({
         onDoubleClick={(e) => e.stopPropagation()}
       >
         <div className="bg-white/90 backdrop-blur-xl rounded-2xl shadow-2xl shadow-black/10 overflow-hidden pointer-events-auto animate-in fade-in slide-in-from-bottom-4 duration-300">
-          {(isInputFocused && (command.trim().length > 0 || chatMessages.length > 0)) || isChatLoading ? (
+          {(isInputFocused && (command.trim().length > 0 || aiMessages.length > 0)) || isAiLoading ? (
             <div className="border-b border-neutral-100">
-              <div className="max-h-48 overflow-y-auto px-3 py-3 space-y-2">
-                {chatMessages.map((msg) => {
+              <div className="max-h-64 overflow-y-auto px-3 py-3 space-y-2">
+                {/* AI SDK Messages with streaming */}
+                {aiMessages.map((msg) => {
                   const isUser = msg.role === "user";
-                  return (
-                    <div key={msg.id} className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
-                      <div className={`max-w-[80%] rounded-xl px-3 py-2 text-xs leading-relaxed whitespace-pre-wrap ${
-                        isUser
-                          ? "bg-neutral-900 text-white"
-                          : "bg-neutral-50 border border-neutral-200 text-neutral-700"
-                      }`}>
-                        {msg.content}
-                        {!isUser && (
-                          <div className="mt-2">
-                            <button
-                              onClick={() => handleUseChatInExplore(msg.content)}
-                              className="text-[10px] text-indigo-600 hover:text-indigo-700"
-                            >
-                              Usar en exploración
-                            </button>
-                          </div>
-                        )}
+                  if (isUser) {
+                    return (
+                      <div key={msg.id} className="flex justify-end">
+                        <div className="max-w-[80%] rounded-xl px-3 py-2 text-xs leading-relaxed bg-neutral-900 text-white">
+                          {msg.content}
+                        </div>
                       </div>
+                    );
+                  }
+                  
+                  // Parse thinking and response for assistant messages
+                  const content = msg.content;
+                  const thinkingBlocks = content.match(/<thinking>([\s\S]*?)<\/thinking>/g) || [];
+                  const responseText = content.replace(/<thinking>[\s\S]*?<\/thinking>/g, "").trim();
+                  
+                  return (
+                    <div key={msg.id} className="flex flex-col gap-2">
+                      {/* Thinking blocks */}
+                      {showThinking && thinkingBlocks.length > 0 && (
+                        <div className="flex justify-start">
+                          <div className="max-w-[90%] rounded-xl px-3 py-2 text-xs leading-relaxed bg-purple-50 border border-purple-200 text-purple-700">
+                            <div className="flex items-center gap-1.5 mb-1.5 text-purple-500">
+                              <Brain className="w-3 h-3" />
+                              <span className="font-medium text-[10px] uppercase tracking-wide">Thinking</span>
+                            </div>
+                            <div className="text-purple-600 whitespace-pre-wrap max-h-32 overflow-y-auto">
+                              {thinkingBlocks.map(block => block.replace(/<\/?thinking>/g, "")).join("\n\n")}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                      
+                      {/* Response */}
+                      {responseText && (
+                        <div className="flex justify-start">
+                          <div className="max-w-[85%] rounded-xl px-3 py-2 text-xs leading-relaxed bg-neutral-50 border border-neutral-200 text-neutral-700 whitespace-pre-wrap">
+                            {responseText}
+                            <div className="mt-2 flex gap-2">
+                              <button
+                                onClick={() => handleUseChatInExplore(responseText)}
+                                className="text-[10px] text-indigo-600 hover:text-indigo-700"
+                              >
+                                Usar en exploración
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
-                {isChatLoading && (
-                  <div className="text-xs text-neutral-400">Pensando...</div>
+                
+                {/* Streaming indicator with current thinking */}
+                {isAiLoading && (
+                  <div className="flex flex-col gap-2">
+                    {currentThinking && showThinking && (
+                      <div className="flex justify-start animate-pulse">
+                        <div className="max-w-[90%] rounded-xl px-3 py-2 text-xs leading-relaxed bg-purple-50 border border-purple-200 text-purple-600">
+                          <div className="flex items-center gap-1.5 mb-1.5">
+                            <Brain className="w-3 h-3 animate-pulse" />
+                            <span className="font-medium text-[10px] uppercase tracking-wide">Thinking...</span>
+                          </div>
+                          <div className="whitespace-pre-wrap max-h-24 overflow-y-auto">
+                            {currentThinking.slice(-500)}
+                            <span className="inline-block w-1.5 h-3 bg-purple-400 animate-pulse ml-0.5" />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    {currentResponse && (
+                      <div className="flex justify-start">
+                        <div className="max-w-[85%] rounded-xl px-3 py-2 text-xs leading-relaxed bg-neutral-50 border border-neutral-200 text-neutral-700 whitespace-pre-wrap">
+                          {currentResponse}
+                          <span className="inline-block w-1.5 h-3 bg-neutral-400 animate-pulse ml-0.5" />
+                        </div>
+                      </div>
+                    )}
+                    {!currentThinking && !currentResponse && (
+                      <div className="flex items-center gap-2 text-xs text-neutral-400">
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        <span>Iniciando...</span>
+                      </div>
+                    )}
+                  </div>
                 )}
+                
                 <div ref={chatEndRef} />
               </div>
+              
+              {/* Toggle thinking visibility */}
+              {aiMessages.some(m => m.content.includes("<thinking>")) && (
+                <div className="px-3 py-1.5 border-t border-neutral-100 flex justify-end">
+                  <button
+                    onClick={() => setShowThinking(!showThinking)}
+                    className="text-[10px] text-neutral-400 hover:text-neutral-600 flex items-center gap-1"
+                  >
+                    <Brain className="w-3 h-3" />
+                    {showThinking ? "Ocultar pensamiento" : "Mostrar pensamiento"}
+                  </button>
+                </div>
+              )}
             </div>
           ) : null}
 
@@ -1021,7 +1265,7 @@ export function FloatingAIBar({
               }}
               placeholder={contextNodes.length > 0 ? `Insights about ${contextNodes[0].title}...` : "Insights..."}
               className="flex-1 text-sm bg-transparent outline-none border-none ring-0 focus:outline-none focus:ring-0 focus:border-none placeholder:text-neutral-400 text-neutral-800"
-              disabled={isChatLoading}
+              disabled={isAiLoading}
               autoFocus
             />
 
@@ -1043,14 +1287,14 @@ export function FloatingAIBar({
                 <ImageIcon className="w-4 h-4" />
               </button>
 
-              {isChatLoading ? (
+              {isAiLoading ? (
                 <div className="p-2">
                   <Loader2 className="w-4 h-4 text-neutral-400 animate-spin" />
                 </div>
               ) : (
                 <button
                   onClick={handleChatSend}
-                  disabled={!command.trim() || !isOrchestrationAvailable || isChatLoading}
+                  disabled={!command.trim() || isAiLoading}
                   className="p-2 text-neutral-500 hover:text-neutral-700 rounded-full transition-colors disabled:opacity-30"
                 >
                   <Send className="w-4 h-4" />
@@ -1072,7 +1316,7 @@ export function FloatingAIBar({
               icon={Compass}
               label="Explore"
               onClick={handleExplore}
-              disabled={(!command.trim() && chatMessages.length === 0 && contextNodes.length === 0) || isLoading}
+              disabled={(!command.trim() && aiMessages.length === 0 && contextNodes.length === 0) || isLoading}
               active={activeAction === "explore"}
             />
 
@@ -1200,7 +1444,10 @@ function FloatingInsights({ insights, onDismiss, onCopy, onCreateNode, copied }:
               )}
             </div>
             <button
-              onClick={() => onDismiss(insight.id)}
+              onClick={(e) => {
+                e.stopPropagation();
+                onDismiss(insight.id);
+              }}
               className="p-1 text-neutral-400 hover:text-neutral-600 transition-colors"
             >
               <X className="w-3.5 h-3.5" />
@@ -1223,7 +1470,10 @@ function FloatingInsights({ insights, onDismiss, onCopy, onCreateNode, copied }:
           {/* Actions */}
           <div className="flex items-center gap-1 px-3 py-2 bg-neutral-50/50">
             <button
-              onClick={() => onCopy(insight.id, insight.content)}
+              onClick={(e) => {
+                e.stopPropagation();
+                onCopy(insight.id, insight.content);
+              }}
               className="flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-neutral-500 hover:text-neutral-700 rounded-full transition-colors"
             >
               {copied === insight.id ? (
@@ -1239,7 +1489,10 @@ function FloatingInsights({ insights, onDismiss, onCopy, onCreateNode, copied }:
               )}
             </button>
             <button
-              onClick={() => onCreateNode(insight)}
+              onClick={(e) => {
+                e.stopPropagation();
+                onCreateNode(insight);
+              }}
               className="flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-neutral-600 hover:text-neutral-800 rounded-full transition-colors"
             >
               <Plus className="w-3 h-3" />

@@ -1,3 +1,9 @@
+/**
+ * @deprecated This component uses the legacy ProofCanvas. 
+ * Collaboration is now handled directly in the canvas page with ProofCanvasV2.
+ * See /app/problems/[id]/canvas/page.tsx for the current implementation.
+ * This file will be removed in a future version.
+ */
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";

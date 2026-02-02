@@ -1,202 +1,644 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth";
-import { getProblems, seedProblems, Problem } from "@/lib/api";
-import { WorkspaceSidebar } from "@/components/layout/WorkspaceSidebar";
-import { WorkspaceHeader } from "@/components/layout/WorkspaceHeader";
+import { getProblems, Problem, getTrendingProblems, TrendingProblem, seedProblems } from "@/lib/api";
+import {
+  NotificationsDropdown,
+  TeamsSidebar,
+  DiscussionsSidebar,
+} from "@/components/social";
+import {
+  Search,
+  Plus,
+  ChevronDown,
+  Star,
+  BookOpen,
+  Lock,
+  Globe,
+  Sparkles,
+  RefreshCw,
+  User,
+  Settings,
+  HelpCircle,
+  LogOut,
+  Tag,
+  TrendingUp,
+  Grid3x3,
+  List,
+} from "lucide-react";
+
+function formatRelativeTime(iso?: string | null) {
+  if (!iso) return "just now";
+  const then = new Date(iso).getTime();
+  const now = Date.now();
+  const diff = Math.max(0, now - then);
+  const minutes = Math.floor(diff / 60000);
+  const hours = Math.floor(diff / 3600000);
+  const days = Math.floor(diff / 86400000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  if (hours < 24) return `${hours}h ago`;
+  return `${days}d ago`;
+}
+
+function getInitials(name: string) {
+  return name
+    .split(/[\s_-]/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join("");
+}
 
 export default function CatalogPage() {
-	const { user, isLoading: authLoading } = useAuth();
-	const router = useRouter();
-	const [problems, setProblems] = useState<Problem[]>([]);
-	const [loading, setLoading] = useState(true);
-	const [searchQuery, setSearchQuery] = useState("");
-	const [seeding, setSeeding] = useState(false);
+  const { user, isLoading: authLoading, logout } = useAuth();
+  const router = useRouter();
+  const [userDropdownOpen, setUserDropdownOpen] = useState(false);
+  const userDropdownRef = useRef<HTMLDivElement>(null);
+  const [problems, setProblems] = useState<Problem[]>([]);
+  const [trending, setTrending] = useState<TrendingProblem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedDifficulty, setSelectedDifficulty] = useState<"all" | "easy" | "medium" | "hard">("all");
+  const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
+  const [seeding, setSeeding] = useState(false);
 
-	useEffect(() => {
-		if (!authLoading && !user) {
-			router.push("/login");
-		}
-	}, [authLoading, user, router]);
+  useEffect(() => {
+    if (!authLoading && !user) {
+      router.push("/login");
+    }
+  }, [authLoading, user, router]);
 
-	useEffect(() => {
-		loadProblems();
-	}, []);
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (userDropdownRef.current && !userDropdownRef.current.contains(event.target as Node)) {
+        setUserDropdownOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
-	async function loadProblems() {
-		try {
-			setLoading(true);
-			const data = await getProblems({ visibility: "public" });
-			setProblems(data.problems);
-		} catch (err) {
-			console.error("Failed to load problems:", err);
-		} finally {
-			setLoading(false);
-		}
-	}
+  const loadData = useCallback(async () => {
+    if (!user) return;
+    setLoading(true);
+    try {
+      const [problemsData, trendingData] = await Promise.all([
+        getProblems({ visibility: "public" }),
+        getTrendingProblems(10),
+      ]);
+      setProblems(problemsData.problems);
+      setTrending(trendingData.problems);
+    } catch (err) {
+      console.error("Failed to load catalog data", err);
+    } finally {
+      setLoading(false);
+    }
+  }, [user]);
 
-	async function handleSeed() {
-		try {
-			setSeeding(true);
-			await seedProblems();
-			await loadProblems();
-		} catch (err) {
-			console.error("Failed to seed problems:", err);
-		} finally {
-			setSeeding(false);
-		}
-	}
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
-	const filteredProblems = problems.filter(
-		(p) =>
-			p.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-			p.description?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-			p.tags.some((t) => t.toLowerCase().includes(searchQuery.toLowerCase()))
-	);
+  const handleSeed = async () => {
+    try {
+      setSeeding(true);
+      await seedProblems();
+      await loadData();
+    } catch (err) {
+      console.error("Failed to seed problems:", err);
+    } finally {
+      setSeeding(false);
+    }
+  };
 
-	if (authLoading) {
-		return (
-			<div className="min-h-screen flex items-center justify-center bg-[var(--bg-primary)]">
-				<div className="animate-spin rounded-full h-6 w-6 border-2 border-[var(--text-primary)] border-t-transparent" />
-			</div>
-		);
-	}
+  const filteredProblems = problems.filter(
+    (p) => {
+      const matchesSearch = 
+        p.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        p.description?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        p.tags.some((t) => t.toLowerCase().includes(searchQuery.toLowerCase()));
+      
+      const matchesDifficulty = selectedDifficulty === "all" || p.difficulty === selectedDifficulty;
+      
+      return matchesSearch && matchesDifficulty;
+    }
+  );
 
-	return (
-		<div className="flex h-screen overflow-hidden bg-[var(--bg-primary)]">
-			<WorkspaceSidebar />
+  if (authLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-neutral-50">
+        <div className="animate-spin rounded-full h-6 w-6 border-2 border-neutral-900 border-t-transparent" />
+      </div>
+    );
+  }
 
-			<main className="flex-1 flex flex-col h-full">
-				<WorkspaceHeader
-					breadcrumbs={[
-						{ label: "Dashboard", href: "/dashboard" },
-						{ label: "Catalog" },
-					]}
-					status={null}
-				/>
+  if (!user) return null;
 
-				<div className="flex-1 overflow-y-auto bg-[var(--bg-secondary)]">
-					<div className="max-w-5xl mx-auto px-8 py-12">
-						<div className="mb-8">
-							<h1 className="text-2xl font-medium tracking-tight text-[var(--text-primary)] mb-2">
-								Problem Catalog
-							</h1>
-							<p className="text-sm text-[var(--text-muted)]">
-								Explore public mathematical problems from the community
-							</p>
-						</div>
+  return (
+    <div className="min-h-screen bg-neutral-50 text-neutral-900 flex flex-col">
+      {/* Navbar */}
+      <nav className="sticky top-0 w-full z-50 border-b border-neutral-200 bg-white/90 backdrop-blur-sm">
+        <div className="max-w-[1400px] mx-auto px-4 h-14 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <Link href="/" className="flex items-center gap-2 group">
+              <div className="w-6 h-6 bg-neutral-900 rounded-md flex items-center justify-center text-white group-hover:bg-indigo-600 transition-colors">
+                <span className="font-[var(--font-math)] italic text-[12px] leading-none logo-rho">&rho;</span>
+              </div>
+              <span className="text-sm font-bold tracking-tight">ProofMesh</span>
+            </Link>
+          </div>
 
-						{/* Search */}
-						<div className="mb-8">
-							<div className="relative">
-								<svg
-									className="absolute left-3 top-2.5 w-4 h-4 text-[var(--text-faint)]"
-									fill="none"
-									viewBox="0 0 24 24"
-									stroke="currentColor"
-								>
-									<path
-										strokeLinecap="round"
-										strokeLinejoin="round"
-										strokeWidth={1.5}
-										d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"
-									/>
-								</svg>
-								<input
-									type="text"
-									value={searchQuery}
-									onChange={(e) => setSearchQuery(e.target.value)}
-									placeholder="Search problems by title, description, or tags..."
-									className="w-full pl-10 pr-4 py-2 bg-[var(--bg-primary)] border border-[var(--border-primary)] rounded-md focus:border-[var(--accent-primary)] focus:ring-1 focus:ring-[var(--accent-primary)] text-[var(--text-primary)]"
-								/>
-							</div>
-						</div>
+          <div className="flex-1 max-w-xl hidden md:block">
+            <div className="relative group">
+              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                <Search className="w-4 h-4 text-neutral-400" />
+              </div>
+              <input
+                type="text"
+                className="block w-full rounded-full border border-neutral-200 bg-white py-2 pl-9 pr-12 text-sm text-neutral-900 placeholder:text-neutral-500 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 focus:outline-none transition-all"
+                placeholder="Search theorems, problems, or tags..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+              <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
+                <kbd className="inline-flex items-center rounded border border-neutral-300 bg-neutral-100 px-1.5 py-0.5 font-mono text-[10px] text-neutral-500">
+                  /
+                </kbd>
+              </div>
+            </div>
+          </div>
 
-						{/* Results */}
-						{loading ? (
-							<div className="flex items-center justify-center py-12">
-								<div className="animate-spin rounded-full h-6 w-6 border-2 border-[var(--text-primary)] border-t-transparent" />
-							</div>
-						) : filteredProblems.length === 0 ? (
-							<div className="border border-[var(--border-primary)] rounded-xl p-12 text-center bg-[var(--bg-primary)]">
-								<h3 className="text-sm font-medium text-[var(--text-primary)] mb-2">No problems found</h3>
-								<p className="text-xs text-[var(--text-muted)]">
-									{searchQuery ? "Try a different search term" : "No public problems available yet"}
-								</p>
-								{!searchQuery && (
-									<button
-										onClick={handleSeed}
-										disabled={seeding}
-										className="mt-4 text-xs text-[var(--accent-primary)] hover:text-[var(--text-primary)] transition-colors"
-									>
-										{seeding ? "Adding samples..." : "Add sample problems"}
-									</button>
-								)}
-							</div>
-						) : (
-							<div className="grid gap-4">
-								{filteredProblems.map((problem) => (
-									<Link
-										key={problem.id}
-										href={`/problems/${problem.id}`}
-										className="border border-[var(--border-primary)] bg-[var(--bg-primary)] rounded-xl p-6 hover:border-[var(--border-secondary)] hover:shadow-[var(--shadow-lg)] transition-all group"
-									>
-										<div className="flex items-start justify-between">
-											<div className="flex-1">
-												<h3 className="text-base font-medium text-[var(--text-primary)] mb-1 group-hover:text-[var(--accent-primary)] transition-colors">
-													{problem.title}
-												</h3>
-												{problem.description && (
-													<p className="text-sm text-[var(--text-muted)] mb-3 line-clamp-2">
-														{problem.description}
-													</p>
-												)}
-												<div className="flex items-center gap-4 text-xs text-[var(--text-muted)]">
-													<span className="flex items-center gap-1">
-														<div className="w-4 h-4 rounded-full bg-[var(--bg-tertiary)] flex items-center justify-center text-[8px] text-[var(--text-secondary)]">
-															{problem.author.username.slice(0, 2).toUpperCase()}
-														</div>
-														{problem.author.username}
-													</span>
-													<span>·</span>
-													<span>{problem.library_item_count} items</span>
-												</div>
-											</div>
-											{problem.difficulty && (
-												<span
-													className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${problem.difficulty === "easy"
-														? "bg-[var(--success-bg)] text-[var(--success)]"
-														: problem.difficulty === "medium"
-															? "bg-[var(--warning-bg)] text-[var(--warning)]"
-															: "bg-[var(--error-bg)] text-[var(--error)]"
-														}`}
-												>
-													{problem.difficulty}
-												</span>
-											)}
-										</div>
-										{problem.tags.length > 0 && (
-											<div className="flex gap-2 mt-4">
-												{problem.tags.slice(0, 5).map((tag) => (
-													<span
-														key={tag}
-														className="px-2 py-0.5 bg-[var(--bg-tertiary)] text-[var(--text-muted)] text-[10px] rounded-full"
-													>
-														{tag}
-													</span>
-												))}
-											</div>
-										)}
-									</Link>
-								))}
-							</div>
-						)}
-					</div>
-				</div>
-			</main>
-		</div>
-	);
+          <div className="flex items-center gap-3">
+            <NotificationsDropdown />
+            <div className="h-4 w-px bg-neutral-200 mx-1" />
+            <div className="relative" ref={userDropdownRef}>
+              <button
+                onClick={() => setUserDropdownOpen(!userDropdownOpen)}
+                className="flex items-center gap-2 group p-1 hover:bg-neutral-50 rounded-md transition-colors"
+              >
+                <div className="w-6 h-6 rounded-full bg-indigo-100 border border-neutral-200 group-hover:border-indigo-500 transition-colors flex items-center justify-center text-[10px] font-bold text-indigo-700">
+                  {getInitials(user.username)}
+                </div>
+                <ChevronDown className={`w-3 h-3 text-neutral-400 transition-transform ${userDropdownOpen ? "rotate-180" : ""}`} />
+              </button>
+
+              {userDropdownOpen && (
+                <div className="absolute right-0 mt-2 w-56 bg-white border border-neutral-200 rounded-lg shadow-lg py-1 z-50">
+                  <div className="px-3 py-2 border-b border-neutral-100">
+                    <p className="text-sm font-medium text-neutral-900">{user.username}</p>
+                    <p className="text-xs text-neutral-500">@{user.username.toLowerCase()}</p>
+                  </div>
+                  <Link
+                    href="/profile"
+                    className="flex items-center gap-2 px-3 py-2 text-sm text-neutral-700 hover:bg-neutral-50 transition-colors"
+                    onClick={() => setUserDropdownOpen(false)}
+                  >
+                    <User className="w-4 h-4 text-neutral-400" />
+                    Your Profile
+                  </Link>
+                  <Link
+                    href="/settings"
+                    className="flex items-center gap-2 px-3 py-2 text-sm text-neutral-700 hover:bg-neutral-50 transition-colors"
+                    onClick={() => setUserDropdownOpen(false)}
+                  >
+                    <Settings className="w-4 h-4 text-neutral-400" />
+                    Settings
+                  </Link>
+                  <Link
+                    href="/help"
+                    className="flex items-center gap-2 px-3 py-2 text-sm text-neutral-700 hover:bg-neutral-50 transition-colors"
+                    onClick={() => setUserDropdownOpen(false)}
+                  >
+                    <HelpCircle className="w-4 h-4 text-neutral-400" />
+                    Help & Docs
+                  </Link>
+                  <div className="border-t border-neutral-100 mt-1 pt-1">
+                    <button
+                      onClick={() => {
+                        setUserDropdownOpen(false);
+                        logout();
+                      }}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors"
+                    >
+                      <LogOut className="w-4 h-4" />
+                      Sign out
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </nav>
+
+      {/* Main Content Grid */}
+      <div className="flex-1 max-w-[1400px] mx-auto w-full px-4 py-6 grid grid-cols-1 md:grid-cols-12 gap-8">
+        {/* Left Sidebar */}
+        <aside className="hidden md:block md:col-span-3 lg:col-span-3 space-y-6">
+          {/* User Context */}
+          <div className="bg-white rounded-lg border border-neutral-200 p-4 shadow-sm">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-full bg-indigo-100 border border-neutral-100 flex items-center justify-center text-sm font-bold text-indigo-700">
+                {getInitials(user.username)}
+              </div>
+              <div>
+                <div className="text-sm font-semibold text-neutral-900">{user.username}</div>
+                <div className="text-xs text-neutral-500">@{user.username.toLowerCase()}</div>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2 py-3 border-t border-neutral-100">
+              <div className="text-center">
+                <div className="text-xs text-neutral-500">Public</div>
+                <div className="text-sm font-semibold text-neutral-900">{problems.length}</div>
+              </div>
+              <div className="text-center">
+                <div className="text-xs text-neutral-500">Trending</div>
+                <div className="text-sm font-semibold text-indigo-600">{trending.length}</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Navigation */}
+          <div className="bg-white rounded-lg border border-neutral-200 p-4 shadow-sm">
+            <h3 className="text-xs font-semibold text-neutral-900 mb-3">Navigation</h3>
+            <div className="space-y-1">
+              <Link
+                href="/dashboard"
+                className="flex items-center gap-2 px-3 py-2 text-sm text-neutral-700 hover:bg-neutral-50 rounded-md transition-colors"
+              >
+                <BookOpen className="w-4 h-4 text-neutral-400" />
+                Dashboard
+              </Link>
+              <Link
+                href="/catalog"
+                className="flex items-center gap-2 px-3 py-2 text-sm text-indigo-600 bg-indigo-50 rounded-md font-medium"
+              >
+                <BookOpen className="w-4 h-4" />
+                Catalog
+              </Link>
+              <Link
+                href="/problems/new"
+                className="flex items-center gap-2 px-3 py-2 text-sm text-neutral-700 hover:bg-neutral-50 rounded-md transition-colors"
+              >
+                <Plus className="w-4 h-4 text-neutral-400" />
+                New Problem
+              </Link>
+            </div>
+          </div>
+
+          {/* Trending Problems */}
+          <div className="bg-white rounded-lg border border-neutral-200 p-4 shadow-sm">
+            <div className="flex items-center gap-2 mb-3">
+              <TrendingUp className="w-4 h-4 text-indigo-600" />
+              <h3 className="text-xs font-semibold text-neutral-900">Trending</h3>
+            </div>
+            <div className="space-y-2">
+              {trending.slice(0, 5).map((problem) => (
+                <Link
+                  key={problem.id}
+                  href={`/problems/${problem.id}`}
+                  className="block p-2 hover:bg-neutral-50 rounded-md transition-colors group"
+                >
+                  <div className="text-sm font-medium text-neutral-700 group-hover:text-indigo-600 truncate">
+                    {problem.title}
+                  </div>
+                  <div className="flex items-center gap-2 text-xs text-neutral-500 mt-1">
+                    <span>{problem.author.username}</span>
+                    <span>·</span>
+                    <span>{problem.star_count} stars</span>
+                  </div>
+                </Link>
+              ))}
+              {trending.length === 0 && (
+                <p className="text-xs text-neutral-400 text-center py-4">No trending problems yet</p>
+              )}
+            </div>
+          </div>
+
+          {/* Teams */}
+          <TeamsSidebar />
+        </aside>
+
+        {/* Center: Problem Catalog */}
+        <main className="col-span-1 md:col-span-9 lg:col-span-6">
+          <div className="flex items-center justify-between mb-6">
+            <div>
+              <h1 className="text-lg font-semibold text-neutral-900">Problem Catalog</h1>
+              <p className="text-xs text-neutral-500 mt-1">
+                Explore {problems.length} public problems from the community
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={loadData}
+                className="text-xs font-medium text-neutral-600 hover:text-neutral-900 flex items-center gap-1 px-3 py-1.5 border border-neutral-200 rounded-md hover:bg-neutral-50 transition-colors"
+              >
+                <RefreshCw className={`w-3 h-3 ${loading ? "animate-spin" : ""}`} />
+                Refresh
+              </button>
+              <div className="flex border border-neutral-200 rounded-md overflow-hidden">
+                <button
+                  onClick={() => setViewMode("grid")}
+                  className={`p-1.5 ${viewMode === "grid" ? "bg-neutral-100 text-neutral-900" : "text-neutral-400 hover:text-neutral-900"}`}
+                >
+                  <Grid3x3 className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={() => setViewMode("list")}
+                  className={`p-1.5 ${viewMode === "list" ? "bg-neutral-100 text-neutral-900" : "text-neutral-400 hover:text-neutral-900"}`}
+                >
+                  <List className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Filters */}
+          <div className="bg-white rounded-lg border border-neutral-200 p-4 shadow-sm mb-6">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-medium text-neutral-700">Difficulty:</span>
+                  <div className="flex gap-1">
+                    {(["all", "easy", "medium", "hard"] as const).map((diff) => (
+                      <button
+                        key={diff}
+                        onClick={() => setSelectedDifficulty(diff)}
+                        className={`text-xs font-medium px-2.5 py-1 rounded-md transition-colors ${
+                          selectedDifficulty === diff
+                            ? diff === "easy"
+                              ? "bg-emerald-100 text-emerald-700"
+                              : diff === "medium"
+                                ? "bg-amber-100 text-amber-700"
+                                : diff === "hard"
+                                  ? "bg-red-100 text-red-700"
+                                  : "bg-neutral-900 text-white"
+                            : "bg-neutral-100 text-neutral-600 hover:bg-neutral-200"
+                        }`}
+                      >
+                        {diff === "all" ? "All" : diff}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div className="text-xs text-neutral-500">
+                {filteredProblems.length} {filteredProblems.length === 1 ? "problem" : "problems"}
+              </div>
+            </div>
+          </div>
+
+          {/* Results */}
+          {loading ? (
+            <div className="flex items-center justify-center py-12">
+              <div className="animate-spin rounded-full h-6 w-6 border-2 border-neutral-900 border-t-transparent" />
+            </div>
+          ) : filteredProblems.length === 0 ? (
+            <div className="bg-white rounded-lg border border-neutral-200 p-12 text-center shadow-sm">
+              <BookOpen className="w-8 h-8 text-neutral-300 mx-auto mb-3" />
+              <h3 className="text-sm font-medium text-neutral-900 mb-2">No problems found</h3>
+              <p className="text-xs text-neutral-500 mb-4">
+                {searchQuery || selectedDifficulty !== "all"
+                  ? "Try adjusting your filters or search query"
+                  : "No public problems available yet"}
+              </p>
+              {!searchQuery && selectedDifficulty === "all" && (
+                <button
+                  onClick={handleSeed}
+                  disabled={seeding}
+                  className="text-xs font-medium text-indigo-600 hover:text-indigo-700 px-4 py-2 bg-indigo-50 rounded-md hover:bg-indigo-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {seeding ? "Adding samples..." : "Add sample problems"}
+                </button>
+              )}
+            </div>
+          ) : viewMode === "grid" ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {filteredProblems.map((problem) => (
+                <Link
+                  key={problem.id}
+                  href={`/problems/${problem.id}`}
+                  className="bg-white rounded-lg border border-neutral-200 p-5 shadow-sm hover:shadow-md hover:border-indigo-300 transition-all group"
+                >
+                  <div className="flex items-start justify-between mb-3">
+                    <div className="flex-1">
+                      <h3 className="text-sm font-semibold text-neutral-900 mb-1 group-hover:text-indigo-600 transition-colors line-clamp-2">
+                        {problem.title}
+                      </h3>
+                      {problem.description && (
+                        <p className="text-xs text-neutral-500 line-clamp-2">
+                          {problem.description}
+                        </p>
+                      )}
+                    </div>
+                    {problem.difficulty && (
+                      <span
+                        className={`text-[10px] font-medium px-2 py-0.5 rounded-full ml-2 flex-shrink-0 ${
+                          problem.difficulty === "easy"
+                            ? "bg-emerald-50 text-emerald-600"
+                            : problem.difficulty === "medium"
+                              ? "bg-amber-50 text-amber-600"
+                              : "bg-red-50 text-red-600"
+                        }`}
+                      >
+                        {problem.difficulty}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-3 text-xs text-neutral-500 mb-3">
+                    <span className="flex items-center gap-1">
+                      <div className="w-5 h-5 rounded-full bg-neutral-100 border border-neutral-200 flex items-center justify-center text-[9px] font-medium text-neutral-600">
+                        {getInitials(problem.author.username)}
+                      </div>
+                      {problem.author.username}
+                    </span>
+                    <span>·</span>
+                    <span>{problem.library_item_count} items</span>
+                  </div>
+
+                  {problem.tags.length > 0 && (
+                    <div className="flex gap-1.5 flex-wrap">
+                      {problem.tags.slice(0, 3).map((tag) => (
+                        <span
+                          key={tag}
+                          className="px-2 py-0.5 bg-neutral-100 text-neutral-600 text-[10px] rounded-full hover:bg-neutral-200 transition-colors"
+                        >
+                          {tag}
+                        </span>
+                      ))}
+                      {problem.tags.length > 3 && (
+                        <span className="px-2 py-0.5 bg-neutral-100 text-neutral-500 text-[10px] rounded-full">
+                          +{problem.tags.length - 3}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </Link>
+              ))}
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {filteredProblems.map((problem) => (
+                <Link
+                  key={problem.id}
+                  href={`/problems/${problem.id}`}
+                  className="bg-white rounded-lg border border-neutral-200 p-4 shadow-sm hover:shadow-md hover:border-indigo-300 transition-all group"
+                >
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        <h3 className="text-sm font-semibold text-neutral-900 group-hover:text-indigo-600 transition-colors truncate">
+                          {problem.title}
+                        </h3>
+                        {problem.difficulty && (
+                          <span
+                            className={`text-[10px] font-medium px-2 py-0.5 rounded-full flex-shrink-0 ${
+                              problem.difficulty === "easy"
+                                ? "bg-emerald-50 text-emerald-600"
+                                : problem.difficulty === "medium"
+                                  ? "bg-amber-50 text-amber-600"
+                                  : "bg-red-50 text-red-600"
+                            }`}
+                          >
+                            {problem.difficulty}
+                          </span>
+                        )}
+                      </div>
+                      {problem.description && (
+                        <p className="text-xs text-neutral-500 line-clamp-2 mb-2">
+                          {problem.description}
+                        </p>
+                      )}
+                      <div className="flex items-center gap-3 text-xs text-neutral-500">
+                        <span className="flex items-center gap-1">
+                          <div className="w-4 h-4 rounded-full bg-neutral-100 border border-neutral-200 flex items-center justify-center text-[8px] font-medium text-neutral-600">
+                            {getInitials(problem.author.username)}
+                          </div>
+                          {problem.author.username}
+                        </span>
+                        <span>·</span>
+                        <span>{problem.library_item_count} items</span>
+                        {problem.tags.length > 0 && (
+                          <>
+                            <span>·</span>
+                            <div className="flex gap-1.5">
+                              {problem.tags.slice(0, 3).map((tag) => (
+                                <span
+                                  key={tag}
+                                  className="px-2 py-0.5 bg-neutral-100 text-neutral-600 text-[10px] rounded-full"
+                                >
+                                  {tag}
+                                </span>
+                              ))}
+                              {problem.tags.length > 3 && (
+                                <span className="px-2 py-0.5 bg-neutral-100 text-neutral-500 text-[10px] rounded-full">
+                                  +{problem.tags.length - 3}
+                                </span>
+                              )}
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    <Star className="w-4 h-4 text-neutral-300 group-hover:text-amber-400 transition-colors ml-4 flex-shrink-0" />
+                  </div>
+                </Link>
+              ))}
+            </div>
+          )}
+
+          {filteredProblems.length > 0 && (
+            <div className="mt-8 text-center">
+              <button className="text-sm text-indigo-600 font-medium hover:text-indigo-800 transition-colors">
+                Load more problems
+              </button>
+            </div>
+          )}
+        </main>
+
+        {/* Right Sidebar */}
+        <aside className="hidden lg:block lg:col-span-3 space-y-6">
+          {/* Quick Stats */}
+          <div className="bg-white rounded-lg border border-neutral-200 p-4 shadow-sm">
+            <div className="flex items-center gap-2 mb-3">
+              <Sparkles className="w-4 h-4 text-indigo-600" />
+              <h3 className="text-xs font-semibold text-neutral-900">Quick Stats</h3>
+            </div>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-neutral-600">Total Problems</span>
+                <span className="text-sm font-semibold text-neutral-900">{problems.length}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-neutral-600">Trending</span>
+                <span className="text-sm font-semibold text-indigo-600">{trending.length}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-neutral-600">Easy</span>
+                <span className="text-sm font-semibold text-emerald-600">
+                  {problems.filter(p => p.difficulty === "easy").length}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-neutral-600">Medium</span>
+                <span className="text-sm font-semibold text-amber-600">
+                  {problems.filter(p => p.difficulty === "medium").length}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-neutral-600">Hard</span>
+                <span className="text-sm font-semibold text-red-600">
+                  {problems.filter(p => p.difficulty === "hard").length}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Popular Tags */}
+          <div className="bg-white rounded-lg border border-neutral-200 p-4 shadow-sm">
+            <div className="flex items-center gap-2 mb-3">
+              <Tag className="w-4 h-4 text-indigo-600" />
+              <h3 className="text-xs font-semibold text-neutral-900">Popular Tags</h3>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {["analysis", "algebra", "geometry", "number-theory", "combinatorics"].map((tag) => (
+                <button
+                  key={tag}
+                  onClick={() => setSearchQuery(tag)}
+                  className="text-xs px-2.5 py-1 bg-neutral-100 text-neutral-600 rounded-full hover:bg-indigo-50 hover:text-indigo-600 transition-colors"
+                >
+                  {tag}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Latest Discussions */}
+          <DiscussionsSidebar />
+
+          {/* Footer Links */}
+          <div className="pt-4 border-t border-neutral-200 flex flex-wrap gap-x-4 gap-y-2 text-[11px] text-neutral-400">
+            <Link href="/teams" className="hover:text-neutral-600">
+              Teams
+            </Link>
+            <Link href="/discussions" className="hover:text-neutral-600">
+              Discussions
+            </Link>
+            <Link href="/help" className="hover:text-neutral-600">
+              Help
+            </Link>
+            <Link href="/privacy" className="hover:text-neutral-600">
+              Privacy
+            </Link>
+            <span>© 2026 ProofMesh</span>
+          </div>
+        </aside>
+      </div>
+    </div>
+  );
 }

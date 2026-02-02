@@ -1,195 +1,146 @@
-# ProofMesh — Agent Guide
+# AGENTS.md - ProofMesh Development Guide
 
-This document provides essential information for AI coding agents working on ProofMesh. Read this first before making any changes.
-
----
-
-## 1. Project Overview
-
-**ProofMesh** is a human-controlled reasoning workspace for mathematics. It provides a structured environment where humans can think, explore problems, and accumulate knowledge in a traceable way.
-
-### Core Philosophy (Non-Negotiable)
-
-- **Human Control First**: The workspace belongs to the human. Agents NEVER edit notebooks or files directly.
-- **Explicit Insertion**: Nothing enters a notebook unless a human accepts or inserts it.
-- **Traceability**: Everything has author, origin, time, and status. No anonymous blobs.
-- **Not a Chat App**: This is a reasoning workspace, not a conversational interface.
-
-### Mental Model
-
-```
-Problem
-  ├── Library (shared memory - cumulative)
-  └── Workspace (markdown-backed - disposable)
-```
-
-- **Problems**: Mathematical problems to explore
-- **Workspaces**: Where humans think (markdown-first, file-based)
-- **Library**: Where results live (reusable, referenceable, verifiable)
+This document contains essential information for AI coding agents working on the ProofMesh project.
 
 ---
 
-## 2. Technology Stack
+## Project Overview
+
+**ProofMesh** is a human-controlled reasoning workspace for mathematics. It provides a collaborative environment where users can explore mathematical problems, formalize proofs using Lean 4, and leverage AI agents for exploration and verification.
+
+### Core Concepts
+
+- **Problem**: A mathematical problem to explore, with metadata (title, description, difficulty, tags, visibility)
+- **Workspace (Lab)**: A markdown-first workspace powered by Milkdown Crepe editor
+- **Library**: Accumulated knowledge (lemmas, claims, theorems, definitions, etc.)
+- **Canvas**: Visual proof exploration interface
+- **Agent**: AI assistant that proposes mathematical results
+
+---
+
+## Technology Stack
 
 ### Backend
-- **Language**: Python 3.12+
-- **Framework**: FastAPI
-- **Validation**: Pydantic v2
-- **Database**: PostgreSQL 16 (async via asyncpg)
-- **ORM**: SQLAlchemy 2.0 (async)
+- **Framework**: FastAPI (Python 3.12)
+- **Database**: PostgreSQL 16 with SQLAlchemy 2.0 (async)
 - **Migrations**: Alembic
 - **Cache/Queue**: Redis 7
 - **Storage**: MinIO (S3-compatible)
-- **Auth**: JWT (python-jose + bcrypt)
+- **Authentication**: JWT with bcrypt password hashing
+- **AI Integration**: Google Gemini API (via `google-genai`)
 
 ### Frontend
 - **Framework**: Next.js 16 (App Router)
 - **Language**: TypeScript 5
-- **UI**: React 19
 - **Styling**: Tailwind CSS 4
-- **Editor**: Milkdown Crepe (markdown editor)
-- **Math**: KaTeX
-- **Icons**: Lucide React
+- **UI Components**: Custom components + Lucide icons
+- **Editor**: Milkdown Crepe (markdown), Monaco Editor (code)
+- **Math Rendering**: KaTeX
+
+### Specialized Services
+- **Lean Runner**: Isolated Python service for Lean 4 code execution
+- **LaTeX Compiler**: TeXLive-based service for PDF compilation
 
 ### Infrastructure
-- **Containerization**: Docker + Docker Compose
-- **LaTeX**: TeXLive compiler service (separate container)
-- **AI Integration**: Google Generative AI (Gemini)
-
-### Other Components
-- `/mesh` - Agent framework (Python, experimental)
-- `/open-canvas` - Third-party LangChain document collaboration tool (separate)
+- **Containerization**: Docker & Docker Compose
+- **Development**: Hot-reload via volume mounts
 
 ---
 
-## 3. Project Structure
+## Project Structure
 
 ```
 ProofMesh/
-├── backend/                 # FastAPI backend
+├── backend/              # FastAPI backend
 │   ├── app/
-│   │   ├── api/            # API route handlers
-│   │   │   ├── auth.py
-│   │   │   ├── problems.py
-│   │   │   ├── workspaces.py
-│   │   │   ├── library.py
-│   │   │   ├── agents.py
-│   │   │   ├── social.py
-│   │   │   ├── realtime.py      # WebSocket
-│   │   │   ├── latex.py         # LaTeX compilation
-│   │   │   ├── latex_ai.py      # LaTeX AI features
-│   │   │   ├── orchestration.py # Document workflows
-│   │   │   └── documents.py     # Document management
-│   │   ├── models/         # SQLAlchemy models
-│   │   │   ├── user.py
-│   │   │   ├── problem.py
-│   │   │   ├── library_item.py
-│   │   │   ├── workspace_file.py
-│   │   │   ├── doc_section.py
-│   │   │   ├── team.py
-│   │   │   ├── activity.py
-│   │   │   ├── discussion.py
-│   │   │   ├── comment.py
-│   │   │   ├── star.py
-│   │   │   └── notification.py
-│   │   ├── schemas/        # Pydantic schemas
-│   │   ├── services/       # Business logic
-│   │   │   ├── auth.py
-│   │   │   └── storage.py  # S3/MinIO operations
-│   │   ├── config.py       # Settings (pydantic-settings)
-│   │   ├── database.py     # DB engine & session
-│   │   └── main.py         # FastAPI app factory
-│   ├── alembic/            # Database migrations
-│   │   └── versions/       # Migration files
-│   ├── scripts/            # Utility scripts
-│   │   ├── entrypoint.sh   # Container startup
-│   │   ├── seed_platform.py
-│   │   └── seed_social.py
+│   │   ├── api/          # REST API route handlers
+│   │   ├── models/       # SQLAlchemy ORM models
+│   │   ├── schemas/      # Pydantic request/response schemas
+│   │   ├── services/     # Business logic (auth, storage, etc.)
+│   │   ├── agents/       # AI agent implementations
+│   │   ├── config.py     # Settings (pydantic-settings)
+│   │   ├── database.py   # DB connection & session management
+│   │   └── main.py       # FastAPI app entry point
+│   ├── alembic/          # Database migrations
+│   ├── scripts/          # Entrypoint & seed scripts
 │   ├── requirements.txt
-│   ├── alembic.ini
-│   └── Dockerfile.dev
-├── frontend/               # Next.js frontend
+│   ├── Dockerfile.dev
+│   └── README.md
+├── frontend/             # Next.js frontend
 │   ├── src/
-│   │   ├── app/           # App Router pages
-│   │   │   ├── (dashboard)/
-│   │   │   ├── problems/[id]/
-│   │   │   │   ├── layout.tsx
-│   │   │   │   ├── page.tsx
-│   │   │   │   ├── lab/page.tsx      # Markdown workspace
-│   │   │   │   └── canvas/page.tsx   # Visual canvas
-│   │   │   ├── api/latex-ai/         # API routes
-│   │   │   ├── discussions/
-│   │   │   ├── social/
-│   │   │   ├── library/
-│   │   │   ├── teams/
-│   │   │   └── ...
-│   │   ├── components/     # React components
-│   │   │   ├── editor/
-│   │   │   ├── library/
-│   │   │   ├── social/
-│   │   │   ├── agents/
-│   │   │   └── collaboration/
-│   │   ├── hooks/          # Custom React hooks
-│   │   └── lib/            # Utilities
-│   │       ├── api.ts      # API client
-│   │       ├── types.ts    # TypeScript types
-│   │       └── auth.tsx    # Auth context
+│   │   ├── app/          # App Router pages (route.tsx, page.tsx, layout.tsx)
+│   │   ├── components/   # React components
+│   │   │   ├── agents/   # Agent-related UI
+│   │   │   ├── canvas/   # Proof canvas components
+│   │   │   ├── editor/   # Editor components
+│   │   │   ├── layout/   # Layout components
+│   │   │   ├── library/  # Library item components
+│   │   │   ├── social/   # Social features UI
+│   │   │   └── ui/       # Generic UI components
+│   │   ├── hooks/        # Custom React hooks
+│   │   └── lib/          # Utilities & API client
+│   │       ├── api.ts    # Backend API client
+│   │       ├── types.ts  # TypeScript type definitions
+│   │       └── auth.tsx  # Auth context & provider
 │   ├── package.json
 │   ├── tsconfig.json
+│   ├── next.config.ts
 │   └── Dockerfile.dev
-├── latex-compiler/         # LaTeX service
-│   ├── app/main.py        # FastAPI LaTeX compiler
-│   ├── Dockerfile
-│   └── requirements.txt
-├── mesh/                   # Agent framework (experimental)
+├── mesh/                 # AI Agent Architecture (separate Python module)
 │   ├── backend/
-│   ├── mesh_project/      # Lean 4 project
-│   └── test_agents.py
-├── docker-compose.yml      # All services
-├── Makefile               # Common commands
-├── .env.example           # Environment template
-├── CLAUDE.md              # Product specification (READ THIS)
-├── DESIGN.md              # UI/UX design principles
-└── FRONTEND_ARCHITECTURE.md  # Frontend patterns
-
+│   │   ├── agents/       # Explorer, Formalizer, Critic agents
+│   │   ├── tools/        # LeanRunner, FactStore
+│   │   ├── models/       # Shared Pydantic types
+│   │   ├── orchestrator.py    # Main state machine
+│   │   └── adk_runtime.py     # Agent runtime
+│   └── mesh_project/     # Lean 4 project for verification
+├── lean-runner/          # Isolated Lean execution service
+├── latex-compiler/       # TeXLive PDF compilation service
+├── docker-compose.yml
+├── Makefile
+└── .env.example
 ```
 
 ---
 
-## 4. Build and Development Commands
+## Build & Development Commands
 
-### Quick Start (Docker - Recommended)
+### Docker Development (Recommended)
 
 ```bash
-# Start all services
+# Start all services (runs migrations automatically)
 make dev
 
-# URLs:
-# - Frontend: http://localhost:3000
-# - Backend API: http://localhost:8080
-# - API Docs: http://localhost:8080/docs
-# - MinIO Console: http://localhost:9001
+# View logs
+make logs
+make logs-backend
+make logs-frontend
+
+# Database operations
+make migrate          # Run migrations manually
+make migrate-status   # Check migration status
+make migration        # Generate new migration (prompts for name)
+make shell-db         # Access PostgreSQL shell
+
+# Container management
+make up               # Start containers
+make down             # Stop containers
+make clean            # Remove everything including volumes
+make rebuild          # Rebuild without cache
+
+# Shell access
+make shell-backend    # Bash into backend container
+make shell-frontend   # Sh into frontend container
 ```
 
-### Common Make Commands
+### URLs (Development)
 
-```bash
-make up              # Start containers
-make down            # Stop containers
-make logs            # View all logs
-make logs-backend    # Backend logs only
-make logs-frontend   # Frontend logs only
-make migrate         # Run DB migrations
-make migrate-status  # Check migration status
-make migration       # Generate new migration (interactive)
-make shell-backend   # Shell into backend container
-make shell-frontend  # Shell into frontend container
-make shell-db        # PostgreSQL shell
-make clean           # Remove everything (including data)
-make rebuild         # Rebuild without cache
-```
+- **Frontend**: http://localhost:3000
+- **Backend API**: http://localhost:8080
+- **API Docs**: http://localhost:8080/docs
+- **MinIO Console**: http://localhost:9001
 
-### Manual Setup (without Docker)
+### Manual Setup (Without Docker)
 
 **Backend:**
 ```bash
@@ -197,8 +148,7 @@ cd backend
 python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env  # Edit as needed
-createdb proofmesh
+cp .env.example .env  # Edit with your settings
 alembic upgrade head
 uvicorn app.main:app --reload
 ```
@@ -212,284 +162,293 @@ npm run dev
 
 ---
 
-## 5. Database Migrations
+## Database & Migrations
 
-Migrations run automatically on backend container startup via `entrypoint.sh`.
+### Migration Workflow
 
-### Manual Migration Workflow
+1. **Auto-generate migration** (after model changes):
+   ```bash
+   make migration
+   # Enter migration name when prompted
+   ```
 
-```bash
-# Check current status
-docker compose exec backend alembic current
-docker compose exec backend alembic heads
+2. **Apply migrations**:
+   ```bash
+   make migrate
+   ```
 
-# Generate new migration (after model changes)
-make migration
-# Enter migration name when prompted
+3. **Check status**:
+   ```bash
+   make migrate-status
+   ```
 
-# Apply migrations
-make migrate
+### Key Models
 
-# Rollback (if needed)
-docker compose exec backend alembic downgrade -1
-```
-
-### Migration Guidelines
-
-- Always review auto-generated migrations before applying
-- Migration files are in `backend/alembic/versions/`
-- Use descriptive migration names (e.g., `add_user_profile_fields`)
-- Test migrations on a copy of production data when possible
+| Model | Description |
+|-------|-------------|
+| `User` | Authentication, profiles, social features |
+| `Problem` | Mathematical problems with metadata |
+| `LibraryItem` | Knowledge items (lemma, theorem, etc.) |
+| `WorkspaceFile` | File storage for workspaces |
+| `DocSection/DocAnchor` | Document organization |
+| `Discussion/Comment` | Social discussion features |
+| `Star` | Bookmarking system |
+| `Follow` | Social graph |
+| `Team/TeamMember` | Collaboration groups |
+| `Notification` | User notifications |
+| `LatexAIMemory/Message/Run` | LaTeX AI assistant state |
 
 ---
 
-## 6. Code Style Guidelines
+## Code Style Guidelines
 
 ### Python (Backend)
 
-- Follow PEP 8
-- Use type hints where practical
-- Prefer `async/await` for I/O operations
-- Use Pydantic v2 for validation
-- SQLAlchemy 2.0 style (type hints, async)
+- **Type hints**: Use full type annotations (`from __future__ import annotations`)
+- **Async**: Database operations use `asyncpg` + SQLAlchemy async
+- **Models**: Use `Mapped[]` syntax with SQLAlchemy 2.0 style
+- **Schemas**: Pydantic v2 models for API validation
+- **Imports**: Group as stdlib → third-party → local
 
+Example:
 ```python
-# Good: SQLAlchemy 2.0 async style
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from uuid import UUID
+from datetime import datetime
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+from app.database import Base
 
-async def get_user(db: AsyncSession, user_id: UUID) -> User | None:
-    result = await db.execute(select(User).where(User.id == user_id))
-    return result.scalar_one_or_none()
+class Problem(Base):
+    __tablename__ = "problems"
+    
+    id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
 ```
 
 ### TypeScript (Frontend)
 
-- Strict TypeScript configuration
-- Use explicit types for API contracts
-- Prefer functional components with hooks
-- Use Tailwind for styling
+- **Strict mode**: Enabled in tsconfig.json
+- **Path aliases**: Use `@/*` for imports from `src/`
+- **Components**: Prefer function components with explicit return types
+- **API types**: Mirror backend Pydantic schemas in `lib/types.ts`
+- **Error handling**: Use typed errors with proper fallbacks
 
+Example:
 ```typescript
-// Good: Explicit types matching backend
-interface LibraryItem {
-  id: UUID;
-  title: string;
-  kind: LibraryItemKind;
-  status: LibraryItemStatus;
+import { Problem } from "@/lib/types";
+
+interface ProblemCardProps {
+  problem: Problem;
+  onClick?: (id: string) => void;
+}
+
+export function ProblemCard({ problem, onClick }: ProblemCardProps): JSX.Element {
   // ...
 }
 ```
 
-### General Principles
+---
 
-- **Working > Beautiful**: Prioritize functionality
-- **No speculative abstractions**: Don't over-engineer
-- **Small commits**: Keep changes focused
-- **No silent magic**: Explicit is better than implicit
-- **If it's clever but opaque, delete it**
+## Authentication Flow
+
+1. **Login/Register**: `POST /api/auth/login` or `/api/auth/register`
+2. **Token Storage**: JWT access token stored in `localStorage`
+3. **API Requests**: Token sent via `Authorization: Bearer <token>` header
+4. **Token Refresh**: Use refresh token to get new access token
+5. **Logout**: Clear localStorage, token expires server-side
+
+### Protected Routes
+
+- Backend: Use `Depends(get_current_user)` dependency
+- Frontend: Check `isAuthenticated()` from `lib/api.ts`
 
 ---
 
-## 7. Testing
+## Agent Architecture (Mesh)
 
-### Current State
+The AI system follows a principle: **"ADK is your runtime, not your backend."**
 
-Testing infrastructure is minimal in the MVP:
-- No automated test suite configured
-- Manual testing via Docker Compose setup
-- API testing can be done via `/docs` (Swagger UI)
+### Components
 
-### Manual Testing Approach
+| Component | Type | Uses AI |
+|-----------|------|---------|
+| `Orchestrator` | State Machine | No |
+| `Explorer` | Agent | Yes (Gemini) |
+| `Formalizer` | Agent | Yes (Gemini) |
+| `Critic` | Agent | Yes (Gemini) |
+| `LaTeX Assistant` | Agent | Yes (Gemini) |
+| `LeanRunner` | Tool | No |
+| `FactStore` | Tool | No |
 
-```bash
-# 1. Start the stack
-make dev
+### Usage Pattern
 
-# 2. Check health endpoints
-curl http://localhost:8080/health
-curl http://localhost:3000
+```python
+from mesh.backend import Orchestrator
 
-# 3. Test via API docs
-open http://localhost:8080/docs
+orch = Orchestrator()
+
+# 1. Create a block
+block_id = orch.canvas.create("Prove sum of two even numbers is even.")
+
+# 2. Explore proposals
+proposals = await orch.explore(block_id)
+
+# 3. Formalize to Lean
+formalization = await orch.formalize(chosen_proposal)
+
+# 4. Verify
+result = await orch.verify(formalization.lean_code)
+
+# 5. Persist if successful
+if result.success:
+    fact = orch.persist(result, block_id, statement)
 ```
 
-### When Adding Tests
-
-If you add tests:
-- Place backend tests in `backend/tests/`
-- Place frontend tests alongside components (`*.test.tsx`)
-- Follow existing patterns in `mesh/test_agents.py` if available
-
 ---
 
-## 8. Key API Endpoints
-
-### Problems
-- `GET/POST /api/problems` - List/Create problems
-- `GET/PUT/DELETE /api/problems/{id}` - Problem CRUD
-
-### Workspaces
-- `GET /api/workspaces/{id}/contents` - List workspace files
-- `GET/PUT/PATCH/DELETE /api/workspaces/{id}/contents/{path}` - File operations
-
-### Library
-- `GET/POST /api/problems/{id}/library` - List/Create library items
-- `GET/PUT/DELETE /api/library/{id}` - Library item CRUD
-
-### Social
-- `GET/POST /api/social/feed` - Activity feed
-- `POST /api/social/follow` - Follow users
-- `GET/POST /api/discussions` - Discussions
-
-### Documents & LaTeX
-- `POST /api/latex/compile` - Compile LaTeX to PDF
-- `GET /api/documents/{id}` - Get document
-- `POST /api/documents/{id}/export` - Export document
-
-### Real-time
-- `WS /ws/realtime/{problem_id}` - WebSocket for collaboration
-
----
-
-## 9. Environment Configuration
+## Environment Configuration
 
 Copy `.env.example` to `.env` and configure:
+
+### Required Variables
 
 ```bash
 # Database
 DATABASE_URL=postgresql+asyncpg://proofmesh:proofmesh@postgres:5432/proofmesh
 
-# Redis
-REDIS_URL=redis://redis:6379
+# JWT (generate a strong secret for production)
+JWT_SECRET_KEY=change-me-in-production
 
-# MinIO / S3
+# Google AI
+GEMINI_API_KEY=your-api-key
+GOOGLE_GENERATIVE_AI_API_KEY=your-api-key
+
+# S3/MinIO
 S3_ENDPOINT=http://minio:9000
 S3_ACCESS_KEY=proofmesh
 S3_SECRET_KEY=proofmesh
 S3_BUCKET=proofmesh
-
-# LaTeX Compiler
-LATEX_COMPILER_URL=http://texlive-compiler:9009
-
-# Frontend
-NEXT_PUBLIC_API_URL=http://localhost:8080
-
-# Google AI (optional)
-GEMINI_API_KEY=your-api-key
-GOOGLE_GENERATIVE_AI_API_KEY=your-api-key
 ```
 
----
+### Service URLs (Docker)
 
-## 10. Security Considerations
-
-### Current Security Model
-
-- JWT-based authentication
-- Password hashing with bcrypt
-- CORS configured for local development
-- No HTTPS in local Docker setup
-
-### When Implementing Features
-
-- Never expose secrets in frontend code (use `NEXT_PUBLIC_` only for non-secrets)
-- Validate all inputs with Pydantic schemas
-- Use parameterized queries (SQLAlchemy handles this)
-- Check user permissions at API boundaries
-- Sanitize file paths (prevent directory traversal)
-
-### Secrets Management
-
-- `.env` file is gitignored
-- Never commit credentials
-- Rotate JWT secret in production
+- Backend internal: `http://backend:8000`
+- Lean Runner: `http://lean-runner:9008`
+- LaTeX Compiler: `http://texlive-compiler:9009`
+- Frontend public: `http://localhost:3000`
 
 ---
 
-## 11. Important Design Constraints
+## Testing
 
-### UI/UX (from DESIGN.md)
+### Backend Component Tests
 
-- **Notebook-centric**: Single central column, max width ~720-860px
-- **Minimalism**: Every element must justify its existence
-- **No chat interface**: This is NOT a conversational UI
-- **Semantic colors only**: Color maps to state, not decoration
-- **Typography first**: Inter/SF Pro for text, KaTeX for math
+Individual components can be tested via module execution:
 
-### Core Rules (from CLAUDE.md)
-
-1. **Agents NEVER edit notebooks or files directly**
-2. **Insertion is explicit** - Nothing enters without human action
-3. **Humans MAY publish discoveries; Agents ALWAYS publish as "proposed"**
-4. **Everything is traceable** - Author, origin, time, status
-
-### Anti-Goals
-
-DO NOT:
-- Turn this into a chat interface
-- Let agents write directly into notebooks
-- Auto-merge agent output
-- Hide verification failures
-- Add speculative features
-
----
-
-## 12. Troubleshooting
-
-### Database connection issues
 ```bash
-# Check if PostgreSQL is healthy
-docker compose ps
-docker compose logs postgres
+cd mesh
 
-# Reset database (WARNING: deletes data)
-make clean && make dev
+# Test Lean runner
+python -m backend.tools.lean_runner --test
+
+# Test FactStore
+python -m backend.tools.fact_store --test
+
+# Test agents (requires GEMINI_API_KEY)
+python -m backend.agents.explorer --test
+python -m backend.agents.formalizer --test
+python -m backend.agents.critic --test
+
+# Test orchestrator
+python -m backend.orchestrator --test
 ```
 
-### Migration conflicts
-```bash
-# Check current revision
-docker compose exec backend alembic current
+### Manual Testing
 
-# If needed, manually fix in alembic/versions/
-```
-
-### Frontend build issues
-```bash
-# Clear Next.js cache
-rm -rf frontend/.next
-make rebuild
-```
-
-### S3/MinIO issues
-```bash
-# Check MinIO console at http://localhost:9001
-# (login with MINIO_ROOT_USER/PASSWORD from .env)
-```
+1. **Seed data**: `python backend/scripts/seed_social.py`
+2. **Create test problem**: Via frontend at `/problems/new`
+3. **Test LaTeX**: Create `.tex` file, compile, view PDF
 
 ---
 
-## 13. Reference Documents
+## Security Considerations
 
-- **CLAUDE.md** - Complete product specification and philosophy
-- **DESIGN.md** - UI/UX design principles and visual language
-- **FRONTEND_ARCHITECTURE.md** - Frontend component and layout patterns
-- **README.md** - Quick start and overview
+1. **JWT Secret**: Change default in production
+2. **Passwords**: Bcrypt hashed, never stored plaintext
+3. **CORS**: Restrict origins in production (see `CORS_ORIGINS`)
+4. **S3/MinIO**: Use proper credentials, restrict bucket policies
+5. **Lean Runner**: Runs in isolated container (code execution risk)
+6. **LaTeX Compiler**: Isolated service (compilation risk)
+7. **File Uploads**: Validate mimetypes, scan for malicious content
 
 ---
 
-## 14. Summary Checklist
+## Common Development Tasks
 
-Before submitting changes, verify:
+### Adding a New API Endpoint
 
-- [ ] Human control is preserved
-- [ ] Epistemic status is explicit (proposed/verified/rejected)
-- [ ] Authorship is unambiguous
-- [ ] Changes reduce cognitive load (or at least don't increase it)
-- [ ] Database migrations are included if schema changed
-- [ ] No secrets committed
-- [ ] Code follows existing patterns
-- [ ] Working > Beautiful
+1. **Define schema** in `backend/app/schemas/`
+2. **Create route** in `backend/app/api/{feature}.py`
+3. **Register router** in `backend/app/main.py`
+4. **Add types** to `frontend/src/lib/types.ts`
+5. **Add API function** to `frontend/src/lib/api.ts`
+6. **Create component** in `frontend/src/components/`
 
-When in doubt, refer to **CLAUDE.md** - it is the authoritative source for product decisions.
+### Adding a Database Model
+
+1. **Create model** in `backend/app/models/`
+2. **Export** in `backend/app/models/__init__.py`
+3. **Generate migration**: `make migration`
+4. **Apply migration**: `make migrate`
+5. **Create schema** in `backend/app/schemas/`
+
+### Adding an AI Agent
+
+1. **Create agent** in `mesh/backend/agents/`
+2. **Inherit from** `BaseAgent` or `LoopAgent`
+3. **Register** in `mesh/backend/adk_runtime.py`
+4. **Add orchestrator method** in `mesh/backend/orchestrator.py`
+
+---
+
+## Troubleshooting
+
+### Common Issues
+
+**Database connection errors:**
+```bash
+make down
+make up
+# Wait for postgres healthcheck
+make migrate
+```
+
+**Lean cache issues:**
+```bash
+docker compose exec lean-runner bash
+cd /workspace/mesh_project
+lake exe cache get
+```
+
+**Frontend build errors:**
+```bash
+cd frontend
+rm -rf .next node_modules
+npm install
+npm run dev
+```
+
+**Backend module not found:**
+Ensure you're running from the correct directory. Backend imports use absolute imports from `app.*`.
+
+---
+
+## Resources
+
+- **FastAPI**: https://fastapi.tiangolo.com/
+- **SQLAlchemy 2.0**: https://docs.sqlalchemy.org/
+- **Alembic**: https://alembic.sqlalchemy.org/
+- **Next.js**: https://nextjs.org/docs
+- **Tailwind CSS**: https://tailwindcss.com/
+- **Milkdown**: https://milkdown.dev/
+- **Lean 4**: https://lean-lang.org/lean4/doc/
+- **Google ADK**: https://developers.google.com/adk

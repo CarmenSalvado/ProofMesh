@@ -49,6 +49,7 @@ interface ProofCanvasV2Props {
   onOpenComments?: (nodeId: string) => void;
   nodeAnchorStatus?: Map<string, { hasAnchors: boolean; isStale: boolean; count: number }>;
   collaborators?: Collaborator[];
+  onCursorMove?: (x: number, y: number) => void;
   readOnly?: boolean;
 }
 
@@ -140,6 +141,98 @@ function getEdgePath(from: CanvasNode, to: CanvasNode): { path: string } {
   };
 }
 
+// Helper function to update edges during drag without React re-renders
+function updateEdgesForDraggedNodes(
+  draggedNodePositions: Map<string, { x: number; y: number }>,
+  nodeMap: Map<string, CanvasNode>
+) {
+  // Find all edges connected to dragged nodes
+  const edgeGroups = document.querySelectorAll<SVGGElement>('[data-edge-id]');
+  
+  edgeGroups.forEach((edgeGroup) => {
+    const fromId = edgeGroup.getAttribute('data-from-id');
+    const toId = edgeGroup.getAttribute('data-to-id');
+    if (!fromId || !toId) return;
+    
+    // Check if either end is being dragged
+    const fromDragPos = draggedNodePositions.get(fromId);
+    const toDragPos = draggedNodePositions.get(toId);
+    
+    if (!fromDragPos && !toDragPos) return; // Neither end is being dragged
+    
+    // Get the original nodes
+    const fromNodeOriginal = nodeMap.get(fromId);
+    const toNodeOriginal = nodeMap.get(toId);
+    if (!fromNodeOriginal || !toNodeOriginal) return;
+    
+    // Create temporary node objects with updated positions
+    const fromNode: CanvasNode = fromDragPos 
+      ? { ...fromNodeOriginal, x: fromDragPos.x, y: fromDragPos.y }
+      : fromNodeOriginal;
+    const toNode: CanvasNode = toDragPos
+      ? { ...toNodeOriginal, x: toDragPos.x, y: toDragPos.y }
+      : toNodeOriginal;
+    
+    // Calculate new path
+    const { path } = getEdgePath(fromNode, toNode);
+    
+    // Update all path elements in this edge group
+    const paths = edgeGroup.querySelectorAll('path');
+    paths.forEach((pathEl) => {
+      pathEl.setAttribute('d', path);
+    });
+  });
+}
+
+// Helper function to update block bounds during drag
+function updateBlocksForDraggedNodes(
+  draggedNodePositions: Map<string, { x: number; y: number }>,
+  blocks: CanvasBlock[],
+  nodeMap: Map<string, CanvasNode>
+) {
+  blocks.forEach((block) => {
+    // Check if any node in this block is being dragged
+    const hasMovedNodes = block.nodeIds.some((id) => draggedNodePositions.has(id));
+    if (!hasMovedNodes) return;
+    
+    // Calculate new bounds for this block
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    
+    block.nodeIds.forEach((nodeId) => {
+      const dragPos = draggedNodePositions.get(nodeId);
+      const originalNode = nodeMap.get(nodeId);
+      if (!originalNode) return;
+      
+      const x = dragPos ? dragPos.x : originalNode.x;
+      const y = dragPos ? dragPos.y : originalNode.y;
+      const width = originalNode.width || 260;
+      const height = originalNode.height || 140;
+      
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x + width);
+      maxY = Math.max(maxY, y + height);
+    });
+    
+    if (minX === Infinity) return; // No nodes found
+    
+    // Add padding
+    const padding = 24;
+    const newLeft = minX - padding;
+    const newTop = minY - padding;
+    const newWidth = maxX - minX + padding * 2;
+    const newHeight = maxY - minY + padding * 2;
+    
+    // Update block element directly
+    const blockEl = document.querySelector(`[data-block-id="${block.id}"]`) as HTMLElement;
+    if (blockEl) {
+      blockEl.style.transform = `translate3d(${newLeft}px, ${newTop}px, 0)`;
+      blockEl.style.width = `${newWidth}px`;
+      blockEl.style.height = `${newHeight}px`;
+    }
+  });
+}
+
 const readFileAsDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
   const reader = new FileReader();
   reader.onload = () => resolve(String(reader.result || ""));
@@ -176,11 +269,12 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
   onOpenComments,
   nodeAnchorStatus,
   collaborators = [],
+  onCursorMove,
   readOnly = false,
 }: ProofCanvasV2Props, ref) {
   const canvasRef = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(1);
-  const [pan, setPan] = useState({ x: 50, y: 50 });
+  const [pan, setPan] = useState({ x: 100, y: 80 });
   const [isPanning, setIsPanning] = useState(false);
   const [draggedNode, setDraggedNode] = useState<string | null>(null);
   const [connectingFrom, setConnectingFrom] = useState<string | null>(null);
@@ -240,37 +334,27 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
   const rafRef = useRef<number | null>(null);
   const panStartRef = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
   
+  // Auto-pan refs for edge dragging
+  const autoPanRef = useRef<number | null>(null);
+  const lastClientPosRef = useRef<{ x: number; y: number } | null>(null);
+  
+  // Transform container ref for direct DOM manipulation (better performance)
+  const transformContainerRef = useRef<HTMLDivElement>(null);
+  const panRef = useRef({ x: 100, y: 80 });
+  const zoomRef = useRef(1);
+  
   // Throttle selection updates to improve performance
   const selectionUpdateRef = useRef<number | null>(null);
+  
+  // Throttle cursor broadcasts to collaborators (16ms = ~60fps)
+  const cursorThrottleRef = useRef<number>(0);
+  const CURSOR_THROTTLE_MS = 50; // 20 updates per second max
 
-  // Create node map for edge lookups, with drag position override
+  // Create node map for edge lookups - during drag, edges are not updated for performance
   const nodeMap = useMemo(() => {
     const map = new Map(nodes.map((n) => [n.id, n]));
-
-    if (multiDraggingIds && dragDelta) {
-      multiDraggingIds.forEach((id) => {
-        const original = map.get(id);
-        const startPos = multiDragStartPositionsRef.current[id];
-        if (original && startPos) {
-          map.set(id, {
-            ...original,
-            x: startPos.x + dragDelta.x,
-            y: startPos.y + dragDelta.y,
-          });
-        }
-      });
-      return map;
-    }
-
-    // If dragging single node, create a modified node with the drag position
-    if (draggedNode && dragPos) {
-      const originalNode = map.get(draggedNode);
-      if (originalNode) {
-        map.set(draggedNode, { ...originalNode, x: dragPos.x, y: dragPos.y });
-      }
-    }
     return map;
-  }, [nodes, draggedNode, dragPos, dragDelta, multiDraggingIds]);
+  }, [nodes]);
   
   // Memoize edge paths to avoid recalculating on every render
   const edgePaths = useMemo(() => {
@@ -345,19 +429,34 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
     };
   }, [pan, zoom]);
 
-  // Zoom handlers
+  // Direct zoom handlers - update DOM immediately, sync state after
   const handleZoomIn = useCallback(() => {
-    setZoom((z) => Math.min(z * 1.2, 3));
+    const newZoom = Math.min(zoomRef.current * 1.25, 3);
+    zoomRef.current = newZoom;
+    if (transformContainerRef.current) {
+      transformContainerRef.current.style.transform = `translate3d(${panRef.current.x}px, ${panRef.current.y}px, 0) scale(${newZoom})`;
+    }
+    setZoom(newZoom);
   }, []);
 
   const handleZoomOut = useCallback(() => {
-    setZoom((z) => Math.max(z / 1.2, 0.25));
+    const newZoom = Math.max(zoomRef.current / 1.25, 0.25);
+    zoomRef.current = newZoom;
+    if (transformContainerRef.current) {
+      transformContainerRef.current.style.transform = `translate3d(${panRef.current.x}px, ${panRef.current.y}px, 0) scale(${newZoom})`;
+    }
+    setZoom(newZoom);
   }, []);
 
   const handleFit = useCallback(() => {
     if (nodes.length === 0) {
+      zoomRef.current = 1;
+      panRef.current = { x: 100, y: 80 };
+      if (transformContainerRef.current) {
+        transformContainerRef.current.style.transform = `translate3d(100px, 80px, 0) scale(1)`;
+      }
       setZoom(1);
-      setPan({ x: 50, y: 50 });
+      setPan({ x: 100, y: 80 });
       return;
     }
 
@@ -376,11 +475,18 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
     const scaleY = canvasHeight / height;
     const scale = Math.min(scaleX, scaleY, 1.5);
 
-    setZoom(scale);
-    setPan({
+    const newPan = {
       x: (canvasWidth - width * scale) / 2 - minX * scale + 50,
       y: (canvasHeight - height * scale) / 2 - minY * scale + 50,
-    });
+    };
+    
+    zoomRef.current = scale;
+    panRef.current = newPan;
+    if (transformContainerRef.current) {
+      transformContainerRef.current.style.transform = `translate3d(${newPan.x}px, ${newPan.y}px, 0) scale(${scale})`;
+    }
+    setZoom(scale);
+    setPan(newPan);
   }, [nodes]);
 
   const openInlineEditorAtCenter = useCallback(() => {
@@ -395,7 +501,140 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
     openInlineEditorAtCenter,
   }), [openInlineEditorAtCenter]);
 
-  // Wheel zoom
+  // Update refs when state changes
+  useEffect(() => {
+    panRef.current = pan;
+  }, [pan]);
+  
+  useEffect(() => {
+    zoomRef.current = zoom;
+  }, [zoom]);
+
+  // Helper to update transform container directly (for smooth animations)
+  const updateTransformDirect = useCallback((newPan?: { x: number; y: number }, newZoom?: number) => {
+    if (!transformContainerRef.current) return;
+    const p = newPan ?? panRef.current;
+    const z = newZoom ?? zoomRef.current;
+    transformContainerRef.current.style.transform = `translate3d(${p.x}px, ${p.y}px, 0) scale(${z})`;
+  }, []);
+
+  // Auto-pan when dragging near edges
+  const EDGE_THRESHOLD = 60; // pixels from edge to start auto-pan
+  const AUTO_PAN_SPEED = 12; // pixels per frame
+  
+  const startAutoPan = useCallback(() => {
+    if (autoPanRef.current) return; // Already running
+    
+    const autoPanLoop = () => {
+      const clientPos = lastClientPosRef.current;
+      const rect = canvasRef.current?.getBoundingClientRect();
+      
+      if (!clientPos || !rect || !isDraggingRef.current) {
+        autoPanRef.current = null;
+        return;
+      }
+      
+      let panDx = 0;
+      let panDy = 0;
+      
+      // Check proximity to edges
+      const relX = clientPos.x - rect.left;
+      const relY = clientPos.y - rect.top;
+      
+      if (relX < EDGE_THRESHOLD) {
+        panDx = AUTO_PAN_SPEED * ((EDGE_THRESHOLD - relX) / EDGE_THRESHOLD);
+      } else if (relX > rect.width - EDGE_THRESHOLD) {
+        panDx = -AUTO_PAN_SPEED * ((relX - (rect.width - EDGE_THRESHOLD)) / EDGE_THRESHOLD);
+      }
+      
+      if (relY < EDGE_THRESHOLD) {
+        panDy = AUTO_PAN_SPEED * ((EDGE_THRESHOLD - relY) / EDGE_THRESHOLD);
+      } else if (relY > rect.height - EDGE_THRESHOLD) {
+        panDy = -AUTO_PAN_SPEED * ((relY - (rect.height - EDGE_THRESHOLD)) / EDGE_THRESHOLD);
+      }
+      
+      if (panDx !== 0 || panDy !== 0) {
+        // Update pan
+        const newPan = {
+          x: panRef.current.x + panDx,
+          y: panRef.current.y + panDy,
+        };
+        panRef.current = newPan;
+        updateTransformDirect(newPan);
+        
+        // Also move the dragged node(s) to compensate for pan
+        const panDeltaCanvas = { x: -panDx / zoomRef.current, y: -panDy / zoomRef.current };
+        
+        if (groupDraggingRef.current && multiDraggingIdsRef.current.length > 0) {
+          // Move all nodes in group
+          const draggedPositions = new Map<string, { x: number; y: number }>();
+          multiDraggingIdsRef.current.forEach((id) => {
+            const nodeEl = document.querySelector(`[data-node-id="${id}"]`) as HTMLElement;
+            if (nodeEl) {
+              const matrix = new DOMMatrix(getComputedStyle(nodeEl).transform);
+              const newX = matrix.m41 + panDeltaCanvas.x;
+              const newY = matrix.m42 + panDeltaCanvas.y;
+              nodeEl.style.transform = `translate3d(${newX}px, ${newY}px, 0)`;
+              draggedPositions.set(id, { x: newX, y: newY });
+              
+              // Update start positions for final commit
+              const startPos = multiDragStartPositionsRef.current[id];
+              if (startPos) {
+                multiDragStartPositionsRef.current[id] = { x: newX, y: newY };
+              }
+            }
+          });
+          dragStartPosRef.current = {
+            x: dragStartPosRef.current.x + panDeltaCanvas.x,
+            y: dragStartPosRef.current.y + panDeltaCanvas.y,
+          };
+          updateEdgesForDraggedNodes(draggedPositions, nodeMap);
+          updateBlocksForDraggedNodes(draggedPositions, blocks, nodeMap);
+        } else if (dragNodeRef.current && draggedNodeIdRef.current) {
+          // Move single node
+          const matrix = new DOMMatrix(getComputedStyle(dragNodeRef.current).transform);
+          const newX = matrix.m41 + panDeltaCanvas.x;
+          const newY = matrix.m42 + panDeltaCanvas.y;
+          dragNodeRef.current.style.transform = `translate3d(${newX}px, ${newY}px, 0)`;
+          dragStartPosRef.current = { x: newX, y: newY };
+          
+          const draggedPositions = new Map<string, { x: number; y: number }>();
+          draggedPositions.set(draggedNodeIdRef.current, { x: newX, y: newY });
+          updateEdgesForDraggedNodes(draggedPositions, nodeMap);
+          updateBlocksForDraggedNodes(draggedPositions, blocks, nodeMap);
+        }
+        
+        autoPanRef.current = requestAnimationFrame(autoPanLoop);
+      } else {
+        autoPanRef.current = requestAnimationFrame(autoPanLoop);
+      }
+    };
+    
+    autoPanRef.current = requestAnimationFrame(autoPanLoop);
+  }, [updateTransformDirect, nodeMap, blocks]);
+  
+  const stopAutoPan = useCallback(() => {
+    if (autoPanRef.current) {
+      cancelAnimationFrame(autoPanRef.current);
+      autoPanRef.current = null;
+    }
+    lastClientPosRef.current = null;
+  }, []);
+
+  // Debounced state sync for zoom/pan
+  const syncTimeoutRef = useRef<number | null>(null);
+  const syncStateDebounced = useCallback(() => {
+    if (syncTimeoutRef.current) {
+      clearTimeout(syncTimeoutRef.current);
+    }
+    syncTimeoutRef.current = window.setTimeout(() => {
+      setZoom(zoomRef.current);
+      setPan(panRef.current);
+      syncTimeoutRef.current = null;
+    }, 150);
+  }, []);
+
+  // Wheel zoom/pan - direct DOM manipulation for maximum performance
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -403,36 +642,42 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
     const handleWheel = (e: WheelEvent) => {
       if (e.ctrlKey || e.metaKey) {
         e.preventDefault();
-        const delta = e.deltaY > 0 ? 0.9 : 1.1;
-        setZoom((z) => Math.max(0.25, Math.min(3, z * delta)));
+        const delta = e.deltaY > 0 ? 0.92 : 1.08;
+        const newZoom = Math.max(0.25, Math.min(3, zoomRef.current * delta));
+        zoomRef.current = newZoom;
+        updateTransformDirect(undefined, newZoom);
+        syncStateDebounced();
       } else {
-        setPan((p) => ({
-          x: p.x - e.deltaX,
-          y: p.y - e.deltaY,
-        }));
+        const newPan = {
+          x: panRef.current.x - e.deltaX,
+          y: panRef.current.y - e.deltaY,
+        };
+        panRef.current = newPan;
+        updateTransformDirect(newPan);
+        syncStateDebounced();
       }
     };
 
     canvas.addEventListener("wheel", handleWheel, { passive: false });
     return () => canvas.removeEventListener("wheel", handleWheel);
-  }, []);
+  }, [updateTransformDirect, syncStateDebounced]);
 
   // Convert screen coords to canvas coords
   const screenToCanvas = useCallback((screenX: number, screenY: number) => {
     const rect = canvasRef.current?.getBoundingClientRect();
     if (!rect) return { x: 0, y: 0 };
     return {
-      x: (screenX - rect.left - pan.x) / zoom,
-      y: (screenY - rect.top - pan.y) / zoom,
+      x: (screenX - rect.left - panRef.current.x) / zoomRef.current,
+      y: (screenY - rect.top - panRef.current.y) / zoomRef.current,
     };
-  }, [pan, zoom]);
+  }, []);
 
   const canvasToScreen = useCallback((x: number, y: number) => {
     return {
-      x: x * zoom + pan.x,
-      y: y * zoom + pan.y,
+      x: x * zoomRef.current + panRef.current.x,
+      y: y * zoomRef.current + panRef.current.y,
     };
-  }, [pan, zoom]);
+  }, []);
 
   const getNodesBounds = useCallback((ids: string[]) => {
     const nodesToMeasure = ids.map((id) => nodeMap.get(id)).filter(Boolean) as CanvasNode[];
@@ -799,6 +1044,16 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
       if (!rect) return;
       lastMousePosRef.current = { x: e.clientX, y: e.clientY };
       
+      // Broadcast cursor position to collaborators (throttled)
+      if (onCursorMove) {
+        const now = Date.now();
+        if (now - cursorThrottleRef.current >= CURSOR_THROTTLE_MS) {
+          cursorThrottleRef.current = now;
+          const canvasCoords = screenToCanvas(e.clientX, e.clientY);
+          onCursorMove(canvasCoords.x, canvasCoords.y);
+        }
+      }
+      
       // Track mouse for connection line
       if (connectingFrom) {
         const canvasCoords = screenToCanvas(e.clientX, e.clientY);
@@ -849,6 +1104,10 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
       }
 
       if (groupDraggingRef.current && isDraggingRef.current) {
+        // Track client position for auto-pan
+        lastClientPosRef.current = { x: e.clientX, y: e.clientY };
+        startAutoPan();
+        
         const canvasCoords = screenToCanvas(e.clientX, e.clientY);
         const start = groupDragStartRef.current;
         if (start) {
@@ -860,48 +1119,91 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
             x: dragOriginPosRef.current.x + delta.x,
             y: dragOriginPosRef.current.y + delta.y,
           };
-          if (rafRef.current) {
-            cancelAnimationFrame(rafRef.current);
-          }
-          rafRef.current = requestAnimationFrame(() => {
-            setDragDelta(delta);
+          
+          // Build map of all dragged node positions for edge/block updates
+          const draggedPositions = new Map<string, { x: number; y: number }>();
+          
+          // Update all nodes in the group directly via DOM
+          multiDraggingIdsRef.current.forEach((id) => {
+            const startPos = multiDragStartPositionsRef.current[id];
+            if (startPos) {
+              const newPos = { x: startPos.x + delta.x, y: startPos.y + delta.y };
+              draggedPositions.set(id, newPos);
+              const nodeEl = document.querySelector(`[data-node-id="${id}"]`) as HTMLElement;
+              if (nodeEl) {
+                nodeEl.style.transform = `translate3d(${newPos.x}px, ${newPos.y}px, 0)`;
+              }
+            }
           });
+          
+          // Update edges connected to dragged nodes
+          updateEdgesForDraggedNodes(draggedPositions, nodeMap);
+          
+          // Update blocks containing dragged nodes
+          updateBlocksForDraggedNodes(draggedPositions, blocks, nodeMap);
         }
         return;
       }
       
       if (isPanning) {
+        // Direct DOM manipulation for maximum pan smoothness
         const dx = e.clientX - panStartRef.current.x;
         const dy = e.clientY - panStartRef.current.y;
-        setPan({
+        const newPan = {
           x: panStartRef.current.panX + dx,
           y: panStartRef.current.panY + dy,
-        });
+        };
+        panRef.current = newPan;
+        updateTransformDirect(newPan);
       } else if (isDraggingRef.current && dragNodeRef.current) {
+        // Track client position for auto-pan
+        lastClientPosRef.current = { x: e.clientX, y: e.clientY };
+        startAutoPan();
+        
         const canvasCoords = screenToCanvas(e.clientX, e.clientY);
         const newX = canvasCoords.x - dragOffsetRef.current.x;
         const newY = canvasCoords.y - dragOffsetRef.current.y;
         
-        dragNodeRef.current.style.left = `${newX}px`;
-        dragNodeRef.current.style.top = `${newY}px`;
+        // Use transform for GPU-accelerated dragging - NO React state updates during drag
+        dragNodeRef.current.style.transform = `translate3d(${newX}px, ${newY}px, 0)`;
         dragStartPosRef.current = { x: newX, y: newY };
-        const delta = {
-          x: newX - dragOriginPosRef.current.x,
-          y: newY - dragOriginPosRef.current.y,
-        };
         
-        if (rafRef.current) {
-          cancelAnimationFrame(rafRef.current);
+        // Build map of all dragged node positions for edge/block updates
+        const draggedPositions = new Map<string, { x: number; y: number }>();
+        if (draggedNodeIdRef.current) {
+          draggedPositions.set(draggedNodeIdRef.current, { x: newX, y: newY });
         }
-        rafRef.current = requestAnimationFrame(() => {
-          setDragPos({ x: newX, y: newY });
-          if (multiDraggingRef.current) {
-            setDragDelta(delta);
-          }
-        });
+        
+        // Update other dragged nodes directly via DOM (for multi-drag)
+        if (multiDraggingRef.current && multiDraggingIdsRef.current.length > 0) {
+          const delta = {
+            x: newX - dragOriginPosRef.current.x,
+            y: newY - dragOriginPosRef.current.y,
+          };
+          multiDraggingIdsRef.current.forEach((id) => {
+            const startPos = multiDragStartPositionsRef.current[id];
+            if (startPos) {
+              const nodeNewPos = { x: startPos.x + delta.x, y: startPos.y + delta.y };
+              draggedPositions.set(id, nodeNewPos);
+              
+              if (id !== draggedNodeIdRef.current) {
+                const nodeEl = document.querySelector(`[data-node-id="${id}"]`) as HTMLElement;
+                if (nodeEl) {
+                  nodeEl.style.transform = `translate3d(${nodeNewPos.x}px, ${nodeNewPos.y}px, 0)`;
+                }
+              }
+            }
+          });
+        }
+        
+        // Update edges connected to dragged nodes
+        updateEdgesForDraggedNodes(draggedPositions, nodeMap);
+        
+        // Update blocks containing dragged nodes
+        updateBlocksForDraggedNodes(draggedPositions, blocks, nodeMap);
       }
     },
-    [isPanning, connectingFrom, screenToCanvas, nodes, onMultiSelect]
+    [isPanning, connectingFrom, screenToCanvas, nodes, onMultiSelect, nodeMap, blocks, startAutoPan, onCursorMove]
   );
 
   const handleMouseUp = useCallback(() => {
@@ -910,6 +1212,9 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
       cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
     }
+    
+    // Stop auto-pan
+    stopAutoPan();
     
     // Cancel any pending selection update RAF
     if (selectionUpdateRef.current) {
@@ -977,6 +1282,11 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
       }
     }
     
+    // Sync pan state after panning ends
+    if (isPanning) {
+      setPan(panRef.current);
+    }
+    
     setIsPanning(false);
     setDraggedNode(null);
     setDragPos(null);
@@ -993,13 +1303,15 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
     if (connectingFrom) {
       setConnectingFrom(null);
     }
-  }, [connectingFrom, onNodeMove, selectionBox, onMultiSelect, onNodeSelect]);
+  }, [connectingFrom, onNodeMove, selectionBox, onMultiSelect, onNodeSelect, stopAutoPan]);
 
   const handleBlockMouseDown = useCallback(
     (e: React.MouseEvent, block: { id: string; nodeIds: string[] }) => {
       if (e.button !== 0) return;
       e.preventDefault();
       e.stopPropagation();
+
+      console.log("[Canvas] Block mouse down:", block.id, "nodes:", block.nodeIds);
 
       setContextMenu(null);
       setEdgeContextMenu(null);
@@ -1014,10 +1326,18 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
       if (readOnly) return;
 
       const nodeIds = block.nodeIds.filter((id) => nodeMap.has(id));
-      if (nodeIds.length === 0) return;
+      console.log("[Canvas] Valid node IDs:", nodeIds);
+      
+      if (nodeIds.length === 0) {
+        console.warn("[Canvas] No valid nodes in block, cannot drag");
+        return;
+      }
 
       const primaryNode = nodeMap.get(nodeIds[0]);
-      if (!primaryNode) return;
+      if (!primaryNode) {
+        console.warn("[Canvas] Primary node not found:", nodeIds[0]);
+        return;
+      }
 
       const startPositions: Record<string, { x: number; y: number }> = {};
       nodeIds.forEach((id) => {
@@ -1026,6 +1346,8 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
           startPositions[id] = { x: node.x, y: node.y };
         }
       });
+
+      console.log("[Canvas] Starting block drag with", nodeIds.length, "nodes");
 
       setMultiDraggingIds(nodeIds);
       multiDraggingRef.current = true;
@@ -1051,6 +1373,13 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
     (e: React.MouseEvent, node: CanvasNode) => {
       e.preventDefault();
       e.stopPropagation();
+      
+      // In hand mode, start panning instead of dragging nodes
+      if (canvasMode === "hand") {
+        setIsPanning(true);
+        panStartRef.current = { x: e.clientX, y: e.clientY, panX: pan.x, panY: pan.y };
+        return;
+      }
       
       if (readOnly) {
         onNodeSelect(node.id);
@@ -1111,7 +1440,7 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
         multiDraggingIdsRef.current = [];
       }
     },
-    [readOnly, onNodeSelect, screenToCanvas, onMultiSelect, selectedNodeIds, nodes]
+    [canvasMode, pan, readOnly, onNodeSelect, screenToCanvas, onMultiSelect, selectedNodeIds, nodes]
   );
 
   const handleNodeConnectionStart = useCallback(
@@ -1327,9 +1656,10 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
 
       {/* Transform Container */}
       <div
+        ref={transformContainerRef}
         className="absolute inset-0"
         style={{
-          transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+          transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${zoom})`,
           transformOrigin: "0 0",
           willChange: 'transform',
         }}
@@ -1345,28 +1675,35 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
                 isSelected
                   ? "border-indigo-400 bg-indigo-50/30"
                   : "border-neutral-200/80 bg-white/30 border-dashed"
-              } ${readOnly ? "" : "cursor-grab"} select-none`}
+              } select-none pointer-events-none`}
               style={{
-                left: block.left,
-                top: block.top,
+                transform: `translate3d(${block.left}px, ${block.top}px, 0)`,
                 width: block.width,
                 height: block.height,
               }}
-              onMouseDown={(e) => handleBlockMouseDown(e, block)}
             >
               <div
                 className={`absolute -top-3 left-3 flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold shadow-sm ${
                   isSelected ? "bg-indigo-600 text-white" : "bg-neutral-900 text-white"
-                }`}
+                } ${readOnly ? "" : "cursor-grab active:cursor-grabbing"} pointer-events-auto`}
+                onMouseDown={(e) => {
+                  // Don't trigger drag if clicking on the delete button
+                  if ((e.target as HTMLElement).closest('button')) {
+                    return;
+                  }
+                  if (!readOnly) {
+                    handleBlockMouseDown(e, block);
+                  }
+                }}
               >
-                <span>{block.name}</span>
+                <span className="pointer-events-none">{block.name}</span>
                 {!readOnly && isSelected && onDeleteBlock && (
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
                       onDeleteBlock(block.id);
                     }}
-                    className="ml-1 rounded-full bg-white/20 p-0.5 hover:bg-white/30"
+                    className="ml-1 rounded-full bg-white/20 p-0.5 hover:bg-white/30 pointer-events-auto"
                     title="Ungroup"
                   >
                     <Trash2 className="w-3 h-3" />
@@ -1447,14 +1784,14 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
                 : "arrowhead-uses";
 
             return (
-              <g key={edge.id} className="cursor-pointer">
+              <g key={edge.id} data-edge-id={edge.id} data-from-id={edge.from} data-to-id={edge.to} className="cursor-pointer">
                 {/* Invisible wider path for easier clicking */}
                 <path
                   d={path}
                   fill="none"
                   stroke="transparent"
                   strokeWidth="16"
-                  className="pointer-events-auto"
+                  className="pointer-events-auto edge-hitbox"
                   onClick={(e) => handleEdgeClick(e, edge.id)}
                   onContextMenu={(e) => handleEdgeContextMenu(e, edge.id)}
                 />
@@ -1467,7 +1804,7 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
                     strokeWidth="5"
                     strokeLinecap="round"
                     opacity="0.2"
-                    className="pointer-events-none"
+                    className="pointer-events-none edge-glow"
                   />
                 )}
                 {/* Visible edge - instant response */}
@@ -1479,20 +1816,48 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
                   strokeLinecap="round"
                   strokeDasharray={edge.type === "references" ? "6,4" : undefined}
                   markerEnd={`url(#${markerId})`}
-                  className="pointer-events-none"
+                  className="pointer-events-none edge-line"
                 />
-                {edge.label && (
-                  <text
-                    x={(fromNode.x + toNode.x + (fromNode.width || 260)) / 2}
-                    y={(fromNode.y + toNode.y + (fromNode.height || 140)) / 2}
-                    fontSize="10"
-                    fill="#64748b"
-                    textAnchor="middle"
-                    className="pointer-events-none"
-                  >
-                    {edge.label}
-                  </text>
-                )}
+                {edge.label && (() => {
+                  // Calculate label position at the midpoint of the bezier curve
+                  const fromWidth = fromNode.width || 260;
+                  const fromHeight = fromNode.height || 140;
+                  const fromCenterX = fromNode.x + fromWidth / 2;
+                  const fromCenterY = fromNode.y + fromHeight / 2;
+                  const toCenterX = toNode.x + (toNode.width || 260) / 2;
+                  const toCenterY = toNode.y + (toNode.height || 140) / 2;
+                  
+                  // Parse the path to get control points
+                  const pathMatch = path.match(/M\s+([\d.-]+)\s+([\d.-]+)\s+C\s+([\d.-]+)\s+([\d.-]+)\s*,\s*([\d.-]+)\s+([\d.-]+)\s*,\s*([\d.-]+)\s+([\d.-]+)/);
+                  if (!pathMatch) return null;
+                  
+                  const [, startX, startY, cp1x, cp1y, cp2x, cp2y, endX, endY] = pathMatch.map(Number);
+                  
+                  // Calculate midpoint of bezier curve
+                  const t = 0.5;
+                  const midX = Math.pow(1-t, 3) * startX +
+                    3 * Math.pow(1-t, 2) * t * cp1x +
+                    3 * (1-t) * Math.pow(t, 2) * cp2x +
+                    Math.pow(t, 3) * endX;
+                  const midY = Math.pow(1-t, 3) * startY +
+                    3 * Math.pow(1-t, 2) * t * cp1y +
+                    3 * (1-t) * Math.pow(t, 2) * cp2y +
+                    Math.pow(t, 3) * endY;
+                  
+                  return (
+                    <text
+                      x={midX}
+                      y={midY - 5}
+                      fontSize="10"
+                      fill="#64748b"
+                      textAnchor="middle"
+                      className="pointer-events-none select-none"
+                      style={{ textShadow: '0px 0px 2px rgba(255,255,255,0.8)' }}
+                    >
+                      {edge.label}
+                    </text>
+                  );
+                })()}
               </g>
             );
           })}
@@ -1552,13 +1917,10 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
         </svg>
 
         {/* Nodes */}
-        {nodes.map((node) => {
-          const overridePos = multiDragPositions?.get(node.id);
-          const renderNode = overridePos ? { ...node, x: overridePos.x, y: overridePos.y } : node;
-          return (
+        {nodes.map((node) => (
           <CanvasNodeItem
             key={node.id}
-            node={renderNode}
+            node={node}
             isSelected={selectedNodeId === node.id || selectedNodeIds.has(node.id)}
             isMultiSelected={false}
             isDragging={draggedNode === node.id}
@@ -1571,24 +1933,35 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
             onContextMenu={(e: React.MouseEvent) => handleContextMenu(e, node)}
             onOpenComments={onOpenComments}
           />
-        );
-        })}
+        ))}
 
         {/* Collaborator Cursors */}
         {collaborators.map((collab) => (
           <div
             key={collab.id}
-            className="absolute pointer-events-none"
-            style={{ left: collab.x, top: collab.y }}
+            className="absolute pointer-events-none transition-transform duration-75 ease-out"
+            style={{ 
+              transform: `translate3d(${collab.x}px, ${collab.y}px, 0)`,
+            }}
           >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+            {/* Cursor pointer SVG */}
+            <svg 
+              width="24" 
+              height="24" 
+              viewBox="0 0 24 24" 
+              fill="none"
+              className="drop-shadow-md"
+              style={{ transform: 'translate(-2px, -2px)' }}
+            >
               <path
-                d="M5.65 12.46L6.87 19.75C7 20.49 7.9 20.78 8.45 20.23L13.8 14.89C14.14 14.54 14.14 13.98 13.8 13.64L8.45 8.29C7.9 7.74 7 8.04 6.87 8.77L5.65 16.07"
+                d="M4 4L12 20L14 14L20 12L4 4Z"
                 fill={collab.color}
+                stroke="white"
+                strokeWidth="1.5"
               />
             </svg>
             <span
-              className="absolute left-4 top-4 text-[10px] font-medium px-1.5 py-0.5 rounded whitespace-nowrap shadow-sm"
+              className="absolute left-5 top-5 text-[10px] font-medium px-1.5 py-0.5 rounded whitespace-nowrap shadow-sm"
               style={{ backgroundColor: collab.color, color: "white" }}
             >
               {collab.name}

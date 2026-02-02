@@ -18,6 +18,8 @@ from app.api import (
 )
 from app.api.orchestration import router as orchestration_router
 from app.api.documents import router as documents_router
+from app.api.canvas_blocks import router as canvas_blocks_router
+from app.api.canvas_ai import router as canvas_ai_router
 
 settings = get_settings()
 
@@ -59,7 +61,9 @@ app.include_router(social_router)
 app.include_router(latex_router)
 app.include_router(latex_ai_router)
 app.include_router(latex_ai_store_router)
+app.include_router(canvas_blocks_router, prefix="/api", tags=["canvas-blocks"])
 app.include_router(orchestration_router)
+app.include_router(canvas_ai_router)
 app.include_router(documents_router, prefix="/api/documents", tags=["documents"])
 
 # WebSocket Router

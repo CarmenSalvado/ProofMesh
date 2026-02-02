@@ -414,9 +414,9 @@ export function CanvasSidebar({
                             </span>
                             <StatusIcon
                               className={`w-3 h-3 ${
-                                item.status === "verified"
+                                item.status === "VERIFIED"
                                   ? "text-emerald-500"
-                                  : item.status === "rejected"
+                                  : item.status === "REJECTED"
                                   ? "text-red-500"
                                   : "text-neutral-400"
                               }`}

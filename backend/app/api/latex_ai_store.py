@@ -7,9 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.database import get_db
-from app.models.problem import Problem, ProblemVisibility
 from app.models.user import User
-from app.api.deps import get_current_user_optional
+from app.api.deps import get_current_user_optional, verify_problem_access
 from app.models.latex_ai import LatexAIMemory, LatexAIMessage, LatexAIQuickAction, LatexAIRun
 from app.schemas.latex_ai_store import (
     LatexAIMemoryResponse,
@@ -27,24 +26,6 @@ from app.schemas.latex_ai_store import (
 
 
 router = APIRouter(prefix="/api/latex-ai", tags=["latex-ai-store"])
-
-
-async def verify_problem_access(
-    problem_id: UUID,
-    db: AsyncSession,
-    current_user: User | None,
-) -> Problem:
-    result = await db.execute(select(Problem).where(Problem.id == problem_id))
-    problem = result.scalar_one_or_none()
-
-    if not problem:
-        raise HTTPException(status_code=404, detail="Workspace not found")
-
-    if problem.visibility == ProblemVisibility.PRIVATE:
-        if not current_user or problem.author_id != current_user.id:
-            raise HTTPException(status_code=404, detail="Workspace not found")
-
-    return problem
 
 
 @router.get("/{problem_id}/memory", response_model=LatexAIMemoryResponse)

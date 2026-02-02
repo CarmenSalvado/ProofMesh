@@ -56,12 +56,7 @@ export async function POST(request: Request) {
       new TransformStream({
         transform(part, controller) {
           if (part.type === "reasoning") {
-            const text =
-              typeof part.textDelta === "string"
-                ? part.textDelta
-                : typeof part.text === "string"
-                  ? part.text
-                  : "";
+            const text = typeof part.textDelta === "string" ? part.textDelta : "";
             if (text) {
               controller.enqueue({ type: "text-delta", textDelta: `\n\nThinking: ${text}` });
             }

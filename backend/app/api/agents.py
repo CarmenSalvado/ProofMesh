@@ -8,9 +8,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models.problem import Problem, ProblemVisibility
+from app.models.problem import Problem
 from app.models.user import User
-from app.api.deps import get_current_user_optional
+from app.api.deps import get_current_user_optional, verify_problem_access
 from app.schemas.agent import AgentRunRequest, AgentRunResponse, AgentProposal, AgentProfile, AgentListResponse
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
@@ -62,24 +62,6 @@ def resolve_agent(agent_id: str | None, task: str | None) -> AgentProfile | None
     if task:
         return next((agent for agent in AGENT_PROFILES if agent.task == task), None)
     return None
-
-
-async def verify_problem_access(
-    problem_id: UUID,
-    db: AsyncSession,
-    current_user: User | None,
-) -> Problem:
-    result = await db.execute(select(Problem).where(Problem.id == problem_id))
-    problem = result.scalar_one_or_none()
-
-    if not problem:
-        raise HTTPException(status_code=404, detail="Problem not found")
-
-    if problem.visibility == ProblemVisibility.PRIVATE:
-        if not current_user or problem.author_id != current_user.id:
-            raise HTTPException(status_code=404, detail="Problem not found")
-
-    return problem
 
 
 def extract_latex_snippets(text: str) -> list[str]:

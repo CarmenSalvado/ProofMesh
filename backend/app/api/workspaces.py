@@ -9,11 +9,11 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models.problem import Problem, ProblemVisibility
+from app.models.problem import Problem
 from app.models.workspace_file import WorkspaceFile, WorkspaceFileType
 from app.models.activity import Activity, ActivityType
 from app.models.user import User
-from app.api.deps import get_current_user, get_current_user_optional
+from app.api.deps import get_current_user, get_current_user_optional, verify_problem_access
 from app.schemas.contents import ContentsCreate, ContentsUpdate
 
 router = APIRouter(prefix="/api/workspaces/{problem_id}/contents", tags=["workspaces"])
@@ -37,32 +37,6 @@ def parent_path(path: str) -> str:
     if "/" not in path:
         return ""
     return path.rsplit("/", 1)[0]
-
-
-async def verify_problem_access(
-    problem_id: UUID,
-    db: AsyncSession,
-    current_user: User | None,
-    require_owner: bool = False,
-) -> Problem:
-    result = await db.execute(
-        select(Problem)
-        .options(selectinload(Problem.author))
-        .where(Problem.id == problem_id)
-    )
-    problem = result.scalar_one_or_none()
-
-    if not problem:
-        raise HTTPException(status_code=404, detail="Workspace not found")
-
-    if problem.visibility == ProblemVisibility.PRIVATE:
-        if not current_user or problem.author_id != current_user.id:
-            raise HTTPException(status_code=404, detail="Workspace not found")
-
-    if require_owner and (not current_user or problem.author_id != current_user.id):
-        raise HTTPException(status_code=403, detail="Not authorized")
-
-    return problem
 
 
 async def ensure_directory(problem_id: UUID, db: AsyncSession, path: str):

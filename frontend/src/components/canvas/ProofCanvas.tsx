@@ -1,3 +1,8 @@
+/**
+ * @deprecated This component is legacy and no longer actively used.
+ * Use ProofCanvasV2 instead. This file will be removed in a future version.
+ * The main canvas page (/problems/[id]/canvas) already uses ProofCanvasV2.
+ */
 "use client";
 
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";

@@ -131,12 +131,7 @@ If you decide to edit, call updateDocument with 1-based line/column positions an
             controller.enqueue(encoder.encode(line));
           }
           if (part.type === "reasoning") {
-            const reasoningText =
-              typeof part.textDelta === "string"
-                ? part.textDelta
-                : typeof part.text === "string"
-                  ? part.text
-                  : "";
+            const reasoningText = typeof part.textDelta === "string" ? part.textDelta : "";
             if (reasoningText) {
               const line = JSON.stringify({ type: "comment", text: `Thinking: ${reasoningText}` }) + "\n";
               controller.enqueue(encoder.encode(line));

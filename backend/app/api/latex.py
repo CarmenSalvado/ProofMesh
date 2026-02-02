@@ -10,9 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.database import get_db
-from app.models.problem import Problem, ProblemVisibility
 from app.models.user import User
-from app.api.deps import get_current_user, get_current_user_optional
+from app.api.deps import get_current_user, get_current_user_optional, verify_problem_access
 from app.schemas.latex import (
     LatexFileListResponse,
     LatexFileResponse,
@@ -50,28 +49,6 @@ def normalize_path(path: str | None) -> str:
 
 def latex_prefix(problem_id: UUID) -> str:
     return f"latex/{problem_id}"
-
-
-async def verify_problem_access(
-    problem_id: UUID,
-    db: AsyncSession,
-    current_user: User | None,
-    require_owner: bool = False,
-) -> Problem:
-    result = await db.execute(select(Problem).where(Problem.id == problem_id))
-    problem = result.scalar_one_or_none()
-
-    if not problem:
-        raise HTTPException(status_code=404, detail="Workspace not found")
-
-    if problem.visibility == ProblemVisibility.PRIVATE:
-        if not current_user or problem.author_id != current_user.id:
-            raise HTTPException(status_code=404, detail="Workspace not found")
-
-    if require_owner and (not current_user or problem.author_id != current_user.id):
-        raise HTTPException(status_code=403, detail="Not authorized")
-
-    return problem
 
 
 @router.get("/{problem_id}/files", response_model=LatexFileListResponse)

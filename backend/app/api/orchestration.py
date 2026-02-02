@@ -20,10 +20,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, Field
 
 from app.database import get_db
-from app.models.problem import Problem, ProblemVisibility
+from app.models.problem import Problem
 from app.models.library_item import LibraryItem, LibraryItemKind, LibraryItemStatus
 from app.models.user import User
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, verify_problem_access
 
 # Add mesh backend to path
 # In Docker: /app/mesh, locally: ../../../mesh relative to this file
@@ -122,24 +122,6 @@ class StreamEvent(BaseModel):
 
 
 # ============ Helper Functions ============
-
-async def verify_problem_access(
-    problem_id: UUID,
-    db: AsyncSession,
-    current_user: User | None,
-) -> Problem:
-    result = await db.execute(select(Problem).where(Problem.id == problem_id))
-    problem = result.scalar_one_or_none()
-
-    if not problem:
-        raise HTTPException(status_code=404, detail="Problem not found")
-
-    if problem.visibility == ProblemVisibility.PRIVATE:
-        if not current_user or problem.author_id != current_user.id:
-            raise HTTPException(status_code=404, detail="Problem not found")
-
-    return problem
-
 
 def get_orchestrator():
     """Get or create the orchestrator instance."""

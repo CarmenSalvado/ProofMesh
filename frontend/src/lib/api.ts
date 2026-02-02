@@ -34,7 +34,9 @@ export interface LibraryItem {
 	formula: string | null;
 	lean_code: string | null;
 	status: "PROPOSED" | "VERIFIED" | "REJECTED";
-	authors: Array<{ type: string; id: string; name?: string }>;
+	x: number | null;
+	y: number | null;
+	authors: Array<{ type: string; id: string; name?: string; avatar_url?: string }>;
 	source: { file_path?: string; cell_id?: string; agent_run_id?: string } | null;
 	dependencies: string[];
 	verification: { method: string; logs: string; status: string } | null;
@@ -593,6 +595,42 @@ async function apiFetch<T>(
 	}
 }
 
+// Fetch wrapper for blob responses (PDFs, images, etc.)
+async function apiFetchBlob(endpoint: string): Promise<Blob> {
+	const url = `${API_BASE_URL}/api${endpoint}`;
+	const authHeaders = getAuthHeaders();
+
+	const headers: HeadersInit = {};
+	if (authHeaders && typeof authHeaders === 'object' && 'Authorization' in authHeaders) {
+		(headers as Record<string, string>)["Authorization"] = authHeaders.Authorization;
+	}
+
+	const response = await fetch(url, { headers });
+	if (!response.ok) {
+		const text = await response.text();
+		throw new Error(text || `Failed to fetch blob: ${response.status}`);
+	}
+	return response.blob();
+}
+
+// Fetch wrapper for text responses (logs, plain text files)
+async function apiFetchText(endpoint: string): Promise<string> {
+	const url = `${API_BASE_URL}/api${endpoint}`;
+	const authHeaders = getAuthHeaders();
+
+	const headers: HeadersInit = {};
+	if (authHeaders && typeof authHeaders === 'object' && 'Authorization' in authHeaders) {
+		(headers as Record<string, string>)["Authorization"] = authHeaders.Authorization;
+	}
+
+	const response = await fetch(url, { headers });
+	if (!response.ok) {
+		const text = await response.text();
+		throw new Error(text || `Failed to fetch text: ${response.status}`);
+	}
+	return response.text();
+}
+
 // ============ Problems API ============
 
 export async function getProblems(params?: {
@@ -694,6 +732,8 @@ export async function updateLibraryItem(
 		formula: string;
 		lean_code: string;
 		status: LibraryItem["status"];
+		x: number;
+		y: number;
 		dependencies: string[];
 		verification: { method: string; logs: string; status: string };
 	}>
@@ -902,23 +942,11 @@ export async function compileLatexProject(
 }
 
 export async function fetchLatexOutputPdf(problemId: string): Promise<Blob> {
-	const url = `${API_BASE_URL}/api/latex/${problemId}/output.pdf`;
-	const headers = getAuthHeaders();
-	const response = await fetch(url, { headers });
-	if (!response.ok) {
-		throw new Error(await response.text());
-	}
-	return response.blob();
+	return apiFetchBlob(`/latex/${problemId}/output.pdf`);
 }
 
 export async function fetchLatexOutputLog(problemId: string): Promise<string> {
-	const url = `${API_BASE_URL}/api/latex/${problemId}/output.log`;
-	const headers = getAuthHeaders();
-	const response = await fetch(url, { headers });
-	if (!response.ok) {
-		throw new Error(await response.text());
-	}
-	return response.text();
+	return apiFetchText(`/latex/${problemId}/output.log`);
 }
 
 export async function mapLatexPdfToSource(
@@ -934,7 +962,7 @@ export async function mapLatexPdfToSource(
 }
 
 export async function chatLatexAi(
-	_problemId: string,
+	problemId: string,
 	payload: {
 		message: string;
 		file_path?: string;
@@ -943,19 +971,14 @@ export async function chatLatexAi(
 		history?: LatexChatMessage[];
 	}
 ): Promise<LatexChatResponse> {
-	const response = await fetch("/api/latex-ai/chat", {
+	return apiFetch(`/latex-ai/${problemId}/chat`, {
 		method: "POST",
-		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify(payload),
 	});
-	if (!response.ok) {
-		throw new Error(await response.text());
-	}
-	return response.json();
 }
 
 export async function autocompleteLatexAi(
-	_problemId: string,
+	problemId: string,
 	payload: {
 		file_path?: string;
 		before: string;
@@ -963,15 +986,10 @@ export async function autocompleteLatexAi(
 		max_suggestions?: number;
 	}
 ): Promise<LatexAutocompleteResponse> {
-	const response = await fetch("/api/latex-ai/autocomplete", {
+	return apiFetch(`/latex-ai/${problemId}/autocomplete`, {
 		method: "POST",
-		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify(payload),
 	});
-	if (!response.ok) {
-		throw new Error(await response.text());
-	}
-	return response.json();
 }
 
 export async function getLatexAiMemory(problemId: string): Promise<LatexAIMemoryResponse> {
@@ -1166,8 +1184,10 @@ export async function checkIsStarred(
 	targetId: string
 ): Promise<boolean> {
 	try {
-		const { stars } = await getStars({ target_type: targetType, limit: 100 });
-		return stars.some((s) => s.target_type === targetType && s.target_id === targetId);
+		const result = await apiFetch<{ is_starred: boolean }>(
+			`/social/stars/check/${targetType}/${targetId}`
+		);
+		return result.is_starred;
 	} catch {
 		return false;
 	}
@@ -1649,4 +1669,304 @@ export async function getNodeAnchorStatus(nodeIds: string[]): Promise<{
 		method: "POST",
 		body: JSON.stringify({ node_ids: validIds }),
 	});
+}
+
+// ============ Canvas Blocks API ============
+
+export interface CanvasBlock {
+	id: string;
+	problem_id: string;
+	name: string;
+	node_ids: string[];
+	created_at: string;
+	updated_at: string;
+}
+
+export interface CanvasBlockListResponse {
+	blocks: CanvasBlock[];
+	total: number;
+}
+
+export async function getCanvasBlocks(problemId: string): Promise<CanvasBlock[]> {
+	return apiFetch(`/problems/${problemId}/blocks`);
+}
+
+export async function getCanvasBlock(problemId: string, blockId: string): Promise<CanvasBlock> {
+	return apiFetch(`/problems/${problemId}/blocks/${blockId}`);
+}
+
+export async function createCanvasBlock(
+	problemId: string,
+	data: {
+		name: string;
+		node_ids: string[];
+	}
+): Promise<CanvasBlock> {
+	return apiFetch(`/problems/${problemId}/blocks`, {
+		method: "POST",
+		body: JSON.stringify(data),
+	});
+}
+
+export async function updateCanvasBlock(
+	problemId: string,
+	blockId: string,
+	data: {
+		name?: string;
+		node_ids?: string[];
+	}
+): Promise<CanvasBlock> {
+	return apiFetch(`/problems/${problemId}/blocks/${blockId}`, {
+		method: "PATCH",
+		body: JSON.stringify(data),
+	});
+}
+
+export async function deleteCanvasBlock(problemId: string, blockId: string): Promise<void> {
+	return apiFetch(`/canvas-blocks/problems/${problemId}/blocks/${blockId}`, {
+		method: "DELETE",
+	});
+}
+
+// ============ Canvas AI API ============
+
+import {
+	CanvasAIRunType,
+} from "./types";
+import type {
+	CanvasAIRun,
+	CanvasAIMessage,
+	ChatHistoryResponse,
+	ActiveRunsResponse,
+	CanvasAIEvent,
+} from "./types";
+
+// Re-export types for convenience
+export type { CanvasAIEvent, CanvasAIMessage, CanvasAIRun };
+
+export interface CreateCanvasAIRunRequest {
+	run_type?: CanvasAIRunType;
+	prompt: string;
+	context?: Record<string, unknown>;
+}
+
+export interface CreateCanvasAIMessageRequest {
+	role: "user" | "assistant" | "system" | "action";
+	content: string;
+	run_id?: string;
+	message_data?: Record<string, unknown>;
+}
+
+export async function createCanvasAIRun(
+	problemId: string,
+	prompt: string,
+	contextNodeIds?: string[]
+): Promise<CanvasAIRun> {
+	const data: CreateCanvasAIRunRequest = {
+		run_type: CanvasAIRunType.EXPLORE,
+		prompt,
+		context: contextNodeIds && contextNodeIds.length > 0
+			? { context_node_ids: contextNodeIds }
+			: undefined,
+	};
+	return apiFetch(`/canvas-ai/problems/${problemId}/runs`, {
+		method: "POST",
+		body: JSON.stringify(data),
+	});
+}
+
+export async function getCanvasAIRuns(
+	problemId: string,
+	options?: { status?: string; limit?: number; offset?: number }
+): Promise<CanvasAIRun[]> {
+	const params = new URLSearchParams();
+	if (options?.status) params.set("status", options.status);
+	if (options?.limit) params.set("limit", options.limit.toString());
+	if (options?.offset) params.set("offset", options.offset.toString());
+	const query = params.toString();
+	return apiFetch(`/canvas-ai/problems/${problemId}/runs${query ? `?${query}` : ""}`);
+}
+
+export async function getCanvasAIActiveRuns(problemId: string): Promise<ActiveRunsResponse> {
+	return apiFetch(`/canvas-ai/problems/${problemId}/runs/active`);
+}
+
+export async function getCanvasAIRun(problemId: string, runId: string): Promise<CanvasAIRun> {
+	return apiFetch(`/canvas-ai/problems/${problemId}/runs/${runId}`);
+}
+
+export async function cancelCanvasAIRun(
+	problemId: string,
+	runId: string
+): Promise<{ status: string; run_id: string }> {
+	return apiFetch(`/canvas-ai/problems/${problemId}/runs/${runId}/cancel`, {
+		method: "POST",
+	});
+}
+
+export async function getCanvasAIChatHistory(
+	problemId: string,
+	options?: { limit?: number; before?: string }
+): Promise<ChatHistoryResponse> {
+	const params = new URLSearchParams();
+	if (options?.limit) params.set("limit", options.limit.toString());
+	if (options?.before) params.set("before", options.before);
+	const query = params.toString();
+	return apiFetch(`/canvas-ai/problems/${problemId}/messages${query ? `?${query}` : ""}`);
+}
+
+export async function createCanvasAIMessage(
+	problemId: string,
+	data: CreateCanvasAIMessageRequest
+): Promise<CanvasAIMessage> {
+	return apiFetch(`/canvas-ai/problems/${problemId}/messages`, {
+		method: "POST",
+		body: JSON.stringify(data),
+	});
+}
+
+/**
+ * Connect to Canvas AI WebSocket for real-time updates.
+ * Returns cleanup function.
+ */
+export function connectCanvasAIWebSocket(
+	problemId: string,
+	onEvent: (event: CanvasAIEvent) => void,
+	onError?: (error: Event) => void,
+	onClose?: () => void
+): { close: () => void; socket: WebSocket } {
+	const wsUrl = API_BASE_URL.replace(/^http/, "ws");
+	const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
+	const url = `${wsUrl}/api/canvas-ai/problems/${problemId}/ws${token ? `?token=${token}` : ""}`;
+	
+	const socket = new WebSocket(url);
+	let pingInterval: NodeJS.Timeout | null = null;
+	
+	socket.onopen = () => {
+		console.log("Canvas AI WebSocket connected");
+		// Keep-alive ping every 30 seconds
+		pingInterval = setInterval(() => {
+			if (socket.readyState === WebSocket.OPEN) {
+				socket.send("ping");
+			}
+		}, 30000);
+	};
+	
+	socket.onmessage = (event) => {
+		// Skip non-JSON messages (like "pong")
+		if (typeof event.data === "string" && event.data === "pong") {
+			return;
+		}
+		
+		try {
+			const data = JSON.parse(event.data) as CanvasAIEvent;
+			onEvent(data);
+		} catch (e) {
+			console.error("Failed to parse WebSocket message:", e, event.data);
+		}
+	};
+	
+	socket.onerror = (event) => {
+		// WebSocket errors are expected when server is unavailable or user is not authenticated
+		// Only log in development for debugging
+		if (process.env.NODE_ENV === 'development') {
+			console.debug("Canvas AI WebSocket connection failed (this is normal if not authenticated)");
+		}
+		onError?.(event);
+	};
+	
+	socket.onclose = () => {
+		console.log("Canvas AI WebSocket closed");
+		if (pingInterval) {
+			clearInterval(pingInterval);
+		}
+		onClose?.();
+	};
+	
+	return {
+		close: () => {
+			if (pingInterval) {
+				clearInterval(pingInterval);
+			}
+			socket.close();
+		},
+		socket,
+	};
+}
+
+// ============ Reasoning Traces ============
+
+export interface ReasoningTraceStep {
+	id: string;
+	run_id?: string;
+	step_number: number;
+	step_type: "thinking" | "retrieval" | "generation" | "verification" | "reflection";
+	content: string;
+	duration_ms?: number;
+	kg_nodes_used?: string[];
+	agent_name?: string;
+	agent_type?: string;
+	started_at?: string;
+	completed_at?: string;
+	extra_data?: Record<string, unknown>;
+	created_at?: string;
+}
+
+interface ReasoningTracesResponse {
+	run_id: string;
+	traces: ReasoningTraceStep[];
+}
+
+export async function getReasoningTraces(runId: string): Promise<ReasoningTraceStep[]> {
+	const response = await apiFetch<ReasoningTracesResponse>(`/canvas-ai/runs/${runId}/reasoning-traces`);
+	return response.traces || [];
+}
+
+/**
+ * Connect to reasoning stream WebSocket for real-time reasoning updates.
+ */
+export function connectReasoningStreamWebSocket(
+	runId: string,
+	onChunk: (chunk: {
+		type: "thinking" | "retrieval" | "generation" | "verification" | "reflection" | "complete" | "error";
+		content?: string;
+		step_number?: number;
+		kg_nodes_used?: string[];
+	}) => void,
+	onError?: (error: Event) => void,
+	onClose?: () => void
+): { close: () => void; socket: WebSocket } {
+	const wsUrl = API_BASE_URL.replace(/^http/, "ws");
+	const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
+	const url = `${wsUrl}/api/canvas-ai/runs/${runId}/stream${token ? `?token=${token}` : ""}`;
+	
+	const socket = new WebSocket(url);
+	
+	socket.onopen = () => {
+		console.log("Reasoning Stream WebSocket connected for run:", runId);
+	};
+	
+	socket.onmessage = (event) => {
+		try {
+			const data = JSON.parse(event.data);
+			onChunk(data);
+		} catch (error) {
+			console.error("Error parsing reasoning chunk:", error);
+		}
+	};
+	
+	socket.onerror = (event) => {
+		console.error("Reasoning Stream WebSocket error:", event);
+		onError?.(event);
+	};
+	
+	socket.onclose = () => {
+		console.log("Reasoning Stream WebSocket closed");
+		onClose?.();
+	};
+	
+	return {
+		close: () => socket.close(),
+		socket,
+	};
 }

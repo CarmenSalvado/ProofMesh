@@ -1,5 +1,12 @@
 // Canvas types for ProofMesh visual proof canvas
 
+export interface AuthorInfo {
+  type: "human" | "agent";
+  id: string;
+  name?: string;
+  avatar_url?: string;
+}
+
 export interface CanvasNode {
   id: string;
   type: string;
@@ -13,8 +20,10 @@ export interface CanvasNode {
   height?: number;
   status: "PROPOSED" | "VERIFIED" | "REJECTED" | "DRAFT" | "EDITING";
   dependencies: string[];
-  authors?: string[];
+  authors?: AuthorInfo[];
   agentId?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface CanvasEdge {
@@ -62,13 +71,16 @@ export interface AgentActivity {
   status: "pending" | "completed" | "failed";
 }
 
-// Node type styling configurations
-export const NODE_TYPE_CONFIG: Record<string, {
+// Node type styling configuration type
+export interface NodeTypeStyle {
   label: string;
   color: string;
   bgColor: string;
   borderColor: string;
-}> = {
+}
+
+// Base node type configurations (uppercase keys)
+const NODE_TYPES_BASE: Record<string, NodeTypeStyle> = {
   DEFINITION: {
     label: "Definition",
     color: "text-indigo-700",
@@ -129,75 +141,35 @@ export const NODE_TYPE_CONFIG: Record<string, {
     bgColor: "bg-cyan-50",
     borderColor: "border-cyan-200",
   },
-  // Lowercase aliases (API returns lowercase)
-  definition: {
-    label: "Definition",
-    color: "text-indigo-700",
-    bgColor: "bg-indigo-50",
-    borderColor: "border-indigo-200",
-  },
-  lemma: {
-    label: "Lemma",
-    color: "text-emerald-700",
-    bgColor: "bg-emerald-50",
-    borderColor: "border-emerald-200",
-  },
-  theorem: {
-    label: "Theorem",
-    color: "text-amber-700",
-    bgColor: "bg-amber-50",
-    borderColor: "border-amber-200",
-  },
-  claim: {
-    label: "Claim",
-    color: "text-blue-700",
-    bgColor: "bg-blue-50",
-    borderColor: "border-blue-200",
-  },
-  counterexample: {
-    label: "Counterexample",
-    color: "text-red-700",
-    bgColor: "bg-red-50",
-    borderColor: "border-red-200",
-  },
-  computation: {
-    label: "Computation",
-    color: "text-purple-700",
-    bgColor: "bg-purple-50",
-    borderColor: "border-purple-200",
-  },
-  note: {
-    label: "Note",
-    color: "text-neutral-700",
-    bgColor: "bg-neutral-50",
-    borderColor: "border-neutral-200",
-  },
-  resource: {
-    label: "Resource",
-    color: "text-slate-700",
-    bgColor: "bg-slate-50",
-    borderColor: "border-slate-200",
-  },
-  idea: {
-    label: "Idea",
-    color: "text-fuchsia-700",
-    bgColor: "bg-fuchsia-50",
-    borderColor: "border-fuchsia-200",
-  },
-  content: {
-    label: "Content",
-    color: "text-cyan-700",
-    bgColor: "bg-cyan-50",
-    borderColor: "border-cyan-200",
-  },
 };
 
-export const STATUS_CONFIG: Record<string, {
+// Build full config with both uppercase and lowercase keys (API may return either)
+function buildCaseInsensitiveConfig<T>(base: Record<string, T>): Record<string, T> {
+  const result: Record<string, T> = {};
+  for (const [key, value] of Object.entries(base)) {
+    result[key] = value;
+    result[key.toLowerCase()] = value;
+  }
+  return result;
+}
+
+export const NODE_TYPE_CONFIG: Record<string, NodeTypeStyle> = buildCaseInsensitiveConfig(NODE_TYPES_BASE);
+
+/** Helper to get node type config regardless of case */
+export function getNodeTypeConfig(type: string): NodeTypeStyle {
+  return NODE_TYPE_CONFIG[type] || NODE_TYPE_CONFIG[type.toUpperCase()] || NODE_TYPES_BASE.NOTE;
+}
+
+// Status styling configuration type
+export interface StatusStyle {
   label: string;
   color: string;
   bgColor: string;
   icon: string;
-}> = {
+}
+
+// Base status configurations
+const STATUS_BASE: Record<string, StatusStyle> = {
   VERIFIED: {
     label: "Verified",
     color: "text-emerald-700",
@@ -228,35 +200,11 @@ export const STATUS_CONFIG: Record<string, {
     bgColor: "bg-blue-100",
     icon: "✎",
   },
-  // Lowercase aliases (API returns lowercase)
-  verified: {
-    label: "Verified",
-    color: "text-emerald-700",
-    bgColor: "bg-emerald-100",
-    icon: "✓",
-  },
-  proposed: {
-    label: "Proposed",
-    color: "text-amber-700",
-    bgColor: "bg-amber-100",
-    icon: "○",
-  },
-  rejected: {
-    label: "Rejected",
-    color: "text-red-700",
-    bgColor: "bg-red-100",
-    icon: "✗",
-  },
-  draft: {
-    label: "Draft",
-    color: "text-neutral-600",
-    bgColor: "bg-neutral-100",
-    icon: "◐",
-  },
-  editing: {
-    label: "Editing...",
-    color: "text-blue-700",
-    bgColor: "bg-blue-100",
-    icon: "✎",
-  },
 };
+
+export const STATUS_CONFIG: Record<string, StatusStyle> = buildCaseInsensitiveConfig(STATUS_BASE);
+
+/** Helper to get status config regardless of case */
+export function getStatusConfig(status: string): StatusStyle {
+  return STATUS_CONFIG[status] || STATUS_CONFIG[status.toUpperCase()] || STATUS_BASE.DRAFT;
+}

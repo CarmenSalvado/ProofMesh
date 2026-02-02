@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
-import { getProblem, getCanvases, getLibraryItems, createCanvas, Problem, Canvas, LibraryItem } from "@/lib/api";
+import { getProblem, getLibraryItems, Problem, LibraryItem } from "@/lib/api";
 import { ChevronRight, ChevronDown, Folder, FileText, Plus, Settings, Home, ArrowLeft } from "lucide-react";
 import clsx from "clsx";
 
@@ -16,10 +16,10 @@ type FolderNode = {
 	name: string;
 	path: string;
 	folders: FolderNode[];
-	files: Canvas[];
+	files: Array<{ id: string; title: string; folder: string }>;
 };
 
-function buildTree(canvases: Canvas[]): FolderNode {
+function buildTree(canvases: Array<{ id: string; title: string; folder: string }>): FolderNode {
 	const root: FolderNode = { name: "root", path: "/", folders: [], files: [] };
 
 	canvases.forEach(canvas => {
@@ -107,7 +107,9 @@ export function ProblemSidebar({ problemId }: ProblemSidebarProps) {
 	const router = useRouter();
 	const { user } = useAuth();
 	const [problem, setProblem] = useState<Problem | null>(null);
-	const [canvases, setCanvases] = useState<Canvas[]>([]);
+	// Canvas functionality has been merged with library items
+	// Keeping for UI compatibility
+	const [canvases, setCanvases] = useState<Array<{ id: string; title: string; folder: string }>>([]);
 	const [libraryItems, setLibraryItems] = useState<LibraryItem[]>([]);
 	const [loading, setLoading] = useState(true);
 
@@ -130,14 +132,14 @@ export function ProblemSidebar({ problemId }: ProblemSidebarProps) {
 
 	async function loadData() {
 		try {
-			const [problemData, canvasesData, libraryData] = await Promise.all([
+			const [problemData, libraryData] = await Promise.all([
 				getProblem(problemId),
-				getCanvases(problemId),
 				getLibraryItems(problemId),
 			]);
 			setProblem(problemData);
-			setCanvases(canvasesData.canvases);
 			setLibraryItems(libraryData.items);
+			// Canvases are now integrated with the library system
+			setCanvases([{ id: "default", title: "Visual Canvas", folder: "/" }]);
 		} catch (err) {
 			console.error("Failed to load problem data:", err);
 		} finally {
@@ -146,13 +148,8 @@ export function ProblemSidebar({ problemId }: ProblemSidebarProps) {
 	}
 
 	async function handleCreateCanvas() {
-		try {
-			const canvas = await createCanvas(problemId, { title: "Untitled Canvas", folder: "/" });
-			setCanvases([...canvases, canvas]);
-			router.push(`/problems/${problemId}/canvas/${canvas.id}`);
-		} catch (err) {
-			console.error("Failed to create canvas:", err);
-		}
+		// Canvas creation is now handled via the visual canvas interface
+		router.push(`/problems/${problemId}/canvas`);
 	}
 
 	return (
@@ -205,8 +202,8 @@ export function ProblemSidebar({ problemId }: ProblemSidebarProps) {
 						<div className="px-2 space-y-[1px]">
 							{libraryItems.slice(0, 10).map(item => (
 								<div key={item.id} className="flex items-center gap-2 px-2 py-1 text-[12px] text-[var(--text-muted)] rounded">
-									<div className={`w-1.5 h-1.5 rounded-full ${item.kind === "lemma" ? "bg-emerald-500" :
-										item.kind === "theorem" ? "bg-amber-500" : "bg-blue-500"
+									<div className={`w-1.5 h-1.5 rounded-full ${item.kind === "LEMMA" ? "bg-emerald-500" :
+										item.kind === "THEOREM" ? "bg-amber-500" : "bg-blue-500"
 										}`} />
 									<span className="truncate">{item.title}</span>
 								</div>

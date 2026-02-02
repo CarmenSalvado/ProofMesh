@@ -46,7 +46,7 @@ interface AgentIntelligencePanelProps {
   onSuggestionAccept?: (suggestion: AgentSuggestion) => void;
   onSuggestionRefine?: (suggestion: AgentSuggestion) => void;
   onAgentCommand?: (command: string) => void;
-  onCreateNode?: (data: { type: string; title: string; content: string; formula?: string }) => void;
+  onCreateNode?: (data: { type: string; title: string; content: string; formula?: string; leanCode?: string }) => void;
 }
 
 interface PipelineStage {

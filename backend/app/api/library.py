@@ -13,40 +13,94 @@ from app.models.activity import Activity, ActivityType
 from app.models.discussion import Discussion
 from app.models.comment import Comment
 from app.models.user import User
-from app.api.deps import get_current_user, get_current_user_optional
+from app.api.deps import get_current_user, get_current_user_optional, verify_problem_access
 from app.schemas.library_item import (
     LibraryItemCreate,
     LibraryItemUpdate,
     LibraryItemResponse,
     LibraryItemListResponse,
+    AuthorInfo,
+    NodeActivityHistoryResponse,
+    NodeActivityEntry,
 )
 
 router = APIRouter(prefix="/api/problems/{problem_id}/library", tags=["library"])
 
 
-async def verify_problem_access(
-    problem_id: UUID,
-    db: AsyncSession,
-    current_user: User | None,
-    require_owner: bool = False,
-) -> Problem:
-    """Verify user has access to problem"""
-    result = await db.execute(
-        select(Problem).where(Problem.id == problem_id)
+async def enrich_authors_with_avatars(
+    authors: list[dict],
+    db: AsyncSession
+) -> list[AuthorInfo]:
+    """Enrich author info with avatar URLs from user database"""
+    if not authors:
+        return []
+    
+    # Collect human author IDs
+    human_author_ids = [
+        UUID(a["id"]) for a in authors 
+        if a.get("type") == "human" and a.get("id")
+    ]
+    
+    # Fetch user data for human authors
+    user_avatars = {}
+    if human_author_ids:
+        result = await db.execute(
+            select(User.id, User.username, User.avatar_url)
+            .where(User.id.in_(human_author_ids))
+        )
+        for user_id, username, avatar_url in result.all():
+            user_avatars[str(user_id)] = {
+                "name": username,
+                "avatar_url": avatar_url
+            }
+    
+    # Build enriched author list
+    enriched = []
+    for author in authors:
+        author_id = author.get("id", "")
+        enriched_author = AuthorInfo(
+            type=author.get("type", "human"),
+            id=author_id,
+            name=author.get("name"),
+            avatar_url=None
+        )
+        
+        # Enrich human authors with avatar
+        if author.get("type") == "human" and author_id in user_avatars:
+            user_data = user_avatars[author_id]
+            enriched_author.name = enriched_author.name or user_data["name"]
+            enriched_author.avatar_url = user_data["avatar_url"]
+        
+        enriched.append(enriched_author)
+    
+    return enriched
+
+
+async def item_to_response(
+    item: LibraryItem,
+    db: AsyncSession
+) -> LibraryItemResponse:
+    """Convert LibraryItem to response with enriched authors"""
+    enriched_authors = await enrich_authors_with_avatars(item.authors or [], db)
+    
+    return LibraryItemResponse(
+        id=item.id,
+        problem_id=item.problem_id,
+        title=item.title,
+        kind=item.kind,
+        content=item.content,
+        formula=item.formula,
+        lean_code=item.lean_code,
+        status=item.status,
+        x=item.x,
+        y=item.y,
+        authors=enriched_authors,
+        source=item.source,
+        dependencies=item.dependencies or [],
+        verification=item.verification,
+        created_at=item.created_at,
+        updated_at=item.updated_at,
     )
-    problem = result.scalar_one_or_none()
-    
-    if not problem:
-        raise HTTPException(status_code=404, detail="Problem not found")
-    
-    if problem.visibility == ProblemVisibility.PRIVATE:
-        if not current_user or problem.author_id != current_user.id:
-            raise HTTPException(status_code=404, detail="Problem not found")
-    
-    if require_owner and (not current_user or problem.author_id != current_user.id):
-        raise HTTPException(status_code=403, detail="Not authorized")
-    
-    return problem
 
 
 @router.get("", response_model=LibraryItemListResponse)
@@ -71,7 +125,10 @@ async def list_library_items(
     result = await db.execute(query)
     items = result.scalars().all()
     
-    return LibraryItemListResponse(items=items, total=len(items))
+    # Enrich all items with author avatars
+    enriched_items = [await item_to_response(item, db) for item in items]
+    
+    return LibraryItemListResponse(items=enriched_items, total=len(enriched_items))
 
 
 @router.post("", response_model=LibraryItemResponse, status_code=201)
@@ -98,6 +155,8 @@ async def create_library_item(
         content=data.content,
         formula=data.formula,
         lean_code=data.lean_code,
+        x=data.x,
+        y=data.y,
         status=LibraryItemStatus.PROPOSED,
         authors=authors,
         source=data.source.model_dump(mode="json") if data.source else None,
@@ -114,12 +173,14 @@ async def create_library_item(
                 "problem_id": str(problem_id),
                 "problem_title": problem.title,
                 "item_title": item.title,
+                "item_kind": item.kind.value if item.kind else None,
             },
         )
     )
     await db.commit()
     await db.refresh(item)
-    return item
+    
+    return await item_to_response(item, db)
 
 
 @router.get("/{item_id}", response_model=LibraryItemResponse)
@@ -140,7 +201,8 @@ async def get_library_item(
     item = result.scalar_one_or_none()
     if not item:
         raise HTTPException(status_code=404, detail="Library item not found")
-    return item
+    
+    return await item_to_response(item, db)
 
 
 @router.patch("/{item_id}", response_model=LibraryItemResponse)
@@ -152,7 +214,7 @@ async def update_library_item(
     current_user: User = Depends(get_current_user),
 ):
     """Update a library item (content, status, verification)"""
-    await verify_problem_access(problem_id, db, current_user, require_owner=True)
+    problem = await verify_problem_access(problem_id, db, current_user, require_owner=True)
     
     result = await db.execute(
         select(LibraryItem).where(
@@ -163,6 +225,10 @@ async def update_library_item(
     if not item:
         raise HTTPException(status_code=404, detail="Library item not found")
     
+    # Track what changed for activity log
+    changes = []
+    old_status = item.status
+    
     # Status can only become VERIFIED with verification info
     if data.status == LibraryItemStatus.VERIFIED and not data.verification:
         if not item.verification:
@@ -171,24 +237,57 @@ async def update_library_item(
                 detail="Cannot verify without verification info",
             )
     
-    if data.title is not None:
+    if data.title is not None and data.title != item.title:
         item.title = data.title
-    if data.content is not None:
+        changes.append("title")
+    if data.content is not None and data.content != item.content:
         item.content = data.content
-    if data.formula is not None:
+        changes.append("content")
+    if data.formula is not None and data.formula != item.formula:
         item.formula = data.formula
-    if data.lean_code is not None:
+        changes.append("formula")
+    if data.lean_code is not None and data.lean_code != item.lean_code:
         item.lean_code = data.lean_code
-    if data.status is not None:
+        changes.append("lean_code")
+    if data.status is not None and data.status != item.status:
         item.status = data.status
+        changes.append("status")
     if data.verification is not None:
         item.verification = data.verification.model_dump(mode="json")
+        changes.append("verification")
     if data.dependencies is not None:
         item.dependencies = [str(dep) for dep in data.dependencies]
+        changes.append("dependencies")
+    if data.x is not None:
+        item.x = data.x
+    if data.y is not None:
+        item.y = data.y
+    
+    # Log activity for significant changes
+    if changes:
+        # Determine activity type based on changes
+        if data.status == LibraryItemStatus.VERIFIED and old_status != LibraryItemStatus.VERIFIED:
+            activity_type = ActivityType.VERIFIED_LIBRARY
+        else:
+            activity_type = ActivityType.UPDATED_LIBRARY
+        
+        db.add(
+            Activity(
+                user_id=current_user.id,
+                type=activity_type,
+                target_id=item.id,
+                extra_data={
+                    "problem_id": str(problem_id),
+                    "problem_title": problem.title,
+                    "item_title": item.title,
+                    "changes": changes,
+                },
+            )
+        )
     
     await db.commit()
     await db.refresh(item)
-    return item
+    return await item_to_response(item, db)
 
 
 @router.delete("/{item_id}", status_code=204)
@@ -212,6 +311,150 @@ async def delete_library_item(
     
     await db.delete(item)
     await db.commit()
+
+
+# --- Activity History Endpoint ---
+
+@router.get("/{item_id}/activity", response_model=NodeActivityHistoryResponse)
+async def get_node_activity_history(
+    problem_id: UUID,
+    item_id: UUID,
+    limit: int = Query(50, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    current_user: User | None = Depends(get_current_user_optional),
+):
+    """Get activity history for a library item (node)"""
+    await verify_problem_access(problem_id, db, current_user)
+    
+    # Get the library item
+    result = await db.execute(
+        select(LibraryItem).where(
+            LibraryItem.id == item_id, LibraryItem.problem_id == problem_id
+        )
+    )
+    item = result.scalar_one_or_none()
+    if not item:
+        raise HTTPException(status_code=404, detail="Library item not found")
+    
+    # Get activities related to this item
+    result = await db.execute(
+        select(Activity, User)
+        .join(User, Activity.user_id == User.id)
+        .where(Activity.target_id == item_id)
+        .order_by(Activity.created_at.desc())
+        .limit(limit)
+    )
+    activities = result.all()
+    
+    # Get comments as activities too
+    result = await db.execute(
+        select(Comment, User, Discussion)
+        .join(User, Comment.author_id == User.id)
+        .join(Discussion, Comment.discussion_id == Discussion.id)
+        .where(Discussion.title == f"__item__{item_id}__")
+        .order_by(Comment.created_at.desc())
+        .limit(limit)
+    )
+    comments = result.all()
+    
+    # Build activity entries
+    activity_entries = []
+    
+    # Add creation activity from item data
+    authors = item.authors or []
+    for author in authors:
+        if author.get("type") == "human":
+            # Try to get user info
+            user_result = await db.execute(
+                select(User).where(User.id == UUID(author["id"]))
+            )
+            user = user_result.scalar_one_or_none()
+            activity_entries.append(NodeActivityEntry(
+                id=f"create-{item.id}",
+                type="created",
+                user=AuthorInfo(
+                    type="human",
+                    id=author["id"],
+                    name=author.get("name") or (user.username if user else "Unknown"),
+                    avatar_url=user.avatar_url if user else None
+                ),
+                description=f"Created {item.kind.value.lower() if item.kind else 'item'}: {item.title}",
+                timestamp=item.created_at,
+                metadata={"kind": item.kind.value if item.kind else None}
+            ))
+        elif author.get("type") == "agent":
+            activity_entries.append(NodeActivityEntry(
+                id=f"create-agent-{item.id}",
+                type="agent_generated",
+                user=AuthorInfo(
+                    type="agent",
+                    id=author.get("id", "unknown"),
+                    name=author.get("name") or "AI Agent",
+                    avatar_url=None
+                ),
+                description=f"AI generated {item.kind.value.lower() if item.kind else 'item'}: {item.title}",
+                timestamp=item.created_at,
+                metadata={"kind": item.kind.value if item.kind else None}
+            ))
+    
+    # Add activities from Activity table
+    for activity, user in activities:
+        type_map = {
+            ActivityType.PUBLISHED_LIBRARY: "published",
+            ActivityType.UPDATED_LIBRARY: "updated",
+            ActivityType.VERIFIED_LIBRARY: "verified",
+            ActivityType.AGENT_GENERATED: "agent_generated",
+        }
+        
+        activity_entries.append(NodeActivityEntry(
+            id=str(activity.id),
+            type=type_map.get(activity.type, "updated"),
+            user=AuthorInfo(
+                type="human",
+                id=str(user.id),
+                name=user.username,
+                avatar_url=user.avatar_url
+            ),
+            description=activity.extra_data.get("description") or _get_activity_description(activity),
+            timestamp=activity.created_at,
+            metadata=activity.extra_data
+        ))
+    
+    # Add comments as activities
+    for comment, user, _ in comments:
+        activity_entries.append(NodeActivityEntry(
+            id=f"comment-{comment.id}",
+            type="commented",
+            user=AuthorInfo(
+                type="human",
+                id=str(user.id),
+                name=user.username,
+                avatar_url=user.avatar_url
+            ),
+            description=f"Commented: {comment.content[:100]}{'...' if len(comment.content) > 100 else ''}",
+            timestamp=comment.created_at,
+            metadata={"comment_id": str(comment.id)}
+        ))
+    
+    # Sort by timestamp descending
+    activity_entries.sort(key=lambda x: x.timestamp, reverse=True)
+    
+    return NodeActivityHistoryResponse(
+        node_id=item_id,
+        activities=activity_entries[:limit],
+        total=len(activity_entries)
+    )
+
+
+def _get_activity_description(activity: Activity) -> str:
+    """Generate a human-readable description for an activity"""
+    descriptions = {
+        ActivityType.PUBLISHED_LIBRARY: "Published to library",
+        ActivityType.UPDATED_LIBRARY: f"Updated {', '.join(activity.extra_data.get('changes', ['item']))}" if activity.extra_data else "Updated item",
+        ActivityType.VERIFIED_LIBRARY: "Verified with Lean",
+        ActivityType.AGENT_GENERATED: "Generated by AI",
+    }
+    return descriptions.get(activity.type, "Modified item")
 
 
 # --- Comment Schemas ---
@@ -344,6 +587,22 @@ async def create_item_comment(
         discussion_id=discussion.id,
     )
     db.add(comment)
+    await db.flush()
+    
+    # Log activity for comment
+    db.add(
+        Activity(
+            user_id=current_user.id,
+            type=ActivityType.COMMENTED_LIBRARY,
+            target_id=item.id,
+            extra_data={
+                "problem_id": str(problem_id),
+                "comment_id": str(comment.id),
+                "item_title": item.title,
+            },
+        )
+    )
+    
     await db.commit()
     await db.refresh(comment)
     

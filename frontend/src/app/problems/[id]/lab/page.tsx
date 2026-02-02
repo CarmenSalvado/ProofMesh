@@ -3,7 +3,7 @@
 import { use, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import Link from "next/link";
 import Editor, { type Monaco } from "@monaco-editor/react";
-import { GlobalWorkerOptions, getDocument, type PDFDocumentProxy } from "pdfjs-dist/legacy/build/pdf";
+import { GlobalWorkerOptions, getDocument, type PDFDocumentProxy } from "pdfjs-dist";
 import { useChat } from "@ai-sdk/react";
 import {
   AlertTriangle,
@@ -173,10 +173,7 @@ const latexMonarch = {
   },
 };
 
-const PDF_WORKER_SRC = new URL(
-  "pdfjs-dist/legacy/build/pdf.worker.min.mjs",
-  import.meta.url
-).toString();
+const PDF_WORKER_SRC = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs";
 GlobalWorkerOptions.workerSrc = PDF_WORKER_SRC;
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
@@ -748,7 +745,7 @@ export default function LabPage({ params }: PageProps) {
   const handleBeforeMount = useCallback((monaco: Monaco) => {
     const hasLatex = monaco.languages
       .getLanguages()
-      .some((lang) => lang.id === LATEX_LANGUAGE_ID);
+      .some((lang: { id: string }) => lang.id === LATEX_LANGUAGE_ID);
 
     if (!hasLatex) {
       monaco.languages.register({ id: LATEX_LANGUAGE_ID });
@@ -782,7 +779,7 @@ export default function LabPage({ params }: PageProps) {
       completionProviderRef.current = true;
       monaco.languages.registerCompletionItemProvider(LATEX_LANGUAGE_ID, {
         triggerCharacters: ["\\", "{", "$"],
-        provideCompletionItems: (model, position) => {
+        provideCompletionItems: (model: any, position: any) => {
           const word = model.getWordUntilPosition(position);
           const range = {
             startLineNumber: position.lineNumber,
@@ -994,7 +991,7 @@ export default function LabPage({ params }: PageProps) {
       const lines: Array<{ line: number; text: string }> = [];
       for (let line = startLine; line <= endLine; line += 1) {
         const text = model.getLineContent(line).trim();
-        lines.push({ line, text });
+        lines.push({ line: line as number, text });
         if (lines.length >= 4) break;
       }
       const filtered = lines.filter((item) => item.text.length > 0);
@@ -1232,7 +1229,7 @@ export default function LabPage({ params }: PageProps) {
     const value = model.getValue();
     if (value.includes("\\usepackage{graphicx}")) return;
     const lines = value.split("\n");
-    const docClassIndex = lines.findIndex((line) => line.startsWith("\\documentclass"));
+    const docClassIndex = lines.findIndex((line: string) => line.startsWith("\\documentclass"));
     const insertLine = docClassIndex >= 0 ? docClassIndex + 1 : 0;
     const range = new monaco.Range(insertLine + 1, 1, insertLine + 1, 1);
     editor.executeEdits("user-insert", [
@@ -2959,7 +2956,7 @@ export default function LabPage({ params }: PageProps) {
       return { maxLeft, maxChat, maxRight };
     };
 
-    const handleMove = (event: MouseEvent) => {
+    const handleMove = (event: globalThis.MouseEvent) => {
       const drag = dragRef.current;
       if (!drag) return;
       const { maxLeft, maxChat, maxRight } = getLimits();

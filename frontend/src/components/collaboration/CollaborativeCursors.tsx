@@ -24,7 +24,7 @@ export function CollaborativeCursors({
     if (!collaboration) return [];
     
     const result: Array<{
-      userId: number;
+      userId: string | number;
       username: string;
       color: string;
       x: number;
@@ -136,7 +136,7 @@ export function CollaborativeSelections({
     if (!collaboration || !getSelectionRects) return [];
 
     const result: Array<{
-      userId: number;
+      userId: string | number;
       color: string;
       rects: DOMRect[];
     }> = [];

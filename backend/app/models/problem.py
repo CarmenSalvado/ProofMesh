@@ -63,6 +63,9 @@ class Problem(Base):
     library_items: Mapped[list["LibraryItem"]] = relationship(
         "LibraryItem", back_populates="problem", cascade="all, delete-orphan"
     )
+    canvas_blocks: Mapped[list["CanvasBlock"]] = relationship(
+        "CanvasBlock", back_populates="problem", cascade="all, delete-orphan"
+    )
     forked_from: Mapped["Problem | None"] = relationship(
         "Problem", remote_side=[id], foreign_keys=[fork_of]
     )

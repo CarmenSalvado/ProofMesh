@@ -11,6 +11,7 @@ import {
   FileText,
   AlertCircle,
 } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
 import { NODE_TYPE_CONFIG } from "./types";
 
 export interface NewNodeData {
@@ -102,20 +103,34 @@ export function AddNodeModal({
     );
   }, []);
 
-  if (!isOpen) return null;
-
   const typeConfig = NODE_TYPE_CONFIG[type] || NODE_TYPE_CONFIG.note;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      {/* Backdrop */}
-      <div
-        className="absolute inset-0 bg-black/50 backdrop-blur-sm"
-        onClick={onClose}
-      />
+    <AnimatePresence>
+      {isOpen && (
+        <motion.div 
+          className="fixed inset-0 z-50 flex items-center justify-center"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+        >
+          {/* Backdrop */}
+          <motion.div
+            className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+            onClick={onClose}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+          />
 
-      {/* Modal */}
-      <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-lg mx-4 max-h-[90vh] overflow-hidden flex flex-col">
+          {/* Modal */}
+          <motion.div 
+            className="relative bg-white rounded-xl shadow-2xl w-full max-w-lg mx-4 max-h-[90vh] overflow-hidden flex flex-col"
+            initial={{ opacity: 0, scale: 0.9, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: 10 }}
+            transition={{ type: "spring", stiffness: 350, damping: 25 }}
+          >
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-neutral-200">
           <div className="flex items-center gap-3">
@@ -149,13 +164,13 @@ export function AddNodeModal({
               Node Type
             </label>
             <div className="grid grid-cols-3 gap-2">
-              {NODE_TYPES.map((nodeType) => {
+              {NODE_TYPES.map((nodeType, index) => {
                 const Icon = nodeType.icon;
                 const config = NODE_TYPE_CONFIG[nodeType.value] || NODE_TYPE_CONFIG.note;
                 const isSelected = type === nodeType.value;
                 
                 return (
-                  <button
+                  <motion.button
                     key={nodeType.value}
                     type="button"
                     onClick={() => setType(nodeType.value)}
@@ -164,10 +179,23 @@ export function AddNodeModal({
                         ? `${config.bgColor} ${config.borderColor} ${config.color} ring-2 ring-offset-1 ring-indigo-500`
                         : "border-neutral-200 text-neutral-600 hover:border-neutral-300 hover:bg-neutral-50"
                     }`}
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: index * 0.03 }}
+                    whileHover={{ scale: 1.02, y: -2 }}
+                    whileTap={{ scale: 0.98 }}
                   >
                     <Icon className="w-4 h-4" />
                     <span className="text-xs font-medium">{nodeType.label}</span>
-                  </button>
+                    {isSelected && (
+                      <motion.div
+                        layoutId="selectedTypeIndicator"
+                        className="absolute inset-0 rounded-lg ring-2 ring-indigo-500 ring-offset-1"
+                        initial={false}
+                        transition={{ type: "spring", stiffness: 500, damping: 35 }}
+                      />
+                    )}
+                  </motion.button>
                 );
               })}
             </div>
@@ -286,7 +314,9 @@ export function AddNodeModal({
             )}
           </button>
         </div>
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
+      )}
+    </AnimatePresence>
   );
 }

@@ -983,6 +983,28 @@ async def list_my_stars(
     return StarListResponse(stars=payload, total=len(payload))
 
 
+@router.get("/stars/check/{target_type}/{target_id}")
+async def check_is_starred(
+    target_type: str,
+    target_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Check if the current user has starred a specific item."""
+    target_type_enum = StarTargetType(target_type)
+    
+    result = await db.execute(
+        select(Star.id).where(
+            Star.user_id == current_user.id,
+            Star.target_type == target_type_enum,
+            Star.target_id == target_id,
+        )
+    )
+    exists = result.scalar_one_or_none() is not None
+    
+    return {"is_starred": exists}
+
+
 # ========================
 # Notification Endpoints
 # ========================

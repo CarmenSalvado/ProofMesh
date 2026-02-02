@@ -14,8 +14,18 @@ import {
   Edit3,
   Check,
   Save,
+  History,
+  Users,
+  Bot,
+  Sparkles,
+  GitCommit,
+  Activity,
 } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
 import { CanvasNode, NODE_TYPE_CONFIG } from "./types";
+import { AuthorAvatar } from "./AuthorAvatar";
+import { NodeContributors } from "./NodeContributors";
+import { ActivityTimeline, ActivityEntry } from "./ActivityTimeline";
 
 interface Comment {
   id: string;
@@ -57,7 +67,7 @@ export function NodeDetailPanel({
   onSave,
   onDelete,
 }: NodeDetailPanelProps) {
-  const [activeTab, setActiveTab] = useState<"edit" | "comments">("edit");
+  const [activeTab, setActiveTab] = useState<"edit" | "comments" | "traceability">("edit");
 
   // Edit state
   const [title, setTitle] = useState(node.title);
@@ -75,6 +85,10 @@ export function NodeDetailPanel({
   const [newComment, setNewComment] = useState("");
   const [loadingComments, setLoadingComments] = useState(false);
   const [submittingComment, setSubmittingComment] = useState(false);
+
+  // Activity/Traceability state
+  const [activities, setActivities] = useState<ActivityEntry[]>([]);
+  const [loadingActivities, setLoadingActivities] = useState(false);
 
   const panelRef = useRef<HTMLDivElement>(null);
   const titleRef = useRef<HTMLTextAreaElement>(null);
@@ -102,10 +116,12 @@ export function NodeDetailPanel({
     setStatus(node.status as "PROPOSED" | "VERIFIED" | "REJECTED");
   }, [node]);
 
-  // Load comments when tab changes
+  // Load data when tab changes
   useEffect(() => {
     if (activeTab === "comments") {
       loadComments();
+    } else if (activeTab === "traceability") {
+      loadActivities();
     }
   }, [activeTab, node.id]);
 
@@ -179,6 +195,25 @@ export function NodeDetailPanel({
     }
   };
 
+  const loadActivities = async () => {
+    setLoadingActivities(true);
+    try {
+      const token = localStorage.getItem("access_token");
+      const response = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080"}/api/problems/${problemId}/library/${node.id}/activity`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (response.ok) {
+        const data = await response.json();
+        setActivities(data.activities || []);
+      }
+    } catch (error) {
+      console.error("Failed to load activities:", error);
+    } finally {
+      setLoadingActivities(false);
+    }
+  };
+
   const handleSubmitComment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newComment.trim() || submittingComment) return;
@@ -186,7 +221,6 @@ export function NodeDetailPanel({
     setSubmittingComment(true);
     try {
       const token = localStorage.getItem("access_token");
-      console.log("Posting comment to:", `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080"}/api/problems/${problemId}/library/${node.id}/comments`);
       const response = await fetch(
         `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080"}/api/problems/${problemId}/library/${node.id}/comments`,
         {
@@ -198,7 +232,6 @@ export function NodeDetailPanel({
           body: JSON.stringify({ content: newComment.trim() }),
         }
       );
-      console.log("Comment response status:", response.status);
       if (response.ok) {
         const comment = await response.json();
         setComments([...comments, comment]);
@@ -232,18 +265,42 @@ export function NodeDetailPanel({
     }
   };
 
+  // Get first human author as creator
+  const creator = node.authors?.find(a => a.type === "human");
+  const hasAgent = node.authors?.some(a => a.type === "agent");
+
   return (
-    <div
+    <motion.div
       ref={panelRef}
-      className="absolute right-0 top-0 bottom-0 w-[380px] bg-white border-l border-neutral-200 shadow-2xl z-50 flex flex-col animate-in slide-in-from-right duration-200"
+      className="absolute right-0 top-0 bottom-0 w-[420px] bg-white border-l border-neutral-200 shadow-2xl z-50 flex flex-col"
+      initial={{ x: "100%", opacity: 0 }}
+      animate={{ x: 0, opacity: 1 }}
+      exit={{ x: "100%", opacity: 0 }}
+      transition={{ type: "spring", stiffness: 300, damping: 30 }}
     >
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-100">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
           <div className={`w-2 h-2 rounded-full ${typeConfig.color.replace("text-", "bg-")}`} />
           <span className="text-xs font-medium text-neutral-500 uppercase tracking-wide">
             {typeConfig.label}
           </span>
+          
+          {/* Creator avatar */}
+          {creator && (
+            <div className="flex items-center gap-1.5 ml-2 pl-2 border-l border-neutral-200">
+              <AuthorAvatar author={creator} size="xs" showTooltip={false} />
+              <span className="text-xs text-neutral-500">{creator.name || "Unknown"}</span>
+            </div>
+          )}
+          
+          {/* AI indicator */}
+          {hasAgent && (
+            <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-violet-50 border border-violet-200">
+              <Sparkles className="w-2.5 h-2.5 text-violet-500" />
+              <span className="text-[9px] font-medium text-violet-600">AI</span>
+            </div>
+          )}
         </div>
         <div className="flex items-center gap-1">
           {hasChanges && (
@@ -271,47 +328,57 @@ export function NodeDetailPanel({
 
       {/* Tabs */}
       <div className="flex border-b border-neutral-100">
-        <button
-          onClick={() => setActiveTab("edit")}
-          className={`flex-1 px-4 py-2.5 text-sm font-medium transition-colors relative ${activeTab === "edit"
-            ? "text-indigo-600"
-            : "text-neutral-500 hover:text-neutral-700"
+        {[
+          { id: "edit", label: "Edit", icon: Edit3 },
+          { id: "comments", label: "Comments", icon: MessageSquare, count: comments.length },
+          { id: "traceability", label: "Traceability", icon: History, count: activities.length },
+        ].map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id as typeof activeTab)}
+            className={`flex-1 px-4 py-2.5 text-sm font-medium transition-colors relative ${
+              activeTab === tab.id
+                ? "text-indigo-600"
+                : "text-neutral-500 hover:text-neutral-700"
             }`}
-        >
-          <span className="flex items-center justify-center gap-1.5">
-            <Edit3 className="w-3.5 h-3.5" />
-            Edit
-          </span>
-          {activeTab === "edit" && (
-            <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-indigo-600" />
-          )}
-        </button>
-        <button
-          onClick={() => setActiveTab("comments")}
-          className={`flex-1 px-4 py-2.5 text-sm font-medium transition-colors relative ${activeTab === "comments"
-            ? "text-indigo-600"
-            : "text-neutral-500 hover:text-neutral-700"
-            }`}
-        >
-          <span className="flex items-center justify-center gap-1.5">
-            <MessageSquare className="w-3.5 h-3.5" />
-            Comments
-            {comments.length > 0 && (
-              <span className="text-[10px] bg-neutral-200 text-neutral-600 px-1.5 rounded-full">
-                {comments.length}
-              </span>
+          >
+            <span className="flex items-center justify-center gap-1.5">
+              <tab.icon className="w-3.5 h-3.5" />
+              {tab.label}
+              {tab.count && tab.count > 0 && (
+                <motion.span 
+                  className="text-[10px] bg-neutral-200 text-neutral-600 px-1.5 rounded-full"
+                  initial={{ scale: 0 }}
+                  animate={{ scale: 1 }}
+                  transition={{ type: "spring", stiffness: 500, damping: 25 }}
+                >
+                  {tab.count}
+                </motion.span>
+              )}
+            </span>
+            {activeTab === tab.id && (
+              <motion.div 
+                className="absolute bottom-0 left-0 right-0 h-0.5 bg-indigo-600"
+                layoutId="activeTab"
+                transition={{ type: "spring", stiffness: 500, damping: 35 }}
+              />
             )}
-          </span>
-          {activeTab === "comments" && (
-            <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-indigo-600" />
-          )}
-        </button>
+          </button>
+        ))}
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto">
-        {activeTab === "edit" ? (
-          <div className="p-4 space-y-4">
+      <div className="flex-1 overflow-y-auto relative">
+        <AnimatePresence mode="wait">
+          {activeTab === "edit" ? (
+          <motion.div 
+            className="p-4 space-y-4"
+            key="edit"
+            initial={{ opacity: 0, x: -20 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: 20 }}
+            transition={{ duration: 0.2 }}
+          >
             {/* Title - Inline editable */}
             <div>
               <textarea
@@ -393,6 +460,18 @@ export function NodeDetailPanel({
               />
             </div>
 
+            {/* Contributors Preview */}
+            {node.authors && node.authors.length > 0 && (
+              <div className="pt-4 border-t border-neutral-100">
+                <NodeContributors 
+                  authors={node.authors} 
+                  createdAt={node.createdAt}
+                  updatedAt={node.updatedAt}
+                  showFullList
+                />
+              </div>
+            )}
+
             {/* Delete */}
             <div className="pt-4 border-t border-neutral-100">
               <button
@@ -403,10 +482,17 @@ export function NodeDetailPanel({
                 Delete node
               </button>
             </div>
-          </div>
-        ) : (
+          </motion.div>
+        ) : activeTab === "comments" ? (
           /* Comments Tab */
-          <div className="flex flex-col h-full">
+          <motion.div 
+            className="flex flex-col h-full"
+            key="comments"
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -20 }}
+            transition={{ duration: 0.2 }}
+          >
             <div className="flex-1 overflow-y-auto p-4 space-y-3">
               {loadingComments ? (
                 <div className="flex items-center justify-center py-12">
@@ -483,9 +569,45 @@ export function NodeDetailPanel({
                 </button>
               </div>
             </form>
-          </div>
+          </motion.div>
+        ) : (
+          /* Traceability Tab */
+          <motion.div 
+            className="flex flex-col h-full"
+            key="traceability"
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -20 }}
+            transition={{ duration: 0.2 }}
+          >
+            {/* Contributors Summary */}
+            {node.authors && node.authors.length > 0 && (
+              <div className="p-4 border-b border-neutral-100 bg-neutral-50/50">
+                <NodeContributors 
+                  authors={node.authors} 
+                  createdAt={node.createdAt}
+                  updatedAt={node.updatedAt}
+                  showFullList
+                />
+              </div>
+            )}
+            
+            {/* Activity Timeline */}
+            <div className="flex-1 overflow-y-auto p-4">
+              <h3 className="text-xs font-medium text-neutral-500 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                <Activity className="w-3.5 h-3.5" />
+                Activity History
+              </h3>
+              <ActivityTimeline 
+                activities={activities} 
+                isLoading={loadingActivities}
+                emptyMessage="No activity recorded yet"
+              />
+            </div>
+          </motion.div>
         )}
+        </AnimatePresence>
       </div>
-    </div>
+    </motion.div>
   );
 }

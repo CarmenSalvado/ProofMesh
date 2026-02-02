@@ -60,11 +60,11 @@ export default function ProblemPage({ params }: PageProps) {
       contents: [] as LibraryItem[],
     };
     libraryItems.forEach((item) => {
-      if (item.kind === "resource") {
+      if (item.kind === "RESOURCE") {
         groups.resources.push(item);
-      } else if (item.kind === "idea") {
+      } else if (item.kind === "IDEA") {
         groups.ideas.push(item);
-      } else if (["lemma", "theorem", "claim", "counterexample"].includes(item.kind)) {
+      } else if (["LEMMA", "THEOREM", "CLAIM", "COUNTEREXAMPLE"].includes(item.kind)) {
         groups.lemmas.push(item);
       } else {
         groups.contents.push(item);
@@ -343,12 +343,12 @@ export default function ProblemPage({ params }: PageProps) {
                       )}
                       <span
                         className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full ${
-                          item.status === "verified"
+                          item.status === "VERIFIED"
                             ? "bg-emerald-50 text-emerald-600"
                             : "bg-amber-50 text-amber-600"
                         }`}
                       >
-                        {item.status === "verified" ? (
+                        {item.status === "VERIFIED" ? (
                           <CheckCircle2 className="w-3 h-3" />
                         ) : (
                           <Clock className="w-3 h-3" />

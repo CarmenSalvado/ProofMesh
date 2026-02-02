@@ -55,6 +55,12 @@ else
     echo "⏭️ Skipping Lean setup in backend (LEAN_RUNNER_URL is set)"
 fi
 
+# Start the Canvas AI worker in background
+echo "🤖 Starting Canvas AI worker..."
+python -m app.workers.canvas_ai_worker &
+WORKER_PID=$!
+echo "✅ Canvas AI worker started (PID: $WORKER_PID)"
+
 # Start the application
 echo "🌐 Starting FastAPI server..."
 exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload

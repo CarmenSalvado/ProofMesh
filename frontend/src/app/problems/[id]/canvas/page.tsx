@@ -13,8 +13,13 @@ import {
   listWorkspaceContents,
   commitToDocument,
   getNodeAnchorStatus,
+  getCanvasBlocks,
+  createCanvasBlock,
+  updateCanvasBlock,
+  deleteCanvasBlock,
   Problem,
   LibraryItem,
+  CanvasBlock,
 } from "@/lib/api";
 import {
   ChevronLeft,
@@ -35,8 +40,9 @@ import { CanvasSidebar } from "@/components/canvas/CanvasSidebar";
 import { AddNodeModal, NewNodeData } from "@/components/canvas/AddNodeModal";
 import { CommitToDocumentModal } from "@/components/canvas/CommitToDocumentModal";
 import { NodeDetailPanel } from "@/components/canvas/NodeDetailPanel";
-import { CanvasNode, CanvasEdge, type CanvasBlock } from "@/components/canvas/types";
+import { CanvasNode, CanvasEdge, CanvasBlock as LocalCanvasBlock } from "@/components/canvas/types";
 import { useCanvasHistory } from "@/hooks/useCanvasHistory";
+import { useCanvasAIAnimations } from "@/hooks/useCanvasAIAnimations";
 
 // Store positions locally (keyed by item id)
 type PositionMap = Record<string, { x: number; y: number }>;
@@ -97,7 +103,7 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
-  const [blocks, setBlocks] = useState<CanvasBlock[]>([]);
+  const [blocks, setBlocks] = useState<LocalCanvasBlock[]>([]);
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
   const [nodeAnchorStatus, setNodeAnchorStatus] = useState<Map<string, { hasAnchors: boolean; isStale: boolean; count: number }>>(new Map());
   const [aiBarVisible, setAiBarVisible] = useState(false);
@@ -109,6 +115,23 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
   const [newNodePosition, setNewNodePosition] = useState({ x: 200, y: 200 });
   const positionUpdateTimeout = useRef<NodeJS.Timeout | null>(null);
   const canvasRef = useRef<ProofCanvasHandle | null>(null);
+
+  // AI animation states for nodes - stable callbacks
+  const handleNodeCreated = useCallback((node: Record<string, unknown>) => {
+    // Refresh library items when AI creates a new node
+    console.log("[CanvasPage] AI created node:", node);
+    // TODO: Reload library items or add optimistically
+  }, []);
+
+  const handleRunCompleted = useCallback((runId: string, status: string) => {
+    console.log("[CanvasPage] AI run completed:", runId, status);
+  }, []);
+
+  const { nodeAnimationStatesForCanvas, isConnected: aiWebSocketConnected } = useCanvasAIAnimations({
+    problemId,
+    onNodeCreated: handleNodeCreated,
+    onRunCompleted: handleRunCompleted,
+  });
 
   // History management for undo/redo
   const {
@@ -127,8 +150,8 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
   // Convert library items to canvas nodes
   const { nodes, edges } = useMemo(() => {
     const canvasNodes: CanvasNode[] = libraryItems.map((item, index) => {
-      // Use stored position or calculate default
-      const storedPos = positions[item.id];
+      // Use backend position or calculate default
+      const backendPos = item.x !== null && item.y !== null ? { x: item.x, y: item.y } : null;
       const defaultX = 150 + (index % 4) * 280;
       const defaultY = 100 + Math.floor(index / 4) * 200;
 
@@ -139,14 +162,21 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
         content: item.content,
         formula: item.formula || undefined,
         leanCode: item.lean_code || undefined,
-        x: storedPos?.x ?? defaultX,
-        y: storedPos?.y ?? defaultY,
+        x: backendPos?.x ?? defaultX,
+        y: backendPos?.y ?? defaultY,
         width: 260,
         height: 140,
         status: item.status as "PROPOSED" | "VERIFIED" | "REJECTED",
         dependencies: item.dependencies || [],
-        authors: item.authors?.map(a => a.name || a.id) || [],
+        authors: item.authors?.map(a => ({
+          type: a.type as "human" | "agent",
+          id: a.id,
+          name: a.name,
+          avatar_url: a.avatar_url,
+        })) || [],
         agentId: item.authors?.find(a => a.type === "agent")?.id,
+        createdAt: item.created_at,
+        updatedAt: item.updated_at,
       };
     });
 
@@ -170,14 +200,21 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
     try {
       setLoading(true);
       setError(null);
-      const [problemData, libraryData] = await Promise.all([
+      const [problemData, libraryData, blocksData] = await Promise.all([
         getProblem(problemId),
         getLibraryItems(problemId),
+        getCanvasBlocks(problemId).catch(() => []), // Fallback to empty array if API fails
       ]);
       setProblem(problemData);
       setLibraryItems(libraryData.items);
-      setPositions(loadPositions(problemId));
-      setBlocks(loadBlocks(problemId));
+      // Convert API blocks to local format
+      setBlocks(blocksData.map(b => ({
+        id: b.id,
+        name: b.name,
+        nodeIds: b.node_ids,
+        createdAt: b.created_at,
+        updatedAt: b.updated_at,
+      })));
 
       // Load anchor status for all nodes
       if (libraryData.items.length > 0) {
@@ -223,8 +260,24 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
           return false;
         });
 
+      // If blocks changed, update them in the backend
       if (changed) {
-        saveBlocks(problemId, next);
+        // Update each modified block in the backend
+        const blocksToUpdate = next.filter(b => {
+          const original = prev.find(p => p.id === b.id);
+          return original && (original.nodeIds.length !== b.nodeIds.length);
+        });
+        
+        blocksToUpdate.forEach(async (block) => {
+          try {
+            await updateCanvasBlock(problemId, block.id, {
+              node_ids: block.nodeIds,
+            });
+          } catch (err) {
+            console.error("Failed to update block:", err);
+          }
+        });
+        
         if (selectedBlockId && !next.find((b) => b.id === selectedBlockId)) {
           setSelectedBlockId(null);
         }
@@ -236,6 +289,121 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  // Register collaboration handlers for receiving real-time updates from other users
+  useEffect(() => {
+    if (!collaboration) return;
+
+    collaboration.registerCallbacks({
+      // When another user creates a node
+      onNodeCreate: (node, fromUser) => {
+        console.log(`[Collaboration] Node created by user ${fromUser}:`, node.id);
+        // Fetch fresh data from backend to get the full LibraryItem
+        // (the CanvasNode from WS doesn't have all fields)
+        loadData();
+      },
+
+      // When another user updates a node
+      onNodeUpdate: (node, fromUser) => {
+        console.log(`[Collaboration] Node updated by user ${fromUser}:`, node.id);
+        // Update local state optimistically for simple fields, then sync
+        setLibraryItems((prev) => {
+          const exists = prev.some((item) => item.id === node.id);
+          if (exists) {
+            return prev.map((item) =>
+              item.id === node.id
+                ? {
+                    ...item,
+                    title: node.title,
+                    content: node.content || item.content,
+                    status: node.status as LibraryItem["status"],
+                    dependencies: node.dependencies,
+                    x: node.x,
+                    y: node.y,
+                  }
+                : item
+            );
+          }
+          // If node doesn't exist locally, fetch fresh
+          loadData();
+          return prev;
+        });
+      },
+
+      // When another user deletes a node
+      onNodeDelete: (nodeId, fromUser) => {
+        console.log(`[Collaboration] Node deleted by user ${fromUser}:`, nodeId);
+        setLibraryItems((prev) => prev.filter((item) => item.id !== nodeId));
+        // Clear selection if the deleted node was selected
+        if (selectedNodeId === nodeId) {
+          setSelectedNodeId(null);
+          setDetailPanelNodeId(null);
+        }
+        setSelectedNodeIds((prev) => {
+          if (prev.has(nodeId)) {
+            const next = new Set(prev);
+            next.delete(nodeId);
+            return next;
+          }
+          return prev;
+        });
+      },
+
+      // When another user moves a node - update position directly for smooth animation
+      onNodeMove: (nodeId, x, y, fromUser) => {
+        // Update position directly via DOM for smooth movement
+        const nodeEl = document.querySelector(`[data-node-id="${nodeId}"]`) as HTMLElement | null;
+        if (nodeEl) {
+          nodeEl.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+        }
+        
+        // Also update state for consistency
+        setLibraryItems((prev) =>
+          prev.map((item) =>
+            item.id === nodeId ? { ...item, x, y } : item
+          )
+        );
+      },
+
+      // When another user creates an edge
+      onEdgeCreate: (edge, fromUser) => {
+        console.log(`[Collaboration] Edge created by user ${fromUser}:`, edge);
+        // Update dependencies in the target node
+        setLibraryItems((prev) =>
+          prev.map((item) => {
+            if (item.id === edge.to && !item.dependencies?.includes(edge.from)) {
+              return {
+                ...item,
+                dependencies: [...(item.dependencies || []), edge.from],
+              };
+            }
+            return item;
+          })
+        );
+      },
+
+      // When another user deletes an edge
+      onEdgeDelete: (from, to, fromUser) => {
+        console.log(`[Collaboration] Edge deleted by user ${fromUser}:`, from, "->", to);
+        // Remove dependency from the target node
+        setLibraryItems((prev) =>
+          prev.map((item) => {
+            if (item.id === to && item.dependencies?.includes(from)) {
+              return {
+                ...item,
+                dependencies: item.dependencies.filter((dep) => dep !== from),
+              };
+            }
+            return item;
+          })
+        );
+      },
+    });
+
+    return () => {
+      collaboration.unregisterCallbacks();
+    };
+  }, [collaboration, loadData, selectedNodeId]);
 
   const handleShare = useCallback(async () => {
     const url = `${window.location.origin}/problems/${problemId}/canvas`;
@@ -273,7 +441,7 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
     }
   }, []);
 
-  const handleCreateBlock = useCallback((name: string, nodeIdsOverride?: string[]) => {
+  const handleCreateBlock = useCallback(async (name: string, nodeIdsOverride?: string[]) => {
     const trimmed = name.trim();
     if (!trimmed) return;
     const nodeIds = nodeIdsOverride ?? (
@@ -284,22 +452,32 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
           : []
     );
     if (nodeIds.length === 0) return;
-    const now = new Date().toISOString();
-    const newBlock: CanvasBlock = {
-      id: crypto.randomUUID(),
-      name: trimmed,
-      nodeIds,
-      createdAt: now,
-      updatedAt: now,
-    };
-    setBlocks((prev) => {
-      const next = [newBlock, ...prev];
-      saveBlocks(problemId, next);
-      return next;
-    });
-    setSelectedBlockId(newBlock.id);
-    setSelectedNodeId(null);
-    setSelectedNodeIds(new Set(nodeIds));
+    
+    try {
+      const apiBlock = await createCanvasBlock(problemId, {
+        name: trimmed,
+        node_ids: nodeIds,
+      });
+      
+      // Convert to local format
+      const newBlock: LocalCanvasBlock = {
+        id: apiBlock.id,
+        name: apiBlock.name,
+        nodeIds: apiBlock.node_ids,
+        createdAt: apiBlock.created_at,
+        updatedAt: apiBlock.updated_at,
+      };
+      
+      setBlocks((prev) => {
+        const next = [newBlock, ...prev];
+        return next;
+      });
+      setSelectedBlockId(newBlock.id);
+      setSelectedNodeId(null);
+      setSelectedNodeIds(new Set(nodeIds));
+    } catch (err) {
+      console.error("Failed to create block:", err);
+    }
   }, [problemId, selectedNodeId, selectedNodeIds]);
 
   const handleSelectBlock = useCallback((blockId: string) => {
@@ -310,28 +488,45 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
     setSelectedNodeIds(new Set(block.nodeIds));
   }, [blocks]);
 
-  const handleRenameBlock = useCallback((blockId: string, name: string) => {
+  const handleRenameBlock = useCallback(async (blockId: string, name: string) => {
     const trimmed = name.trim();
     if (!trimmed) return;
-    setBlocks((prev) => {
-      const next = prev.map((block) =>
-        block.id === blockId
-          ? { ...block, name: trimmed, updatedAt: new Date().toISOString() }
-          : block
-      );
-      saveBlocks(problemId, next);
-      return next;
-    });
+    
+    try {
+      const apiBlock = await updateCanvasBlock(problemId, blockId, {
+        name: trimmed,
+      });
+      
+      // Convert to local format
+      setBlocks((prev) => {
+        const next = prev.map((block) =>
+          block.id === blockId
+            ? {
+                ...block,
+                name: apiBlock.name,
+                updatedAt: apiBlock.updated_at,
+              }
+            : block
+        );
+        return next;
+      });
+    } catch (err) {
+      console.error("Failed to rename block:", err);
+    }
   }, [problemId]);
 
-  const handleDeleteBlock = useCallback((blockId: string) => {
-    setBlocks((prev) => {
-      const next = prev.filter((block) => block.id !== blockId);
-      saveBlocks(problemId, next);
-      return next;
-    });
-    if (selectedBlockId === blockId) {
-      setSelectedBlockId(null);
+  const handleDeleteBlock = useCallback(async (blockId: string) => {
+    try {
+      await deleteCanvasBlock(problemId, blockId);
+      setBlocks((prev) => {
+        const next = prev.filter((block) => block.id !== blockId);
+        return next;
+      });
+      if (selectedBlockId === blockId) {
+        setSelectedBlockId(null);
+      }
+    } catch (err) {
+      console.error("Failed to delete block:", err);
     }
   }, [problemId, selectedBlockId]);
 
@@ -394,67 +589,92 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
     handleNodeSelect(itemId);
   }, [handleNodeSelect]);
 
-  // Handle node movement with debounced position saving
+  // Handle node movement with debounced position saving to backend
   const handleNodeMove = useCallback(
     (nodeId: string, x: number, y: number) => {
-      const currentPos = positions[nodeId];
-      if (currentPos && currentPos.x === x && currentPos.y === y) return;
-      const beforePositions = positions;
-      const afterPositions = { ...positions, [nodeId]: { x, y } };
+      const currentItem = libraryItems.find(item => item.id === nodeId);
+      if (!currentItem) return;
 
-      // Update local positions
-      setPositions(afterPositions);
+      // Only update if position changed (handle null case)
+      if (currentItem.x !== null && currentItem.y !== null && currentItem.x === x && currentItem.y === y) return;
 
-      // Debounce saving to localStorage
+      // Update local state immediately (optimistic update)
+      setLibraryItems(prev =>
+        prev.map(item => item.id === nodeId ? { ...item, x, y } : item)
+      );
+
+      // Debounce saving to backend
       if (positionUpdateTimeout.current) {
         clearTimeout(positionUpdateTimeout.current);
       }
       positionUpdateTimeout.current = setTimeout(() => {
-        savePositions(problemId, afterPositions);
+        updateLibraryItem(problemId, nodeId, { x, y }).catch(err => {
+          console.error("Failed to save position:", err);
+          // Revert on error by reloading
+          loadData();
+        });
       }, 500);
-
-      // Record history for move
-      recordMove(libraryItems, libraryItems, beforePositions, afterPositions, 1);
 
       // Broadcast move to collaborators
       collaboration?.sendNodeMove?.(nodeId, x, y);
     },
-    [problemId, collaboration, positions, recordMove, libraryItems]
+    [problemId, collaboration, libraryItems, loadData]
   );
 
   const handleNodesMove = useCallback(
     (positionsUpdate: Record<string, { x: number; y: number }>) => {
       const ids = Object.keys(positionsUpdate).filter((id) => {
-        const currentPos = positions[id];
+        const currentItem = libraryItems.find(item => item.id === id);
+        if (!currentItem) return false;
         const nextPos = positionsUpdate[id];
         if (!nextPos) return false;
-        return !currentPos || currentPos.x !== nextPos.x || currentPos.y !== nextPos.y;
+        // Check if position actually changed
+        const currentX = currentItem.x ?? 0;
+        const currentY = currentItem.y ?? 0;
+        return currentX !== nextPos.x || currentY !== nextPos.y;
       });
       if (ids.length === 0) return;
 
-      const beforePositions = positions;
-      const afterPositions = { ...positions };
-      ids.forEach((id) => {
-        afterPositions[id] = positionsUpdate[id];
+      // Update local state immediately (optimistic update)
+      const updatedItems = libraryItems.map(item => {
+        const pos = positionsUpdate[item.id];
+        if (pos && ids.includes(item.id)) {
+          return { ...item, x: pos.x, y: pos.y };
+        }
+        return item;
       });
+      setLibraryItems(updatedItems);
 
-      setPositions(afterPositions);
-
+      // Debounce saving to backend
       if (positionUpdateTimeout.current) {
         clearTimeout(positionUpdateTimeout.current);
       }
       positionUpdateTimeout.current = setTimeout(() => {
-        savePositions(problemId, afterPositions);
+        // Save all positions in parallel
+        Promise.all(
+          ids.map(id => {
+            const pos = positionsUpdate[id];
+            if (pos) {
+              return updateLibraryItem(problemId, id, { x: pos.x, y: pos.y }).catch(err => {
+                console.error(`Failed to save position for ${id}:`, err);
+              });
+            }
+            return Promise.resolve();
+          })
+        ).catch(err => {
+          console.error("Failed to save positions:", err);
+          // Reload on error
+          loadData();
+        });
       }, 500);
 
-      recordMove(libraryItems, libraryItems, beforePositions, afterPositions, ids.length);
-
+      // Broadcast to collaborators
       ids.forEach((id) => {
         const pos = positionsUpdate[id];
         if (pos) collaboration?.sendNodeMove?.(id, pos.x, pos.y);
       });
     },
-    [problemId, collaboration, positions, recordMove, libraryItems]
+    [problemId, collaboration, libraryItems, loadData]
   );
 
   // Handle creating a new node
@@ -475,21 +695,14 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
         source: data.source,
       });
 
-      // Add to local state
-      setLibraryItems((prev) => {
-        const afterItems = [newItem, ...prev];
-        const beforePositions = { ...positions };
-        const afterPositions = { ...beforePositions, [newItem.id]: nodePosition };
-        recordCreate(prev, afterItems, beforePositions, afterPositions, newItem.title);
-        return afterItems;
-      });
+      // Record for undo/redo
+      const beforeItems = [...libraryItems];
+      const afterItems = [{ ...newItem, x: nodePosition.x, y: nodePosition.y }, ...beforeItems];
+      const newPositions = { ...positions, [newItem.id]: nodePosition };
+      recordCreate(beforeItems, afterItems, positions, newPositions, newItem.title);
 
-      // Set position for new node
-      setPositions((prev) => {
-        const afterPositions = { ...prev, [newItem.id]: nodePosition };
-        savePositions(problemId, afterPositions);
-        return afterPositions;
-      });
+      // Add to local state
+      setLibraryItems(afterItems);
 
       // Broadcast to collaborators
       collaboration?.sendNodeCreate?.({
@@ -507,7 +720,7 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
       setSelectedNodeId(newItem.id);
       return newItem;
     },
-    [problemId, newNodePosition, collaboration, positions, recordCreate]
+    [problemId, newNodePosition, collaboration, positions, libraryItems, recordCreate]
   );
 
   // Handle opening add modal from canvas
@@ -541,19 +754,14 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
         });
 
         const pos = { x: nodeData.x || 300, y: nodeData.y || 200 };
-        setLibraryItems((prev) => {
-          const afterItems = [newItem, ...prev];
-          const beforePositions = { ...positions };
-          const afterPositions = { ...beforePositions, [newItem.id]: pos };
-          recordCreate(prev, afterItems, beforePositions, afterPositions, newItem.title);
-          return afterItems;
-        });
-
-        setPositions((prev) => {
-          const afterPositions = { ...prev, [newItem.id]: pos };
-          savePositions(problemId, afterPositions);
-          return afterPositions;
-        });
+        
+        // Record for undo/redo
+        const beforeItems = [...libraryItems];
+        const afterItems = [{ ...newItem, x: pos.x, y: pos.y }, ...beforeItems];
+        const newPositions = { ...positions, [newItem.id]: pos };
+        recordCreate(beforeItems, afterItems, positions, newPositions, newItem.title);
+        
+        setLibraryItems(afterItems);
 
         collaboration?.sendNodeCreate?.({
           id: newItem.id,
@@ -571,7 +779,7 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
         console.error("Failed to create node:", err);
       }
     },
-    [problemId, collaboration, handleOpenAddModal, positions, recordCreate]
+    [problemId, collaboration, handleOpenAddModal, positions, libraryItems, recordCreate]
   );
 
   // Handle quick update from context menu (type/status changes)
@@ -684,17 +892,15 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
 
       // Remove from local state
       const afterItems = libraryItems.filter((item) => item.id !== nodeId);
-      setLibraryItems(afterItems);
-
       const afterPositions = { ...positions };
       delete afterPositions[nodeId];
-      setPositions(afterPositions);
-      savePositions(problemId, afterPositions);
-
-      // Record for undo
+      
+      // Record for undo/redo
       if (deletedItem) {
         recordDelete(beforeItems, afterItems, beforePositions, afterPositions, deletedItem.title);
       }
+      
+      setLibraryItems(afterItems);
 
       // Clear selection
       setSelectedNodeId(null);
@@ -719,15 +925,13 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
 
       // Update local state
       const afterItems = libraryItems.filter(item => !nodeIds.includes(item.id));
-      setLibraryItems(afterItems);
-
       const afterPositions = { ...positions };
       nodeIds.forEach(id => delete afterPositions[id]);
-      setPositions(afterPositions);
-      savePositions(problemId, afterPositions);
-
-      // Record for undo
+      
+      // Record for undo/redo
       recordMultiDelete(beforeItems, afterItems, beforePositions, afterPositions, nodeIds.length);
+      
+      setLibraryItems(afterItems);
 
       // Clear selection
       setSelectedNodeId(null);
@@ -741,9 +945,13 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
 
   // Handle undo
   const applyPositionsSnapshot = useCallback((nextPositions: Record<string, { x: number; y: number }>) => {
-    setPositions(nextPositions);
-    savePositions(problemId, nextPositions);
-  }, [problemId]);
+    setLibraryItems(prev =>
+      prev.map(item => {
+        const pos = nextPositions[item.id];
+        return pos ? { ...item, x: pos.x, y: pos.y } : item;
+      })
+    );
+  }, []);
 
   const handleUndo = useCallback(async () => {
     const result = undo();
@@ -751,9 +959,9 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
     const { action, state } = result;
     const targetPositions = state.positions;
 
-    // If it was a move, we only need to restore positions locally
+    // For moves, restore positions from backend data
     if (action.type === "move") {
-      applyPositionsSnapshot(targetPositions);
+      await loadData();
       return;
     }
 
@@ -796,8 +1004,9 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
     const { action, state } = result;
     const targetPositions = state.positions;
 
+    // For moves, restore positions from backend data
     if (action.type === "move") {
-      applyPositionsSnapshot(targetPositions);
+      await loadData();
       return;
     }
 
@@ -1055,14 +1264,21 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
             canRedo={canRedo}
             onOpenComments={handleOpenComments}
             nodeAnchorStatus={nodeAnchorStatus}
+            onCursorMove={(x, y) => {
+              collaboration?.sendCursorMove?.(x, y, `canvas:${problemId}`);
+            }}
             collaborators={
-              collaboration?.users.map((u) => ({
-                id: String(u.user_id),
-                name: u.display_name || u.username,
-                color: u.avatar_color,
-                x: u.cursor_x || 0,
-                y: u.cursor_y || 0,
-              })) || []
+              collaboration?.users.map((u) => {
+                // Get cursor position from the cursors Map (more up-to-date)
+                const cursorPos = collaboration.cursors.get(u.user_id);
+                return {
+                  id: String(u.user_id),
+                  name: u.display_name || u.username,
+                  color: u.avatar_color,
+                  x: cursorPos?.x ?? u.cursor_x ?? 0,
+                  y: cursorPos?.y ?? u.cursor_y ?? 0,
+                };
+              }) || []
             }
           />
 
