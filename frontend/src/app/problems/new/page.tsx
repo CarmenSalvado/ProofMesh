@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth";
 import { createProblem } from "@/lib/api";
+import { DashboardNavbar } from "@/components/layout/DashboardNavbar";
 import {
   Globe,
   Lock,
@@ -12,7 +13,6 @@ import {
   Zap,
   Upload,
   Check,
-  X,
   ArrowRight,
   CornerDownLeft,
 } from "lucide-react";
@@ -71,30 +71,10 @@ export default function NewProblemPage() {
 
   return (
     <div className="min-h-screen bg-white text-neutral-900 flex flex-col">
-      {/* Navbar */}
-      <nav className="fixed top-0 w-full z-50 border-b border-neutral-100 bg-white/80 backdrop-blur-md">
-        <div className="max-w-6xl mx-auto px-4 h-14 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Link href="/dashboard" className="w-5 h-5 bg-neutral-900 rounded-sm flex-shrink-0" />
-            <span className="text-neutral-300 text-sm">/</span>
-            <div className="flex items-center gap-2 text-xs font-medium text-neutral-500">
-              <div className="w-4 h-4 rounded-full bg-gradient-to-br from-indigo-500 to-purple-500" />
-              {user.username}
-            </div>
-            <span className="text-neutral-300 text-sm">/</span>
-            <span className="text-sm font-semibold tracking-tight">New Proof</span>
-          </div>
-          <Link
-            href="/dashboard"
-            className="text-[10px] font-medium text-neutral-500 hover:text-neutral-900 flex items-center gap-1 transition-colors"
-          >
-            <X className="w-3.5 h-3.5" /> Cancel
-          </Link>
-        </div>
-      </nav>
+      <DashboardNavbar />
 
       {/* Main Content */}
-      <main className="flex-grow pt-28 pb-20 px-4 relative">
+      <main className="flex-grow pt-8 pb-20 px-4 relative">
         {/* Background grid */}
         <div
           className="absolute inset-0 opacity-40 -z-10"

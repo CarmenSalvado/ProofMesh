@@ -19,17 +19,24 @@ import {
   CheckCircle,
   XCircle,
   Brain,
+  BookOpen,
+  GitMerge,
+  Filter,
 } from "lucide-react";
 import { useChat, Message } from "@ai-sdk/react";
 import { CanvasNode, NODE_TYPE_CONFIG } from "./types";
 import {
   getOrchestrationStatus,
   exploreContext,
+  exploreWithPatterns,
   formalizeText,
   verifyLeanCode,
   critiqueProposal,
   getCanvasAIChatHistory,
   createCanvasAIRun,
+  generateStory,
+  fuseIdeas,
+  type Story,
   type CanvasAIMessage,
   type CanvasAIRun,
 } from "@/lib/api";
@@ -290,6 +297,14 @@ export function FloatingAIBar({
   const inputRef = useRef<HTMLInputElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Idea2Paper states
+  const [storyModalOpen, setStoryModalOpen] = useState(false);
+  const [fusionModalOpen, setFusionModalOpen] = useState(false);
+  const [usePatterns, setUsePatterns] = useState(false);
+  const [generatedStory, setGeneratedStory] = useState<Story | null>(null);
+  const [isGeneratingStory, setIsGeneratingStory] = useState(false);
+  const [selectedStoriesForFusion, setSelectedStoriesForFusion] = useState<string[]>([]);
 
   const getStartContext = useCallback(() => {
     const primaryNode = selectedNode || selectedNodes[0] || null;
@@ -1103,6 +1118,186 @@ export function FloatingAIBar({
     }
   }, [command, contextNodes, selectedNode, selectedNodes, chatMessages, problemId, addInsight, onCreateNode, onUpdateNode, getStartContext]);
 
+  // ============ Idea2Paper Handlers ============
+
+  // Pattern-based exploration
+  const handleExploreWithPatterns = useCallback(async () => {
+    if (!command.trim() && contextNodes.length === 0) return;
+    if (!problemId) return;
+
+    setIsLoading(true);
+    setActiveAction("explore-patterns");
+
+    try {
+      const contextStr = command.trim() || contextNodes.map(n => n.title).join(", ");
+
+      const result = await exploreWithPatterns(problemId, {
+        query: contextStr,
+        use_patterns: true,
+        num_patterns: 5,
+      });
+
+      addInsight({
+        type: "proposal",
+        title: "Pattern-Based Exploration",
+        content: `Generated ${result.proposals.length} pattern-guided proposals`,
+        score: 0.8,
+      });
+
+      // Create nodes from proposals (similar to handleExplore)
+      const { baseX, baseY, dependencyIds } = getStartContext();
+
+      for (let index = 0; index < result.proposals.length; index += 1) {
+        const proposal = result.proposals[index];
+        const angle = ((index - (result.proposals.length - 1) / 2) * 45) * (Math.PI / 180);
+        const distance = 300;
+        const nodeX = baseX + Math.sin(angle) * distance;
+        const nodeY = baseY + distance * 0.7;
+
+        if (onCreateNode) {
+          await onCreateNode({
+            type: "LEMMA",
+            title: proposal.content.slice(0, 60) + (proposal.content.length > 60 ? "..." : ""),
+            content: `**Pattern-Guided Proposal**\n\n${proposal.content}`,
+            x: nodeX,
+            y: nodeY,
+            dependencies: dependencyIds,
+            authors: [AI_AUTHOR],
+            source: buildAISource(result.run_id),
+          });
+        }
+      }
+
+      setCommand("");
+      setContextNodes([]);
+    } catch (err) {
+      addInsight({
+        type: "insight",
+        title: "Pattern Exploration Error",
+        content: err instanceof Error ? err.message : "Pattern-based exploration failed",
+      });
+    } finally {
+      setIsLoading(false);
+      setActiveAction(null);
+    }
+  }, [command, contextNodes, problemId, addInsight, onCreateNode, getStartContext]);
+
+  // Generate Story
+  const handleGenerateStory = useCallback(async () => {
+    if (!command.trim() && contextNodes.length === 0) return;
+    if (!problemId) return;
+
+    setIsGeneratingStory(true);
+    setActiveAction("generate-story");
+
+    try {
+      const userIdea = command.trim() || contextNodes.map(n => `${n.title}: ${n.type}`).join("\n");
+
+      const result = await generateStory(problemId, {
+        user_idea: userIdea,
+        context: contextNodes.length > 0 ? contextNodes.map(n => n.title).join(", ") : undefined,
+      });
+
+      setGeneratedStory(result.story);
+
+      addInsight({
+        type: "proposal",
+        title: "Research Story Generated",
+        content: `**${result.story.sections.title}**\n\n${result.story.sections.abstract.slice(0, 200)}...`,
+        score: result.story.review_result?.scores.average || 0.7,
+      });
+
+      // Optionally create nodes from story sections
+      if (onCreateNode) {
+        const { baseX, baseY } = getStartContext();
+
+        // Create title node
+        await onCreateNode({
+          type: "THEOREM",
+          title: result.story.sections.title,
+          content: `**Abstract**\n${result.story.sections.abstract}`,
+          x: baseX,
+          y: baseY,
+          dependencies: [],
+          authors: [AI_AUTHOR],
+        });
+      }
+
+      setStoryModalOpen(true);
+      setCommand("");
+    } catch (err) {
+      addInsight({
+        type: "insight",
+        title: "Story Generation Error",
+        content: err instanceof Error ? err.message : "Story generation failed",
+      });
+    } finally {
+      setIsGeneratingStory(false);
+      setActiveAction(null);
+    }
+  }, [command, contextNodes, problemId, addInsight, onCreateNode, getStartContext]);
+
+  // Idea Fusion
+  const handleFusionIdeas = useCallback(async () => {
+    if (contextNodes.length < 2) {
+      addInsight({
+        type: "insight",
+        title: "Fusion Requires Multiple Ideas",
+        content: "Please select at least 2 nodes to fuse their ideas together.",
+      });
+      return;
+    }
+
+    if (!problemId) return;
+
+    setIsLoading(true);
+    setActiveAction("fusion");
+
+    try {
+      const ideas = contextNodes.map(n => `${n.title} (${n.type})`);
+
+      const result = await fuseIdeas(problemId, {
+        ideas,
+        context: command.trim() || undefined,
+      });
+
+      addInsight({
+        type: "proposal",
+        title: "Idea Fusion Complete",
+        content: `**${result.fusion_type}**\n\n${result.fused_idea}`,
+        score: 0.8,
+      });
+
+      // Create node from fused idea
+      if (onCreateNode) {
+        const { baseX, baseY } = getStartContext();
+        const dependencyIds = contextNodes.map(n => n.id);
+
+        await onCreateNode({
+          type: "LEMMA",
+          title: `Fused: ${result.fusion_type}`,
+          content: `**Fused Idea**\n\n${result.fused_idea}\n\n**Explanation:**\n${result.explanation}`,
+          x: baseX + 200,
+          y: baseY,
+          dependencies: dependencyIds,
+          authors: [AI_AUTHOR],
+        });
+      }
+
+      setCommand("");
+      setContextNodes([]);
+    } catch (err) {
+      addInsight({
+        type: "insight",
+        title: "Fusion Error",
+        content: err instanceof Error ? err.message : "Idea fusion failed",
+      });
+    } finally {
+      setIsLoading(false);
+      setActiveAction(null);
+    }
+  }, [command, contextNodes, problemId, addInsight, onCreateNode, getStartContext]);
+
   const handleCopy = useCallback((id: string, content: string) => {
     navigator.clipboard.writeText(content);
     setCopied(id);
@@ -1442,6 +1637,33 @@ export function FloatingAIBar({
               active={activeAction === "pipeline"}
             />
 
+            <div className="w-px h-4 bg-neutral-200 mx-1" />
+
+            {/* Idea2Paper Actions */}
+            <QuickActionButton
+              icon={Filter}
+              label="Patterns"
+              onClick={handleExploreWithPatterns}
+              disabled={(!command.trim() && contextNodes.length === 0) || isLoading}
+              active={activeAction === "explore-patterns"}
+            />
+
+            <QuickActionButton
+              icon={BookOpen}
+              label="Story"
+              onClick={handleGenerateStory}
+              disabled={(!command.trim() && contextNodes.length === 0) || isGeneratingStory}
+              active={activeAction === "generate-story"}
+            />
+
+            <QuickActionButton
+              icon={GitMerge}
+              label="Fusion"
+              onClick={handleFusionIdeas}
+              disabled={contextNodes.length < 2 || isLoading}
+              active={activeAction === "fusion"}
+            />
+
             <div className="flex-1" />
 
             {verificationResult && (
@@ -1465,6 +1687,160 @@ export function FloatingAIBar({
         onCopy={handleCopy}
         copied={copied}
       />
+
+      {/* Story Modal */}
+      {storyModalOpen && generatedStory && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-3xl w-full max-h-[80vh] overflow-hidden flex flex-col animate-in zoom-in-95 duration-200">
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-neutral-200">
+              <div>
+                <h2 className="text-lg font-semibold text-neutral-900">{generatedStory.sections.title}</h2>
+                <p className="text-xs text-neutral-500 mt-1">
+                  {generatedStory.metadata.pattern_name && `Pattern: ${generatedStory.metadata.pattern_name} • `}
+                  Version {generatedStory.version}
+                </p>
+              </div>
+              <button
+                onClick={() => setStoryModalOpen(false)}
+                className="p-2 text-neutral-400 hover:text-neutral-600 rounded-full hover:bg-neutral-100 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+              {/* Abstract */}
+              <section>
+                <h3 className="text-sm font-semibold text-neutral-900 mb-2">Abstract</h3>
+                <p className="text-sm text-neutral-700 leading-relaxed">{generatedStory.sections.abstract}</p>
+              </section>
+
+              {/* Problem Framing */}
+              <section>
+                <h3 className="text-sm font-semibold text-neutral-900 mb-2">Problem Framing</h3>
+                <p className="text-sm text-neutral-700 leading-relaxed">{generatedStory.sections.problem_framing}</p>
+              </section>
+
+              {/* Gap Identification */}
+              <section>
+                <h3 className="text-sm font-semibold text-neutral-900 mb-2">Gap Identification</h3>
+                <p className="text-sm text-neutral-700 leading-relaxed">{generatedStory.sections.gap_identification}</p>
+              </section>
+
+              {/* Solution Approach */}
+              <section>
+                <h3 className="text-sm font-semibold text-neutral-900 mb-2">Solution Approach</h3>
+                <p className="text-sm text-neutral-700 leading-relaxed">{generatedStory.sections.solution_approach}</p>
+              </section>
+
+              {/* Innovation Claims */}
+              <section>
+                <h3 className="text-sm font-semibold text-neutral-900 mb-2">Innovation Claims</h3>
+                <p className="text-sm text-neutral-700 leading-relaxed">{generatedStory.sections.innovation_claims}</p>
+              </section>
+
+              {/* Review Result */}
+              {generatedStory.review_result && (
+                <section className={generatedStory.review_result.passed
+                  ? "p-4 rounded-xl bg-emerald-50 border border-emerald-200"
+                  : "p-4 rounded-xl bg-amber-50 border border-amber-200"}>
+                  <div className="flex items-center gap-2 mb-2">
+                    {generatedStory.review_result.passed ? (
+                      <CheckCircle className="w-5 h-5 text-emerald-600" />
+                    ) : (
+                      <XCircle className="w-5 h-5 text-amber-600" />
+                    )}
+                    <h3 className="text-sm font-semibold text-neutral-900">
+                      Review {generatedStory.review_result.passed ? "Passed" : "Below Threshold"}
+                    </h3>
+                  </div>
+                  <div className="grid grid-cols-4 gap-4 text-center">
+                    <div>
+                      <p className="text-2xl font-bold text-neutral-900">{(generatedStory.review_result.scores.average * 10).toFixed(1)}</p>
+                      <p className="text-xs text-neutral-500">Avg Score</p>
+                    </div>
+                    <div>
+                      <p className="text-2xl font-bold text-neutral-900">{(generatedStory.review_result.scores.q25 * 10).toFixed(1)}</p>
+                      <p className="text-xs text-neutral-500">Q25</p>
+                    </div>
+                    <div>
+                      <p className="text-2xl font-bold text-neutral-900">{(generatedStory.review_result.scores.q50 * 10).toFixed(1)}</p>
+                      <p className="text-xs text-neutral-500">Q50</p>
+                    </div>
+                    <div>
+                      <p className="text-2xl font-bold text-neutral-900">{(generatedStory.review_result.scores.q75 * 10).toFixed(1)}</p>
+                      <p className="text-xs text-neutral-500">Q75</p>
+                    </div>
+                  </div>
+                  <p className="text-xs text-neutral-600 mt-2">Criteria: {generatedStory.review_result.pass_criteria}</p>
+                </section>
+              )}
+
+              {/* Novelty Result */}
+              {generatedStory.novelty_result && (
+                <section className={generatedStory.novelty_result.is_novel
+                  ? "p-4 rounded-xl bg-blue-50 border border-blue-200"
+                  : "p-4 rounded-xl bg-orange-50 border border-orange-200"}>
+                  <h3 className="text-sm font-semibold text-neutral-900 mb-2">
+                    Novelty Check: {generatedStory.novelty_result.is_novel ? "Novel" : "Similar to Existing Work"}
+                  </h3>
+                  <div className="flex items-center gap-4">
+                    <div>
+                      <p className="text-lg font-bold text-neutral-900">
+                        {(generatedStory.novelty_result.similarity_score * 100).toFixed(0)}%
+                      </p>
+                      <p className="text-xs text-neutral-500">Similarity</p>
+                    </div>
+                    <div>
+                      <span className={generatedStory.novelty_result.risk_level === "low"
+                        ? "px-2 py-1 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700"
+                        : generatedStory.novelty_result.risk_level === "medium"
+                        ? "px-2 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-700"
+                        : "px-2 py-1 rounded-full text-xs font-medium bg-red-100 text-red-700"}>
+                        {generatedStory.novelty_result.risk_level} risk
+                      </span>
+                    </div>
+                  </div>
+                  {generatedStory.novelty_result.most_similar && (
+                    <p className="text-xs text-neutral-600 mt-2">
+                      Most similar: "{generatedStory.novelty_result.most_similar.title}" ({(generatedStory.novelty_result.most_similar.similarity * 100).toFixed(0)}%)
+                    </p>
+                  )}
+                </section>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="flex items-center justify-between px-6 py-4 border-t border-neutral-200 bg-neutral-50">
+              <button
+                onClick={() => setStoryModalOpen(false)}
+                className="px-4 py-2 text-sm font-medium text-neutral-700 hover:text-neutral-900 transition-colors"
+              >
+                Close
+              </button>
+              <button
+                onClick={() => {
+                  const storyText = "# " + generatedStory.sections.title + "\n\n" +
+                    generatedStory.sections.abstract + "\n\n" +
+                    generatedStory.sections.problem_framing + "\n\n" +
+                    generatedStory.sections.solution_approach;
+                  navigator.clipboard.writeText(storyText);
+                  addInsight({
+                    type: "insight",
+                    title: "Story Copied",
+                    content: "Full story copied to clipboard",
+                  });
+                }}
+                className="px-4 py-2 text-sm font-medium bg-neutral-900 text-white rounded-lg hover:bg-neutral-800 transition-colors"
+              >
+                Copy Story
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
@@ -1478,16 +1854,18 @@ interface QuickActionButtonProps {
 }
 
 function QuickActionButton({ icon: Icon, label, onClick, disabled, active }: QuickActionButtonProps) {
+  const getClassName = () => {
+    const base = "flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-full transition-colors ";
+    if (active) return base + "text-neutral-800 bg-neutral-200";
+    if (disabled) return base + "text-neutral-300 cursor-not-allowed";
+    return base + "text-neutral-500 hover:text-neutral-700";
+  };
+
   return (
     <button
       onClick={onClick}
       disabled={disabled}
-      className={`flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-full transition-colors ${active
-        ? "text-neutral-800 bg-neutral-200"
-        : disabled
-          ? "text-neutral-300 cursor-not-allowed"
-          : "text-neutral-500 hover:text-neutral-700"
-        }`}
+      className={getClassName()}
     >
       <Icon className="w-3 h-3" />
       {label}

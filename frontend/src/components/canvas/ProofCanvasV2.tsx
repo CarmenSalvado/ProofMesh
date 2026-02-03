@@ -980,7 +980,7 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
       if (e.button === 1) {
         e.preventDefault();
         setIsPanning(true);
-        panStartRef.current = { x: e.clientX, y: e.clientY, panX: pan.x, panY: pan.y };
+        panStartRef.current = { x: e.clientX, y: e.clientY, panX: panRef.current.x, panY: panRef.current.y };
         return;
       }
       
@@ -1012,7 +1012,7 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
         // Hand mode = pan
         if (canvasMode === "hand") {
           setIsPanning(true);
-          panStartRef.current = { x: e.clientX, y: e.clientY, panX: pan.x, panY: pan.y };
+          panStartRef.current = { x: e.clientX, y: e.clientY, panX: panRef.current.x, panY: panRef.current.y };
           e.preventDefault();
           return;
         }
@@ -1377,7 +1377,7 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
       // In hand mode, start panning instead of dragging nodes
       if (canvasMode === "hand") {
         setIsPanning(true);
-        panStartRef.current = { x: e.clientX, y: e.clientY, panX: pan.x, panY: pan.y };
+        panStartRef.current = { x: e.clientX, y: e.clientY, panX: panRef.current.x, panY: panRef.current.y };
         return;
       }
       

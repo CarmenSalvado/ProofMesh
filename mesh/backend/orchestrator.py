@@ -329,6 +329,164 @@ class Orchestrator:
         
         return None
 
+    # ========== Idea2Paper Integration (Story Generation) ==========
+
+    async def generate_story(
+        self,
+        user_idea: str,
+        pattern_id: Optional[str] = None,
+        db_session = None,
+        previous_story: Optional[Dict] = None,
+        review_feedback: Optional[Dict] = None,
+        use_fusion: bool = True
+    ) -> Dict:
+        """
+        Generate a structured paper story from user idea and pattern.
+        Integrates Idea2Paper logic with Gemini 3.
+
+        Args:
+            user_idea: User's research idea
+            pattern_id: Optional pattern ID to use
+            db_session: Database session for pattern recall
+            previous_story: Previous version for refinement
+            review_feedback: Feedback for refinement
+            use_fusion: Whether to use idea fusion
+
+        Returns:
+            Generated story dict with all sections
+        """
+        from .agents.story_generator import StoryGeneratorAgent
+        from .agents.idea_fusion import IdeaFusionAgent
+        from .tools.pattern_store import PatternStore
+
+        # Step 1: Recall or select pattern
+        pattern_info = {}
+        if not pattern_id and db_session:
+            pattern_store = PatternStore()
+            patterns = await pattern_store.recall_patterns(
+                session=db_session,
+                query=user_idea,
+                top_k=5
+            )
+            if patterns:
+                # Use top stability pattern
+                pattern_id = patterns[0]['pattern_id']
+
+        # Step 2: Get pattern info
+        if pattern_id and db_session:
+            pattern_store = PatternStore()
+            pattern_info = await pattern_store.get_pattern_by_id(db_session, pattern_id)
+            if pattern_info:
+                pattern_info['pattern_id'] = pattern_id
+
+        # Step 3: Optional idea fusion
+        fused_idea = None
+        if use_fusion and pattern_id and pattern_info:
+            fusion_agent = IdeaFusionAgent()
+            fused_idea = await fusion_agent.fuse(
+                user_idea=user_idea,
+                pattern_id=pattern_id,
+                pattern_info=pattern_info
+            )
+
+        # Step 4: Generate story
+        story_agent = StoryGeneratorAgent()
+        story = await story_agent.generate(
+            user_idea=user_idea,
+            pattern_info=pattern_info or {},
+            previous_story=previous_story,
+            review_feedback=review_feedback,
+            fused_idea=fused_idea
+        )
+
+        # Step 5: Add metadata
+        story['generation_metadata'] = {
+            'user_idea': user_idea,
+            'pattern_id': pattern_id,
+            'pattern_name': pattern_info.get('name', '') if pattern_info else '',
+            'used_fusion': fused_idea is not None,
+            'fused_idea_title': fused_idea.get('fused_idea_title', '') if fused_idea else ''
+        }
+
+        return story
+
+    async def review_with_anchors(
+        self,
+        story: Dict,
+        pattern_id: Optional[str] = None,
+        db_session = None
+    ) -> Dict:
+        """
+        Review story using enhanced anchored multi-agent critic.
+        Integrates Idea2Paper's anchored review system with Gemini 3.
+
+        Args:
+            story: Story dict to review
+            pattern_id: Pattern ID for anchor selection
+            db_session: Database session
+
+        Returns:
+            Review result with calibrated scores
+        """
+        from .agents.enhanced_critic import EnhancedCriticAgent
+        from .tools.paper_anchors import get_paper_anchor_service
+
+        # Step 1: Select anchors
+        anchors = []
+        if pattern_id and db_session:
+            anchor_service = get_paper_anchor_service()
+            # Get pattern-specific anchors
+            anchors = await anchor_service.select_quantile_anchors(
+                session=db_session,
+                pattern_id=pattern_id,
+                quantiles=[0.1, 0.25, 0.5, 0.75, 0.9]
+            )
+
+            # Add exemplars
+            anchors = await anchor_service.add_exemplar_anchors(
+                session=db_session,
+                pattern_id=pattern_id,
+                current_anchors=anchors,
+                max_exemplars=2
+            )
+
+        # Step 2: Run enhanced review
+        critic_agent = EnhancedCriticAgent()
+        review_result = await critic_agent.review(
+            story=story,
+            anchors=anchors,
+            pattern_id=pattern_id
+        )
+
+        return review_result
+
+    async def check_novelty(
+        self,
+        story: Dict,
+        db_session,
+        exclude_story_id: Optional[str] = None
+    ) -> Dict:
+        """
+        Check novelty of story against existing work.
+        Uses embedding-based similarity detection.
+
+        Args:
+            story: Story dict
+            db_session: Database session
+            exclude_story_id: ID to exclude (for revisions)
+
+        Returns:
+            Novelty report with risk level
+        """
+        from .tools.novelty_checker import get_novelty_checker
+
+        novelty_checker = get_novelty_checker()
+        return await novelty_checker.check_novelty(
+            session=db_session,
+            story=story,
+            exclude_story_id=exclude_story_id
+        )
+
 
 # Convenience function for quick pipelines
 async def quick_formalize_and_verify(

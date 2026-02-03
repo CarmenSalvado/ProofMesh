@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import { Inter, JetBrains_Mono, Newsreader } from "next/font/google";
 import "./globals.css";
 import { AuthProvider } from "@/lib/auth";
-import { ThemeProvider } from "@/hooks/useTheme";
 
 const inter = Inter({
   variable: "--font-inter",
@@ -46,9 +45,7 @@ export default function RootLayout({
       <body
         className={`${inter.variable} ${jetbrainsMono.variable} ${newsreader.variable} font-sans`}
       >
-        <ThemeProvider>
-          <AuthProvider>{children}</AuthProvider>
-        </ThemeProvider>
+        <AuthProvider>{children}</AuthProvider>
       </body>
     </html>
   );

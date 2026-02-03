@@ -12,7 +12,7 @@ from typing import Optional
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
-    String, Text, Float, DateTime, ForeignKey, Index, JSON,
+    String, Text, Float, Integer, Boolean, DateTime, ForeignKey, Index, JSON,
     Enum as SQLEnum, UniqueConstraint
 )
 from sqlalchemy.dialects.postgresql import UUID, ARRAY
@@ -99,10 +99,16 @@ class KnowledgeNode(Base):
     quality_score: Mapped[float] = mapped_column(Float, default=0.5)  # 0-1
     citation_count: Mapped[int] = mapped_column(default=0)
     usage_count: Mapped[int] = mapped_column(default=0)  # How often retrieved
-    
+
     # Domain classification
     domains: Mapped[Optional[list]] = mapped_column(ARRAY(String(100)), nullable=True)
     tags: Mapped[Optional[list]] = mapped_column(ARRAY(String(100)), nullable=True)
+
+    # Pattern-specific fields (for Idea2Paper integration)
+    # Cluster size: Number of papers in this pattern cluster
+    cluster_size: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    # Flag indicating this node represents a research pattern
+    is_pattern: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     
     # User linkage (if created by a user)
     user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
@@ -144,6 +150,8 @@ class KnowledgeNode(Base):
         Index("ix_knowledge_nodes_source", "source"),
         Index("ix_knowledge_nodes_domains", "domains", postgresql_using="gin"),
         Index("ix_knowledge_nodes_quality", "quality_score"),
+        Index("ix_knowledge_nodes_cluster_size", "cluster_size"),
+        Index("ix_knowledge_nodes_is_pattern", "is_pattern"),
     )
 
 

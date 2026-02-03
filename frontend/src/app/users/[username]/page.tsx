@@ -3,8 +3,9 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { ArrowLeft, Users, BookOpen, MessageSquare, Star } from "lucide-react";
+import { Users, BookOpen, MessageSquare, Star } from "lucide-react";
 import { getSocialUsers, getProblems, SocialUser, Problem } from "@/lib/api";
+import { DashboardNavbar } from "@/components/layout/DashboardNavbar";
 
 export default function UserProfilePage() {
   const params = useParams();
@@ -58,11 +59,8 @@ export default function UserProfilePage() {
   if (error || !user) {
     return (
       <div className="min-h-screen bg-white">
+        <DashboardNavbar />
         <div className="max-w-4xl mx-auto px-4 py-8">
-          <Link href="/social" className="inline-flex items-center gap-2 text-sm text-neutral-600 hover:text-neutral-900 mb-8">
-            <ArrowLeft className="w-4 h-4" />
-            Back to Community
-          </Link>
           <div className="text-center py-16">
             <h1 className="text-2xl font-semibold text-neutral-900 mb-2">User Not Found</h1>
             <p className="text-neutral-500">The user @{username} does not exist.</p>
@@ -74,14 +72,11 @@ export default function UserProfilePage() {
 
   return (
     <div className="min-h-screen bg-white">
+      <DashboardNavbar />
+
       {/* Header */}
       <div className="border-b border-neutral-200">
         <div className="max-w-4xl mx-auto px-4 py-6">
-          <Link href="/social" className="inline-flex items-center gap-2 text-sm text-neutral-600 hover:text-neutral-900 mb-6">
-            <ArrowLeft className="w-4 h-4" />
-            Back to Community
-          </Link>
-          
           <div className="flex items-start gap-6">
             <div className="w-24 h-24 rounded-full bg-gradient-to-br from-indigo-100 to-purple-100 flex items-center justify-center text-3xl font-bold text-indigo-700">
               {username.slice(0, 2).toUpperCase()}

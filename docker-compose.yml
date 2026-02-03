@@ -71,6 +71,8 @@ services:
       - ./backend/alembic:/app/alembic:cached
       # Mount mesh for orchestration agent access
       - ./mesh:/app/mesh:cached
+      # Mount papers directory for import scripts
+      - ./papers:/papers:ro
     environment:
       DATABASE_URL: ${DATABASE_URL}
       REDIS_URL: ${REDIS_URL}

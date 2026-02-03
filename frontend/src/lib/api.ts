@@ -1978,9 +1978,175 @@ export function connectReasoningStreamWebSocket(
 		console.log("Reasoning Stream WebSocket closed");
 		onClose?.();
 	};
-	
+
 	return {
 		close: () => socket.close(),
 		socket,
 	};
+}
+
+// ============ Idea2Paper Integration Types ============
+
+export interface StoryGenerationRequest {
+	user_idea: string;
+	pattern_id?: string;
+	context?: string;
+}
+
+export interface StorySection {
+	title: string;
+	content: string;
+}
+
+export interface Story {
+	id: string;
+	problem_id: string;
+	user_idea: string;
+	pattern_id?: string;
+	sections: {
+		title: string;
+		abstract: string;
+		problem_framing: string;
+		gap_identification: string;
+		solution_approach: string;
+		method_skeleton: string;
+		innovation_claims: string;
+		experiments_plan: string;
+	};
+	metadata: {
+		pattern_name?: string;
+		domain?: string;
+	};
+	review_result?: {
+		passed: boolean;
+		scores: {
+			reviewer_1?: number;
+			reviewer_2?: number;
+			reviewer_3?: number;
+			average: number;
+			q25: number;
+			q50: number;
+			q75: number;
+		};
+		individual_reviews: Array<{
+			anchor_title: string;
+			score: number;
+			justification: string;
+		}>;
+		pass_criteria: string;
+	};
+	novelty_result: {
+		is_novel: boolean;
+		similarity_score: number;
+		risk_level: "low" | "medium" | "high";
+		most_similar?: {
+			title: string;
+			similarity: number;
+		};
+	};
+	parent_story_id?: string;
+	version: number;
+	created_at: string;
+	updated_at: string;
+}
+
+export interface StoryListResponse {
+	stories: Story[];
+	total: number;
+}
+
+export interface StoryGenerationResponse {
+	story: Story;
+}
+
+export interface IdeaFusionRequest {
+	ideas: string[];
+	context?: string;
+}
+
+export interface IdeaFusionResponse {
+	fused_idea: string;
+	source_ideas: string[];
+	fusion_type: "problem_fusion" | "assumption_fusion" | "innovation_fusion";
+	explanation: string;
+}
+
+export interface PatternBasedExploreRequest {
+	query: string;
+	use_patterns: boolean;
+	num_patterns?: number;
+}
+
+// ============ Idea2Paper API Functions ============
+
+/**
+ * Generate a research story from a user idea using Idea2Paper pipeline
+ */
+export async function generateStory(
+	problemId: string,
+	payload: StoryGenerationRequest
+): Promise<StoryGenerationResponse> {
+	return apiFetch(`/workspaces/${problemId}/generate-story`, {
+		method: "POST",
+		body: JSON.stringify(payload),
+	});
+}
+
+/**
+ * Refine an existing story with feedback
+ */
+export async function refineStory(
+	problemId: string,
+	storyId: string,
+	payload: { feedback: string }
+): Promise<StoryGenerationResponse> {
+	return apiFetch(`/workspaces/${problemId}/stories/${storyId}/refine`, {
+		method: "POST",
+		body: JSON.stringify(payload),
+	});
+}
+
+/**
+ * Get all stories for a problem
+ */
+export async function getStories(problemId: string): Promise<StoryListResponse> {
+	return apiFetch(`/workspaces/${problemId}/stories`);
+}
+
+/**
+ * Get a specific story
+ */
+export async function getStory(problemId: string, storyId: string): Promise<Story> {
+	return apiFetch(`/workspaces/${problemId}/stories/${storyId}`);
+}
+
+/**
+ * Perform pattern-based exploration (explore with patterns from KG)
+ */
+export async function exploreWithPatterns(
+	problemId: string,
+	payload: PatternBasedExploreRequest
+): Promise<{ proposals: Array<{ content: string; score: number; reasoning?: string }>; run_id: string }> {
+	return apiFetch(`/canvas-ai/explore`, {
+		method: "POST",
+		body: JSON.stringify({
+			context: payload.context || payload.query,
+			use_patterns: payload.use_patterns,
+			num_patterns: payload.num_patterns || 5,
+			problem_id: problemId,
+		}),
+	});
+}
+
+/**
+ * Perform idea fusion combining multiple ideas
+ */
+export async function fuseIdeas(
+	problemId: string,
+	payload: IdeaFusionRequest
+): Promise<IdeaFusionResponse> {
+	return apiFetch(`/workspaces/${problemId}/fuse-ideas`, {
+		method: "POST",
+		body: JSON.stringify(payload),
+	});
 }

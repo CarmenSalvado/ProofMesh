@@ -365,6 +365,218 @@ IMPORTANT: you are writing JSON. If you use LaTeX, you MUST escape backslashes (
         import asyncio
         return asyncio.run(self.explore(block, memory))
 
+    # ---------- PATTERN-BASED EXPLORATION (Idea2Paper Integration) ----------
+
+    async def explore_with_patterns(
+        self,
+        block: str,
+        memory: Optional[List[dict]] = None,
+        max_iterations: Optional[int] = None,
+        db_session = None,
+        top_patterns: int = 3
+    ) -> ExplorationResult:
+        """
+        Enhanced exploration with pattern selection and idea fusion.
+        Integrates Idea2Paper logic for pattern-based research exploration.
+
+        This method:
+        1. Recalls relevant patterns from Knowledge Graph
+        2. Scores patterns across three dimensions (stability, novelty, domain_distance)
+        3. Selects top patterns from each dimension
+        4. Fuses user idea with selected patterns
+        5. Generates enhanced proposals with fused concepts
+
+        Args:
+            block: Mathematical problem/idea to explore
+            memory: Previous facts/steps
+            max_iterations: Max exploration iterations
+            db_session: Database session for pattern recall
+            top_patterns: Number of top patterns to select per dimension
+
+        Returns:
+            ExplorationResult with pattern-enhanced proposals
+        """
+        from .pattern_selector import PatternSelectorAgent
+        from .idea_fusion import IdeaFusionAgent
+        from ..tools.pattern_store import PatternStore
+
+        if not db_session:
+            # Fall back to standard exploration
+            print("[Explorer] No DB session provided, using standard exploration")
+            return await self.explore(block, memory, max_iterations)
+
+        # Step 1: Recall patterns
+        pattern_store = PatternStore()
+        patterns = await pattern_store.recall_patterns(
+            session=db_session,
+            query=block,
+            top_k=20
+        )
+
+        if not patterns:
+            print("[Explorer] No patterns found, using standard exploration")
+            return await self.explore(block, memory, max_iterations)
+
+        # Step 2: Score patterns multi-dimensionally
+        pattern_selector = PatternSelectorAgent()
+        ranked_patterns = await pattern_selector.score_patterns(
+            patterns=patterns,
+            user_idea=block
+        )
+
+        # Step 3: Select top patterns from each dimension
+        top_stable = ranked_patterns['stability'][0] if ranked_patterns['stability'] else None
+        top_novel = ranked_patterns['novelty'][0] if ranked_patterns['novelty'] else None
+        top_cross = ranked_patterns['domain_distance'][0] if ranked_patterns['domain_distance'] else None
+
+        selected_patterns = [p for p in [top_stable, top_novel, top_cross] if p]
+
+        print(f"[Explorer] Selected {len(selected_patterns)} patterns for fusion")
+        for pid, pinfo, _ in selected_patterns:
+            print(f"  - {pinfo['name']}: {pinfo['size']} papers")
+
+        # Step 4: Fuse ideas
+        fusion_agent = IdeaFusionAgent()
+        fused_ideas = []
+
+        for pattern_id, pattern_info, _ in selected_patterns:
+            try:
+                fused = await fusion_agent.fuse(
+                    user_idea=block,
+                    pattern_id=pattern_id,
+                    pattern_info=pattern_info
+                )
+                fused_ideas.append({
+                    'pattern_id': pattern_id,
+                    'pattern_name': pattern_info['name'],
+                    'fused_idea': fused
+                })
+                print(f"  ✓ Fused with {pattern_info['name']}: {fused['fused_idea_title'][:50]}...")
+            except Exception as e:
+                print(f"  ⚠ Fusion failed for {pattern_info['name']}: {e}")
+                continue
+
+        if not fused_ideas:
+            print("[Explorer] All fusions failed, using standard exploration")
+            return await self.explore(block, memory, max_iterations)
+
+        # Step 5: Generate proposals with fused concepts
+        # Build enhanced context with fused ideas
+        fused_context = []
+        for fused in fused_ideas:
+            fused_idea = fused['fused_idea']
+            fused_context.append({
+                'pattern': fused['pattern_name'],
+                'fused_title': fused_idea.get('fused_idea_title', ''),
+                'problem_framing': fused_idea.get('problem_framing', ''),
+                'novelty_claim': fused_idea.get('novelty_claim', ''),
+                'key_points': fused_idea.get('key_innovation_points', [])
+            })
+
+        enhanced_memory = memory or []
+        enhanced_memory.append({
+            'type': 'pattern_fusion',
+            'fused_ideas': fused_context
+        })
+
+        # Run exploration with enhanced context
+        context = {"block": block}
+        memory_str = json.dumps(enhanced_memory, indent=2)
+
+        prompt = f"""Current Mathematical Problem/State:
+{block}
+
+Previous Known Facts/Steps:
+{memory_str}
+
+Pattern-Based Insights Available:
+{chr(10).join(f"- {fi['pattern']}: {fi['fused_title']}" for fi in fused_context)}
+
+Task: provide a valid next local step that incorporates insights from the patterns above.
+IMPORTANT: you are writing JSON. If you use LaTeX, you MUST escape backslashes.
+"""
+
+        responses = await self.loop_agent.run(
+            prompt,
+            context=context,
+            max_iters=max_iterations
+        )
+
+        proposals: List[Proposal] = []
+        best_score = 0.0
+
+        for i, response in enumerate(responses):
+            if not response.success or not response.content:
+                proposals.append(self._create_blocked_proposal(i, "Empty or failed response"))
+                continue
+
+            data = self._parse_json(response.content)
+
+            if not data:
+                proposals.append(self._create_blocked_proposal(i, "JSON Parse Error"))
+                continue
+
+            proposal_text = data.get("proposal", "").strip()
+
+            if not proposal_text:
+                proposals.append(self._create_blocked_proposal(i, "Empty proposal text"))
+                continue
+
+            if not self._is_local_proposal(proposal_text):
+                proposals.append(self._create_blocked_proposal(i, "Rejected: Global closure attempt"))
+                continue
+
+            try:
+                score = float(data.get("score", 0.5))
+            except (ValueError, TypeError):
+                score = 0.5
+
+            rationale = data.get("rationale") or data.get("reasoning") or ""
+            full_reasoning = str(rationale).strip()
+            diagram = self._parse_diagram(data.get("diagram") or data.get("graph"))
+
+            # Enhance reasoning with pattern information
+            if fused_ideas:
+                pattern_info_str = f" [Enhanced with {len(fused_ideas)} patterns]"
+                full_reasoning += pattern_info_str
+
+            proposal = Proposal(
+                id=f"prop-{i}",
+                content=proposal_text,
+                reasoning=full_reasoning,
+                diagram=diagram,
+                score=score,
+                iteration=i,
+                blocked=False,
+                block_reason=None,
+            )
+
+            proposals.append(proposal)
+            best_score = max(best_score, score)
+
+        valid_proposals = [p for p in proposals if p.is_valid()]
+
+        if not valid_proposals:
+            return ExplorationResult(
+                proposals=proposals,
+                total_iterations=len(responses),
+                best_score=0.0,
+                stopped_reason="all_proposals_rejected",
+            )
+
+        valid_proposals.sort(key=lambda x: x.score, reverse=True)
+
+        return ExplorationResult(
+            proposals=valid_proposals,
+            total_iterations=len(responses),
+            best_score=best_score,
+            stopped_reason="max_iterations",
+            extra_data={
+                'patterns_used': [f['pattern_name'] for f in fused_ideas],
+                'fusion_count': len(fused_ideas)
+            }
+        )
+
 
 # ---------- FACTORY & EXPORT ----------
 

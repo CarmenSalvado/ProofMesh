@@ -3,8 +3,10 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { createDiscussion } from "@/lib/api";
+import { DashboardNavbar } from "@/components/layout/DashboardNavbar";
+import { useAuth } from "@/lib/auth";
 
 export default function NewDiscussionPage() {
   const router = useRouter();
@@ -35,20 +37,7 @@ export default function NewDiscussionPage() {
 
   return (
     <div className="min-h-screen bg-white">
-      {/* Header */}
-      <div className="border-b border-neutral-200">
-        <div className="max-w-3xl mx-auto px-4 py-4">
-          <div className="flex items-center justify-between">
-            <Link
-              href="/discussions"
-              className="inline-flex items-center gap-2 text-sm text-neutral-600 hover:text-neutral-900"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              Back to Discussions
-            </Link>
-          </div>
-        </div>
-      </div>
+      <DashboardNavbar />
 
       {/* Form */}
       <div className="max-w-3xl mx-auto px-4 py-8">

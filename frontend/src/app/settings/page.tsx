@@ -3,12 +3,10 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
-import { useTheme } from "@/hooks/useTheme";
 import { DashboardNavbar } from "@/components/layout/DashboardNavbar";
 
 export default function SettingsPage() {
   const { user, isLoading, logout } = useAuth();
-  const { theme, setTheme } = useTheme();
   const router = useRouter();
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
@@ -79,27 +77,6 @@ export default function SettingsPage() {
                   disabled
                 />
               </div>
-            </div>
-          </div>
-
-          {/* Appearance Section */}
-          <div className="bg-white border border-neutral-200 rounded-xl p-6 mb-6 shadow-sm">
-            <h2 className="text-sm font-medium text-neutral-900 mb-4">Appearance</h2>
-
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-neutral-700">Theme</p>
-                <p className="text-xs text-neutral-400">Select your preferred theme</p>
-              </div>
-              <select
-                value={theme}
-                onChange={(e) => setTheme(e.target.value as "light" | "dark" | "system")}
-                className="text-sm px-3 py-2 rounded-lg border border-neutral-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-              >
-                <option value="light">Light</option>
-                <option value="dark">Dark</option>
-                <option value="system">System</option>
-              </select>
             </div>
           </div>
 

@@ -79,38 +79,6 @@
   --grid-color: #e4e4e7;
 }
 
-[data-theme="dark"] {
-  --bg-primary: #09090b;
-  --bg-secondary: #18181b;
-  --bg-tertiary: #27272a;
-  --bg-hover: #3f3f46;
-
-  --text-primary: #fafafa;
-  --text-secondary: #d4d4d8;
-  --text-muted: #a1a1aa;
-  --text-faint: #71717a;
-
-  --border-primary: #3f3f46;
-  --border-secondary: #52525b;
-  --border-muted: #27272a;
-
-  --accent-primary: #818cf8;
-  --accent-hover: #6366f1;
-
-  --success: #34d399;
-  --success-bg: rgba(16, 185, 129, 0.1);
-  --warning: #fbbf24;
-  --warning-bg: rgba(245, 158, 11, 0.1);
-  --error: #f87171;
-  --error-bg: rgba(239, 68, 68, 0.1);
-
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.3);
-  --shadow-lg: 0 8px 30px rgba(0, 0, 0, 0.4);
-
-  --grid-color: #27272a;
-}
-
 /* Override Monaco/VSCode CSS variables to fix red selection colors */
 .monaco-editor {
   --vscode-editor-selectionBackground: rgba(180, 180, 180, 0.18);
@@ -1130,10 +1098,6 @@ body {
   }
 }
 
-[data-theme="dark"] .glass-panel {
-  background: rgba(24, 24, 27, 0.8);
-}
-
 /* Grid background */
 .bg-grid {
   background-image: radial-gradient(var(--grid-color) 1px, transparent 1px);
@@ -1422,10 +1386,6 @@ textarea:not([class*="placeholder:"])::placeholder {
   background-size: 24px 24px;
 }
 
-[data-theme="dark"] .bg-grid-dots {
-  background-image: radial-gradient(#3f3f46 1px, transparent 1px);
-}
-
 /* Gradient masks */
 .mask-gradient-b {
   mask-image: linear-gradient(to bottom, black, transparent);
@@ -1461,30 +1421,6 @@ textarea:not([class*="placeholder:"])::placeholder {
   background: var(--bg-tertiary);
   color: var(--text-primary);
   border-color: var(--border-secondary);
-}
-
-/* Prose overrides for dark mode */
-[data-theme="dark"] .prose {
-  --tw-prose-body: var(--text-secondary);
-  --tw-prose-headings: var(--text-primary);
-  --tw-prose-links: var(--accent-primary);
-  --tw-prose-bold: var(--text-primary);
-  --tw-prose-counters: var(--text-muted);
-  --tw-prose-bullets: var(--text-faint);
-  --tw-prose-hr: var(--border-primary);
-  --tw-prose-quotes: var(--text-secondary);
-  --tw-prose-quote-borders: var(--accent-primary);
-  --tw-prose-captions: var(--text-muted);
-  --tw-prose-code: var(--text-primary);
-  --tw-prose-pre-code: var(--text-secondary);
-  --tw-prose-pre-bg: var(--bg-tertiary);
-  --tw-prose-th-borders: var(--border-primary);
-  --tw-prose-td-borders: var(--border-muted);
-}
-
-/* KaTeX dark mode */
-[data-theme="dark"] .katex {
-  color: var(--text-primary);
 }
 
 /* AI Overlay Animations */

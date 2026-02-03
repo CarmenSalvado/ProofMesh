@@ -13,12 +13,11 @@ import {
   Discussion,
   Comment,
 } from "@/lib/api";
-import { NotificationsDropdown } from "@/components/social";
+import { DashboardNavbar } from "@/components/layout/DashboardNavbar";
 import {
   ChevronDown,
   MessageSquare,
   CheckCircle2,
-  ArrowLeft,
   MoreHorizontal,
   Send,
   Pin,
@@ -248,41 +247,9 @@ export default function DiscussionDetailPage() {
 
   return (
     <div className="min-h-screen bg-neutral-50 text-neutral-900 flex flex-col">
-      {/* Navbar */}
-      <nav className="sticky top-0 w-full z-50 border-b border-neutral-200 bg-white/90 backdrop-blur-sm">
-        <div className="max-w-[1400px] mx-auto px-4 h-14 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-4">
-            <Link href="/dashboard" className="flex items-center gap-2 group">
-              <div className="w-6 h-6 bg-neutral-900 rounded-md flex items-center justify-center text-white group-hover:bg-indigo-600 transition-colors">
-                <span className="font-[var(--font-math)] italic text-[12px] leading-none logo-rho">&rho;</span>
-              </div>
-              <span className="text-sm font-bold tracking-tight">ProofMesh</span>
-            </Link>
-          </div>
-
-          <div className="flex items-center gap-3">
-            <NotificationsDropdown />
-            <div className="h-4 w-px bg-neutral-200 mx-1" />
-            <button className="flex items-center gap-2 group">
-              <div className="w-6 h-6 rounded-full bg-indigo-100 border border-neutral-200 group-hover:border-indigo-500 transition-colors flex items-center justify-center text-[10px] font-bold text-indigo-700">
-                {getInitials(user.username)}
-              </div>
-              <ChevronDown className="w-3 h-3 text-neutral-400" />
-            </button>
-          </div>
-        </div>
-      </nav>
+      <DashboardNavbar />
 
       <div className="flex-1 max-w-3xl mx-auto w-full px-4 py-8">
-        {/* Back Link */}
-        <Link
-          href="/discussions"
-          className="inline-flex items-center gap-2 text-sm text-neutral-500 hover:text-neutral-700 mb-6"
-        >
-          <ArrowLeft className="w-4 h-4" />
-          Back to Discussions
-        </Link>
-
         {/* Discussion */}
         <article className="bg-white rounded-xl border border-neutral-200 overflow-hidden mb-8">
           <div className="p-6">

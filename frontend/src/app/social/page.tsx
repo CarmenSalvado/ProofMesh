@@ -28,8 +28,7 @@ import {
   SocialFeedItem,
   SocialProblemContribution,
 } from "@/lib/api";
-import { WorkspaceSidebar } from "@/components/layout/WorkspaceSidebar";
-import { WorkspaceHeader } from "@/components/layout/WorkspaceHeader";
+import { DashboardNavbar } from "@/components/layout/DashboardNavbar";
 
 const FEED_FILTERS = [
   { id: "all", label: "All", types: null },
@@ -361,28 +360,17 @@ export default function SocialPage() {
   if (!user) return null;
 
   return (
-    <div className="flex h-screen overflow-hidden bg-white text-neutral-900">
-      <WorkspaceSidebar />
-
-      <main className="flex-1 flex flex-col min-w-0 bg-white">
-        <WorkspaceHeader
-          breadcrumbs={[
-            { label: "Dashboard", href: "/dashboard" },
-            { label: "Reasoning Stream" },
-          ]}
-          status={null}
-        />
-
-        <div className="flex-1 overflow-y-auto">
-          <div className="px-6 py-6">
-            <div className="flex items-start justify-between mb-6">
-              <div>
-                <h1 className="text-xl font-semibold text-neutral-900">Reasoning Stream</h1>
-                <p className="text-xs text-neutral-500">
-                  Collaboration signals, approvals, and research momentum.
-                </p>
-              </div>
-            </div>
+    <div className="min-h-screen bg-white">
+      <DashboardNavbar />
+      <main className="max-w-[1400px] mx-auto px-4 py-6">
+        <div className="flex items-start justify-between mb-6">
+          <div>
+            <h1 className="text-xl font-semibold text-neutral-900">Reasoning Stream</h1>
+            <p className="text-xs text-neutral-500">
+              Collaboration signals, approvals, and research momentum.
+            </p>
+          </div>
+        </div>
 
             {error && (
               <div className="border border-red-200 bg-red-50 rounded-lg p-3 text-xs text-red-600 mb-4">
@@ -779,8 +767,6 @@ export default function SocialPage() {
                 </aside>
               </div>
             )}
-          </div>
-        </div>
       </main>
     </div>
   );
