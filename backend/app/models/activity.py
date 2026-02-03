@@ -18,6 +18,8 @@ class ActivityType(str, Enum):
     COMMENTED_LIBRARY = "COMMENTED_LIBRARY"
     FOLLOWED_USER = "FOLLOWED_USER"
     FORKED_PROBLEM = "FORKED_PROBLEM"
+    TEAM_INVITE = "TEAM_INVITE"
+    TEAM_JOIN = "TEAM_JOIN"
 
 
 class Activity(Base):

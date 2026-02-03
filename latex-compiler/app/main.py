@@ -13,8 +13,9 @@ from pydantic import BaseModel, Field
 
 
 S3_ENDPOINT = os.getenv("S3_ENDPOINT", "http://minio:9000")
-S3_ACCESS_KEY = os.getenv("S3_ACCESS_KEY", "minioadmin")
-S3_SECRET_KEY = os.getenv("S3_SECRET_KEY", "minioadmin")
+# Use ProofMesh defaults so local (non-docker-compose) runs match backend.
+S3_ACCESS_KEY = os.getenv("S3_ACCESS_KEY", "proofmesh")
+S3_SECRET_KEY = os.getenv("S3_SECRET_KEY", "proofmesh")
 S3_BUCKET = os.getenv("S3_BUCKET", "proofmesh")
 S3_REGION = os.getenv("S3_REGION", "us-east-1")
 S3_SECURE = os.getenv("S3_SECURE", "false").lower() == "true"
@@ -53,13 +54,16 @@ def sanitize_prefix(prefix: str) -> str:
 
 
 def iter_objects(prefix: str) -> Iterable[str]:
-    paginator = s3_client.get_paginator("list_objects_v2")
-    for page in paginator.paginate(Bucket=S3_BUCKET, Prefix=prefix):
-        for item in page.get("Contents", []):
-            key = item.get("Key")
-            if not key or key.endswith("/"):
-                continue
-            yield key
+    try:
+        paginator = s3_client.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=S3_BUCKET, Prefix=prefix):
+            for item in page.get("Contents", []):
+                key = item.get("Key")
+                if not key or key.endswith("/"):
+                    continue
+                yield key
+    except ClientError as exc:
+        raise HTTPException(status_code=502, detail=f"S3 list error: {exc}") from exc
 
 
 class CompileRequest(BaseModel):
@@ -115,7 +119,12 @@ def compile_project(request: CompileRequest):
 
     with TemporaryDirectory() as tmpdir:
         prefix_with_slash = f"{prefix}/"
-        keys = list(iter_objects(prefix_with_slash))
+        try:
+            keys = list(iter_objects(prefix_with_slash))
+        except HTTPException:
+            raise
+        except ClientError as exc:
+            raise HTTPException(status_code=502, detail=f"S3 list error: {exc}") from exc
         if not keys:
             raise HTTPException(status_code=404, detail="No files found for project")
 
@@ -127,7 +136,10 @@ def compile_project(request: CompileRequest):
                 continue
             dest = os.path.join(tmpdir, rel)
             os.makedirs(os.path.dirname(dest), exist_ok=True)
-            s3_client.download_file(S3_BUCKET, key, dest)
+            try:
+                s3_client.download_file(S3_BUCKET, key, dest)
+            except ClientError as exc:
+                raise HTTPException(status_code=502, detail=f"S3 download error for {key}: {exc}") from exc
 
         main_path = os.path.join(tmpdir, main)
         if not os.path.exists(main_path):
@@ -155,6 +167,8 @@ def compile_project(request: CompileRequest):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=timeout,
             )
             log = result.stdout or ""
@@ -234,11 +248,11 @@ def synctex_lookup(request: SynctexRequest):
         pdf_path = os.path.join(tmpdir, "document.pdf")
         synctex_path = os.path.join(tmpdir, "document.synctex.gz")
 
-    try:
-        s3_client.download_file(S3_BUCKET, pdf_key, pdf_path)
-        s3_client.download_file(S3_BUCKET, synctex_key, synctex_path)
-    except ClientError:
-        raise HTTPException(status_code=404, detail="Synctex data not available")
+        try:
+            s3_client.download_file(S3_BUCKET, pdf_key, pdf_path)
+            s3_client.download_file(S3_BUCKET, synctex_key, synctex_path)
+        except ClientError:
+            raise HTTPException(status_code=404, detail="Synctex data not available")
 
         cmd = [
             "synctex",

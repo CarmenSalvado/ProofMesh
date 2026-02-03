@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.user import User
 from app.models.team import Team, TeamMember, TeamProblem, TeamRole
+from app.models.activity import Activity, ActivityType
 from app.models.notification import Notification, NotificationType
 from app.api.deps import get_current_user
 from app.schemas.social import (
@@ -177,7 +178,7 @@ async def invite_team_member(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Invite a user to a team (admin/owner only)."""
+    """Invite a user to a team (admin/owner only) without auto-joining."""
     team_result = await db.execute(select(Team).where(Team.slug == slug))
     team = team_result.scalar_one_or_none()
     if not team:
@@ -193,23 +194,27 @@ async def invite_team_member(
     if not current_member or current_member.role not in [TeamRole.OWNER, TeamRole.ADMIN]:
         raise HTTPException(status_code=403, detail="Not authorized to invite members")
     
-    existing = await db.execute(
+    existing_member = await db.execute(
         select(TeamMember).where(
             TeamMember.team_id == team.id,
             TeamMember.user_id == data.user_id,
         )
     )
-    if existing.scalar_one_or_none():
+    if existing_member.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="User already a member")
     
-    role = TeamRole.ADMIN if data.role == "admin" else TeamRole.MEMBER
-    new_member = TeamMember(
-        team_id=team.id,
-        user_id=data.user_id,
-        role=role,
+    existing_invite = await db.execute(
+        select(Notification).where(
+            Notification.user_id == data.user_id,
+            Notification.type == NotificationType.TEAM_INVITE,
+            Notification.target_id == team.id,
+            Notification.is_read == False,
+        )
     )
-    db.add(new_member)
+    if existing_invite.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="Invitation already pending")
     
+    role = TeamRole.ADMIN if data.role == "admin" else TeamRole.MEMBER
     notification = Notification(
         user_id=data.user_id,
         type=NotificationType.TEAM_INVITE,
@@ -217,11 +222,122 @@ async def invite_team_member(
         actor_id=current_user.id,
         target_type="team",
         target_id=team.id,
+        extra_data={"role": data.role or "member", "team_slug": team.slug},
     )
     db.add(notification)
+    await db.flush()
+
+    db.add(
+        Activity(
+            user_id=current_user.id,
+            type=ActivityType.TEAM_INVITE,
+            target_id=data.user_id,
+            extra_data={
+                "team_id": str(team.id),
+                "team_name": team.name,
+                "team_slug": team.slug,
+                "invitee_id": str(data.user_id),
+                "role": data.role or "member",
+                "notification_id": str(notification.id),
+            },
+        )
+    )
     
     await db.commit()
-    return {"status": "invited"}
+    return {"status": "invited", "notification_id": notification.id}
+
+
+@router.post("/teams/{slug}/invites/{notification_id}/accept")
+async def accept_team_invite(
+    slug: str,
+    notification_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Accept a pending team invitation and join the team."""
+    team_result = await db.execute(select(Team).where(Team.slug == slug))
+    team = team_result.scalar_one_or_none()
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+
+    notif_result = await db.execute(
+        select(Notification).where(
+            Notification.id == notification_id,
+            Notification.user_id == current_user.id,
+            Notification.type == NotificationType.TEAM_INVITE,
+            Notification.target_id == team.id,
+            Notification.is_read == False,
+        )
+    )
+    notification = notif_result.scalar_one_or_none()
+    if not notification:
+        raise HTTPException(status_code=404, detail="Invitation not found or already handled")
+
+    # Ensure not already member
+    existing_member = await db.execute(
+        select(TeamMember).where(
+            TeamMember.team_id == team.id,
+            TeamMember.user_id == current_user.id,
+        )
+    )
+    if existing_member.scalar_one_or_none():
+        notification.is_read = True
+        await db.commit()
+        return {"status": "already_member"}
+
+    role = TeamRole.ADMIN if (notification.extra_data or {}).get("role") == "admin" else TeamRole.MEMBER
+    new_member = TeamMember(team_id=team.id, user_id=current_user.id, role=role)
+    db.add(new_member)
+
+    notification.is_read = True
+
+    db.add(
+        Activity(
+            user_id=current_user.id,
+            type=ActivityType.TEAM_JOIN,
+            target_id=team.id,
+            extra_data={
+                "team_id": str(team.id),
+                "team_name": team.name,
+                "team_slug": team.slug,
+                "role": role.value,
+            },
+        )
+    )
+
+    await db.commit()
+    return {"status": "accepted", "role": role.value}
+
+
+@router.post("/teams/{slug}/invites/{notification_id}/decline")
+async def decline_team_invite(
+    slug: str,
+    notification_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Decline a pending team invitation."""
+    team_result = await db.execute(select(Team).where(Team.slug == slug))
+    team = team_result.scalar_one_or_none()
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+
+    notif_result = await db.execute(
+        select(Notification).where(
+            Notification.id == notification_id,
+            Notification.user_id == current_user.id,
+            Notification.type == NotificationType.TEAM_INVITE,
+            Notification.target_id == team.id,
+            Notification.is_read == False,
+        )
+    )
+    notification = notif_result.scalar_one_or_none()
+    if not notification:
+        raise HTTPException(status_code=404, detail="Invitation not found or already handled")
+
+    notification.is_read = True
+    await db.commit()
+    return {"status": "declined"}
 
 
 @router.post("/teams/{slug}/problems")

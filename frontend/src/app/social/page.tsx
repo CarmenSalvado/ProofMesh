@@ -22,6 +22,8 @@ import {
   getSocialContributions,
   followUser,
   unfollowUser,
+  acceptTeamInvite,
+  declineTeamInvite,
   SocialUser,
   SocialFeedItem,
   SocialProblemContribution,
@@ -32,9 +34,9 @@ import { WorkspaceHeader } from "@/components/layout/WorkspaceHeader";
 const FEED_FILTERS = [
   { id: "all", label: "All", types: null },
   { id: "problems", label: "Problems", types: ["CREATED_PROBLEM", "FORKED_PROBLEM"] },
-  { id: "library", label: "Library", types: ["PUBLISHED_LIBRARY"] },
+  { id: "library", label: "Library", types: ["PUBLISHED_LIBRARY", "UPDATED_LIBRARY", "VERIFIED_LIBRARY"] },
   { id: "files", label: "Files", types: ["CREATED_WORKSPACE_FILE"] },
-  { id: "connections", label: "Connections", types: ["FOLLOWED_USER"] },
+  { id: "connections", label: "Connections", types: ["FOLLOWED_USER", "TEAM_INVITE", "TEAM_JOIN"] },
 ];
 
 const FEED_META: Record<
@@ -54,10 +56,34 @@ const FEED_META: Record<
     badge: "border-neutral-200 text-neutral-700",
   },
   PUBLISHED_LIBRARY: {
-    label: "Library update",
+    label: "Library updated",
     icon: ShieldCheck,
     accent: "text-emerald-600",
     badge: "border-emerald-100 text-emerald-700",
+  },
+  UPDATED_LIBRARY: {
+    label: "Library updated",
+    icon: ShieldCheck,
+    accent: "text-emerald-600",
+    badge: "border-emerald-100 text-emerald-700",
+  },
+  VERIFIED_LIBRARY: {
+    label: "Library verified",
+    icon: ShieldCheck,
+    accent: "text-emerald-700",
+    badge: "border-emerald-200 text-emerald-800",
+  },
+  TEAM_INVITE: {
+    label: "Team invite",
+    icon: Users,
+    accent: "text-blue-600",
+    badge: "border-blue-100 text-blue-700",
+  },
+  TEAM_JOIN: {
+    label: "Team join",
+    icon: Users,
+    accent: "text-blue-700",
+    badge: "border-blue-200 text-blue-800",
   },
   FOLLOWED_USER: {
     label: "New connection",
@@ -123,6 +149,11 @@ function renderFeedText(item: SocialFeedItem) {
   const filePath = item.extra_data?.file_path as string | undefined;
   const targetUser = item.extra_data?.target_username as string | undefined;
   const itemTitle = item.extra_data?.item_title as string | undefined;
+  const status = item.item_status?.toLowerCase();
+  const verification = item.verification_status;
+  const kind = item.item_kind?.toLowerCase();
+  const leanBadge = item.has_lean_code ? "with Lean" : undefined;
+  const teamName = item.extra_data?.team_name as string | undefined;
 
   switch (item.type) {
     case "CREATED_PROBLEM":
@@ -130,9 +161,24 @@ function renderFeedText(item: SocialFeedItem) {
     case "CREATED_WORKSPACE_FILE":
       return `added ${filePath || "a workspace file"} to ${problemTitle}`;
     case "PUBLISHED_LIBRARY":
-      return `published ${itemTitle || "a library item"} in ${problemTitle}`;
+    case "UPDATED_LIBRARY":
+    case "VERIFIED_LIBRARY": {
+      const statusLabel = status === "verified"
+        ? "verified"
+        : status === "proposed"
+        ? "proposed"
+        : status || "updated";
+      const verificationLabel = verification ? ` (${verification})` : "";
+      const kindLabel = kind ? `${kind}` : "library item";
+      const leanLabel = leanBadge ? ` ${leanBadge}` : "";
+      return `${statusLabel}${verificationLabel} ${itemTitle || kindLabel}${leanLabel} in ${problemTitle}`;
+    }
     case "FOLLOWED_USER":
       return `connected with ${targetUser || "a researcher"}`;
+    case "TEAM_INVITE":
+      return `invited you to join ${teamName || "a team"}`;
+    case "TEAM_JOIN":
+      return `joined team ${teamName || "a team"}`;
     case "FORKED_PROBLEM":
       return `forked ${problemTitle}`;
     default:
@@ -159,6 +205,7 @@ export default function SocialPage() {
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
+  const [inviting, setInviting] = useState<"accept" | "decline" | null>(null);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -623,6 +670,53 @@ export default function SocialPage() {
                         </div>
 
                         <div className="border-t border-neutral-100 pt-4 space-y-2">
+                          {selectedItem.type === "TEAM_INVITE" &&
+                            selectedItem.extra_data?.team_slug &&
+                            selectedItem.extra_data?.notification_id &&
+                            user?.id === selectedItem.extra_data?.invitee_id && (
+                              <div className="space-y-2">
+                                <button
+                                  disabled={inviting === "accept"}
+                                  onClick={async () => {
+                                    try {
+                                      setInviting("accept");
+                                      await acceptTeamInvite(
+                                        selectedItem.extra_data.team_slug as string,
+                                        selectedItem.extra_data.notification_id as string
+                                      );
+                                      await loadAll();
+                                    } catch (err) {
+                                      setError(err instanceof Error ? err.message : "Failed to accept invite");
+                                    } finally {
+                                      setInviting(null);
+                                    }
+                                  }}
+                                  className="w-full bg-emerald-600 text-white py-2 rounded-md text-xs font-medium hover:bg-emerald-700 disabled:opacity-60"
+                                >
+                                  {inviting === "accept" ? "Accepting..." : "Accept invite"}
+                                </button>
+                                <button
+                                  disabled={inviting === "decline"}
+                                  onClick={async () => {
+                                    try {
+                                      setInviting("decline");
+                                      await declineTeamInvite(
+                                        selectedItem.extra_data.team_slug as string,
+                                        selectedItem.extra_data.notification_id as string
+                                      );
+                                      await loadAll();
+                                    } catch (err) {
+                                      setError(err instanceof Error ? err.message : "Failed to decline invite");
+                                    } finally {
+                                      setInviting(null);
+                                    }
+                                  }}
+                                  className="w-full bg-white border border-neutral-200 text-neutral-700 py-2 rounded-md text-xs font-medium hover:bg-neutral-50 disabled:opacity-60"
+                                >
+                                  {inviting === "decline" ? "Declining..." : "Decline"}
+                                </button>
+                              </div>
+                            )}
                           {selectedItem.problem && (
                             <Link
                               href={`/problems/${selectedItem.problem.id}`}

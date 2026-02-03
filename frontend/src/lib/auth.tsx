@@ -21,6 +21,7 @@ interface AuthContextType {
 	user: User | null;
 	isLoading: boolean;
 	login: (email: string, password: string) => Promise<void>;
+	demo: () => Promise<void>;
 	register: (email: string, username: string, password: string) => Promise<void>;
 	logout: () => void;
 	getToken: () => string | null;
@@ -84,6 +85,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 		router.push("/dashboard");
 	};
 
+	const demo = async () => {
+		const res = await fetch(`${API_URL}/api/auth/demo`, {
+			method: "POST",
+		});
+
+		if (!res.ok) {
+			const error = await res.json();
+			throw new Error(error.detail || "Demo login failed");
+		}
+
+		const tokens = await res.json();
+		localStorage.setItem("access_token", tokens.access_token);
+		localStorage.setItem("refresh_token", tokens.refresh_token);
+		await fetchUser(tokens.access_token);
+		router.push("/dashboard");
+	};
+
 	const register = async (email: string, username: string, password: string) => {
 		const res = await fetch(`${API_URL}/api/auth/register`, {
 			method: "POST",
@@ -119,7 +137,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
 	return (
 		<AuthContext.Provider
-			value={{ user, isLoading, login, register, logout, getToken }}
+			value={{ user, isLoading, login, demo, register, logout, getToken }}
 		>
 			{children}
 		</AuthContext.Provider>

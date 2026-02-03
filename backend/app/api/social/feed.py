@@ -53,6 +53,7 @@ async def get_feed(
     activities = result.scalars().all()
 
     problem_ids: set[UUID] = set()
+    library_item_ids: set[UUID] = set()
     for activity in activities:
         data = activity.extra_data or {}
         raw_id = data.get("problem_id")
@@ -62,10 +63,23 @@ async def get_feed(
             except ValueError:
                 continue
 
+        # Capture library item targets to hydrate status/verification state
+        if activity.type in {
+            ActivityType.PUBLISHED_LIBRARY,
+            ActivityType.UPDATED_LIBRARY,
+            ActivityType.VERIFIED_LIBRARY,
+        } and activity.target_id:
+            library_item_ids.add(activity.target_id)
+
     problems = {}
     if problem_ids:
         prob_result = await db.execute(select(Problem).where(Problem.id.in_(problem_ids)))
         problems = {p.id: p for p in prob_result.scalars().all()}
+
+    library_items = {}
+    if library_item_ids:
+        li_result = await db.execute(select(LibraryItem).where(LibraryItem.id.in_(library_item_ids)))
+        library_items = {li.id: li for li in li_result.scalars().all()}
 
     items: list[FeedItem] = []
     for activity in activities:
@@ -81,6 +95,9 @@ async def get_feed(
                     problem = FeedProblem(id=p.id, title=p.title, visibility=p.visibility.value)
             except ValueError:
                 pass
+        # Attach live node status (matches current DB state)
+        lib = library_items.get(activity.target_id) if activity.target_id else None
+
         items.append(
             FeedItem(
                 id=activity.id,
@@ -88,6 +105,11 @@ async def get_feed(
                 actor=FeedActor(id=actor.id, username=actor.username, avatar_url=actor.avatar_url),
                 problem=problem,
                 target_id=activity.target_id,
+                item_status=lib.status.value if lib else None,
+                item_kind=lib.kind.value if lib else None,
+                verification_status=(lib.verification or {}).get("status") if lib else None,
+                verification_method=(lib.verification or {}).get("method") if lib else None,
+                has_lean_code=bool(lib.lean_code) if lib else None,
                 extra_data=data,
                 created_at=activity.created_at,
             )

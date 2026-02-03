@@ -1,6 +1,6 @@
 /**
- * Sistema de cola para operaciones asíncronas en el canvas
- * Asegura que las operaciones se ejecuten secuencialmente y se manejen los errores
+ * Queue system for asynchronous operations in the canvas
+ * Ensures that operations are executed sequentially and errors are handled
  */
 
 export interface QueuedOperation<T> {

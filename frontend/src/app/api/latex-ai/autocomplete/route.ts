@@ -12,6 +12,7 @@ export async function POST(request: Request) {
   const prompt = [
     "Return ONLY valid JSON: {\"suggestions\":[{\"label\":...,\"insert_text\":...}]}",
     "Task: provide LaTeX autocomplete suggestions.",
+    "Avoid non-ASCII characters; use LaTeX commands instead of Unicode symbols.",
     `File: ${body?.file_path || "N/A"}`,
     `Text before cursor:\n${before}`,
     `Text after cursor:\n${after}`,
@@ -20,7 +21,7 @@ export async function POST(request: Request) {
 
   const result = await generateText({
     model: google("gemini-3-flash-preview"),
-    system: "You are a LaTeX autocomplete engine. Output JSON only.",
+    system: "You are a LaTeX autocomplete engine. Output JSON only. Avoid non-ASCII characters; use LaTeX commands instead of Unicode symbols.",
     prompt,
   });
 

@@ -12,14 +12,12 @@ import {
   Copy,
   Check,
   Plus,
-  Command,
   Image as ImageIcon,
   Target,
   Play,
   Zap,
   CheckCircle,
   XCircle,
-  AlertCircle,
   Brain,
 } from "lucide-react";
 import { useChat, Message } from "@ai-sdk/react";
@@ -292,6 +290,23 @@ export function FloatingAIBar({
   const inputRef = useRef<HTMLInputElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const getStartContext = useCallback(() => {
+    const primaryNode = selectedNode || selectedNodes[0] || null;
+    const dependencyIds =
+      contextNodes.length > 0
+        ? contextNodes.map((n) => n.id)
+        : primaryNode
+          ? [primaryNode.id]
+          : [];
+
+    return {
+      primaryNode,
+      dependencyIds,
+      baseX: primaryNode?.x ?? 400,
+      baseY: primaryNode?.y ?? 300,
+    };
+  }, [contextNodes, selectedNode, selectedNodes]);
 
   // Build context for AI from selected nodes
   const aiContext = useMemo(() => {
@@ -786,27 +801,36 @@ export function FloatingAIBar({
 
       setCurrentLeanCode(result.lean_code);
 
-      // Update node's leanCode field if we have onUpdateNode
-      if (onUpdateNode && selectedNode) {
-        onUpdateNode(selectedNode.id, { leanCode: result.lean_code });
-        addInsight({
-          type: "code",
-          title: "✓ Lean Code Added to Node",
-          content: result.lean_code,
-          score: result.confidence,
-          nodeRef: node.id,
-          runId: result.run_id,
-        });
-      } else {
-        addInsight({
-          type: "code",
-          title: "Lean 4 Code",
-          content: result.lean_code,
-          score: result.confidence,
-          nodeRef: node.id,
-          runId: result.run_id,
+      const { primaryNode, dependencyIds, baseX, baseY } = getStartContext();
+      const leanTitle = primaryNode ? `Lean de ${primaryNode.title}` : "Lean 4 code";
+
+      if (onCreateNode) {
+        await onCreateNode({
+          type: "LEMMA",
+          title: leanTitle.slice(0, 80),
+          content: `Lean 4 code for ${primaryNode?.title || "this step"}:\n\n\`\`\`lean\n${result.lean_code}\n\`\`\``,
+          leanCode: result.lean_code,
+          x: baseX + 260,
+          y: baseY + 180,
+          dependencies: dependencyIds,
+          authors: [AI_AUTHOR],
+          source: buildAISource(result.run_id),
         });
       }
+
+      // Update node's leanCode field if we have onUpdateNode
+      if (onUpdateNode && primaryNode?.id) {
+        onUpdateNode(primaryNode.id, { leanCode: result.lean_code });
+      }
+
+      addInsight({
+        type: "code",
+        title: "Lean 4 Code",
+        content: result.lean_code,
+        score: result.confidence,
+        nodeRef: node.id,
+        runId: result.run_id,
+      });
     } catch (err) {
       addInsight({
         type: "insight",
@@ -817,7 +841,7 @@ export function FloatingAIBar({
       setIsLoading(false);
       setActiveAction(null);
     }
-  }, [contextNodes, selectedNode, problemId, addInsight, onUpdateNode]);
+  }, [contextNodes, selectedNode, selectedNodes, problemId, addInsight, onUpdateNode, onCreateNode, getStartContext]);
 
   const handleVerify = useCallback(async () => {
     if (!currentLeanCode || !problemId) return;
@@ -833,6 +857,35 @@ export function FloatingAIBar({
       });
 
       setVerificationResult({ success: result.success, log: result.log });
+      const { primaryNode, dependencyIds, baseX, baseY } = getStartContext();
+
+      if (onCreateNode) {
+        await onCreateNode({
+          type: "NOTE",
+          title: result.success
+            ? `✓ Verificación de ${primaryNode?.title || "Lean code"}`
+            : `✗ Verificación de ${primaryNode?.title || "Lean code"}`,
+          content: `**Resultado:** ${result.success ? "OK" : "Falló"}\n\n${result.log || result.error || "Sin log"}\n\n\`\`\`lean\n${currentLeanCode}\n\`\`\``,
+          leanCode: currentLeanCode,
+          x: baseX + 320,
+          y: baseY + 260,
+          dependencies: dependencyIds,
+          authors: [AI_AUTHOR],
+          source: buildAISource(result.run_id),
+        });
+      }
+
+      if (onUpdateNode && primaryNode?.id) {
+        onUpdateNode(primaryNode.id, {
+          status: result.success ? "VERIFIED" : "REJECTED",
+          verification: {
+            method: "lean4",
+            logs: result.log || result.error || "",
+            status: result.success ? "pass" : "fail",
+          },
+        });
+      }
+
       addInsight({
         type: "insight",
         title: result.success ? "✓ Verification Passed" : "✗ Verification Failed",
@@ -849,7 +902,7 @@ export function FloatingAIBar({
       setIsLoading(false);
       setActiveAction(null);
     }
-  }, [currentLeanCode, problemId, addInsight]);
+  }, [currentLeanCode, problemId, addInsight, onCreateNode, onUpdateNode, getStartContext]);
 
   const handleFullPipeline = useCallback(async () => {
     if (!problemId) return;
@@ -861,6 +914,7 @@ export function FloatingAIBar({
     setCurrentLeanCode(null);
 
     try {
+      const { primaryNode, dependencyIds, baseX, baseY } = getStartContext();
       // Step 1: Explore
       addInsight({ type: "insight", title: "🔄 Pipeline: Exploring...", content: "Generating proposals..." });
 
@@ -894,6 +948,9 @@ export function FloatingAIBar({
         return;
       }
 
+      let proposalNodeId: string | undefined;
+      let leanNodeId: string | undefined;
+
       const bestProposal = exploration.proposals[0];
       addInsight({
         type: "proposal",
@@ -902,6 +959,23 @@ export function FloatingAIBar({
         score: bestProposal.score,
         runId: explorationRunId,
       });
+
+      if (onCreateNode) {
+        const createdProposal = await onCreateNode({
+          type: "LEMMA",
+          title: deriveGroupTitle(bestProposal.content, "Propuesta"),
+          content: bestProposal.content,
+          x: baseX + 240,
+          y: baseY + 140,
+          dependencies: dependencyIds,
+          authors: [AI_AUTHOR],
+          source: buildAISource(explorationRunId),
+        });
+
+        if (createdProposal && typeof createdProposal === "object" && "id" in createdProposal) {
+          proposalNodeId = createdProposal.id;
+        }
+      }
 
       // Step 2: Critique
       addInsight({ type: "insight", title: "🔄 Pipeline: Critiquing...", content: "Evaluating proposal..." });
@@ -924,6 +998,34 @@ export function FloatingAIBar({
       setCurrentLeanCode(formalization.lean_code);
       addInsight({ type: "code", title: "Lean 4 Code", content: formalization.lean_code, score: formalization.confidence });
 
+      if (onCreateNode) {
+        const leanDeps = Array.from(
+          new Set(
+            [proposalNodeId, ...dependencyIds].filter((id): id is string => Boolean(id))
+          )
+        );
+
+        const createdLean = await onCreateNode({
+          type: "LEMMA",
+          title: primaryNode ? `Lean de ${primaryNode.title}` : "Lean formalization",
+          content: `\`\`\`lean\n${formalization.lean_code}\n\`\`\``,
+          leanCode: formalization.lean_code,
+          x: baseX + 260,
+          y: baseY + 320,
+          dependencies: leanDeps,
+          authors: [AI_AUTHOR],
+          source: buildAISource(formalization.run_id),
+        });
+
+        if (createdLean && typeof createdLean === "object" && "id" in createdLean) {
+          leanNodeId = createdLean.id;
+        }
+      }
+
+      if (onUpdateNode && primaryNode?.id) {
+        onUpdateNode(primaryNode.id, { leanCode: formalization.lean_code });
+      }
+
       // Step 4: Verify
       addInsight({ type: "insight", title: "🔄 Pipeline: Verifying...", content: "Running Lean 4 verification..." });
 
@@ -933,6 +1035,25 @@ export function FloatingAIBar({
       });
 
       setVerificationResult({ success: verification.success, log: verification.log });
+      const verificationDeps = Array.from(
+        new Set(
+          [leanNodeId, proposalNodeId, ...dependencyIds].filter((id): id is string => Boolean(id))
+        )
+      );
+
+      if (onCreateNode) {
+        await onCreateNode({
+          type: "NOTE",
+          title: verification.success ? "Verificación ✓" : "Verificación ✗",
+          content: `${verification.success ? "La prueba se verificó correctamente." : "La verificación falló."}\n\n${verification.log || verification.error || ""}\n\n\`\`\`lean\n${formalization.lean_code}\n\`\`\``,
+          leanCode: formalization.lean_code,
+          x: baseX + 280,
+          y: baseY + 500,
+          dependencies: verificationDeps,
+          authors: [AI_AUTHOR],
+          source: buildAISource(verification.run_id),
+        });
+      }
 
       // Final result
       if (verification.success) {
@@ -943,10 +1064,8 @@ export function FloatingAIBar({
           score: 1,
         });
 
-        // Update selected node's leanCode field instead of creating a new node
-        if (onUpdateNode && contextNodes.length > 0) {
-          const targetNodeId = contextNodes[0].id;
-          onUpdateNode(targetNodeId, {
+        if (onUpdateNode && primaryNode?.id) {
+          onUpdateNode(primaryNode.id, {
             leanCode: formalization.lean_code,
             status: "VERIFIED",
             verification: {
@@ -958,22 +1077,7 @@ export function FloatingAIBar({
           addInsight({
             type: "insight",
             title: "✓ Node Updated",
-            content: `Lean code added to "${contextNodes[0].title}" and marked as Verified.`,
-          });
-        } else if (onCreateNode) {
-          // Fallback: create new node if no context node selected
-          const baseX = selectedNode?.x ?? 400;
-          const baseY = selectedNode?.y ?? 300;
-          onCreateNode({
-            type: "LEMMA",
-            title: bestProposal.content.slice(0, 60) + (bestProposal.content.length > 60 ? "..." : ""),
-            content: `**Verified ✓**\n\n${bestProposal.content}\n\n---\n*Confidence: ${(formalization.confidence * 100).toFixed(0)}%*`,
-            leanCode: formalization.lean_code,
-            x: baseX,
-            y: baseY + 200,
-            dependencies: contextNodes.map(n => n.id),
-            authors: [AI_AUTHOR],
-            source: buildAISource(explorationRunId),
+            content: `Lean code added to "${primaryNode.title}" and marked as Verified.`,
           });
         }
       } else {
@@ -997,7 +1101,7 @@ export function FloatingAIBar({
       setIsPipelineRunning(false);
       setActiveAction(null);
     }
-  }, [command, contextNodes, selectedNode, selectedNodes, chatMessages, problemId, addInsight, onCreateNode, onUpdateNode]);
+  }, [command, contextNodes, selectedNode, selectedNodes, chatMessages, problemId, addInsight, onCreateNode, onUpdateNode, getStartContext]);
 
   const handleCopy = useCallback((id: string, content: string) => {
     navigator.clipboard.writeText(content);
@@ -1008,21 +1112,6 @@ export function FloatingAIBar({
   const handleDismissInsight = useCallback((id: string) => {
     setInsights((prev) => prev.filter((i) => i.id !== id));
   }, []);
-
-  const handleCreateFromInsight = useCallback((insight: FloatingInsight) => {
-    if (!onCreateNode) return;
-
-    void onCreateNode({
-      type: insight.type === "code" ? "LEMMA" : "NOTE",
-      title: insight.title,
-      content: insight.content,
-      dependencies: [],
-      authors: [AI_AUTHOR],
-      source: buildAISource(insight.runId),
-    });
-
-    handleDismissInsight(insight.id);
-  }, [onCreateNode, handleDismissInsight]);
 
   const handleRemoveContext = useCallback((id: string) => {
     setContextNodes(prev => prev.filter(n => n.id !== id));
@@ -1085,7 +1174,6 @@ export function FloatingAIBar({
           insights={insights}
           onDismiss={handleDismissInsight}
           onCopy={handleCopy}
-          onCreateNode={handleCreateFromInsight}
           copied={copied}
         />
       </>
@@ -1148,7 +1236,7 @@ export function FloatingAIBar({
                                 onClick={() => handleUseChatInExplore(responseText)}
                                 className="text-[10px] text-indigo-600 hover:text-indigo-700"
                               >
-                                Usar en exploración
+                                Use in exploration
                               </button>
                             </div>
                           </div>
@@ -1375,7 +1463,6 @@ export function FloatingAIBar({
         insights={insights}
         onDismiss={handleDismissInsight}
         onCopy={handleCopy}
-        onCreateNode={handleCreateFromInsight}
         copied={copied}
       />
     </>
@@ -1412,11 +1499,10 @@ interface FloatingInsightsProps {
   insights: FloatingInsight[];
   onDismiss: (id: string) => void;
   onCopy: (id: string, content: string) => void;
-  onCreateNode: (insight: FloatingInsight) => void;
   copied: string | null;
 }
 
-function FloatingInsights({ insights, onDismiss, onCopy, onCreateNode, copied }: FloatingInsightsProps) {
+function FloatingInsights({ insights, onDismiss, onCopy, copied }: FloatingInsightsProps) {
   if (insights.length === 0) return null;
 
   return (
@@ -1468,7 +1554,7 @@ function FloatingInsights({ insights, onDismiss, onCopy, onCreateNode, copied }:
           </div>
 
           {/* Actions */}
-          <div className="flex items-center gap-1 px-3 py-2 bg-neutral-50/50">
+          <div className="flex items-center px-3 py-2 bg-neutral-50/50">
             <button
               onClick={(e) => {
                 e.stopPropagation();
@@ -1487,16 +1573,6 @@ function FloatingInsights({ insights, onDismiss, onCopy, onCreateNode, copied }:
                   Copy
                 </>
               )}
-            </button>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onCreateNode(insight);
-              }}
-              className="flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-neutral-600 hover:text-neutral-800 rounded-full transition-colors"
-            >
-              <Plus className="w-3 h-3" />
-              Add
             </button>
           </div>
         </div>

@@ -42,8 +42,7 @@ alembic upgrade head
 echo "✅ Migrations complete!"
 
 # Setup Lean Project dependencies in background (non-blocking)
-# Skip if Lean is delegated to external runner
-if [ -z "${LEAN_RUNNER_URL}" ] && [ -d "/app/mesh/mesh_project" ]; then
+if [ -d "/app/mesh/mesh_project" ]; then
     echo "🔧 Setting up Lean project in background..."
     (
         cd /app/mesh/mesh_project
@@ -51,15 +50,7 @@ if [ -z "${LEAN_RUNNER_URL}" ] && [ -d "/app/mesh/mesh_project" ]; then
         lake exe cache get || echo "⚠️ Warning: Failed to fetch cache"
     ) &
     echo "✅ Lean setup initiated (running in background)"
-else
-    echo "⏭️ Skipping Lean setup in backend (LEAN_RUNNER_URL is set)"
 fi
-
-# Start the Canvas AI worker in background
-echo "🤖 Starting Canvas AI worker..."
-python -m app.workers.canvas_ai_worker &
-WORKER_PID=$!
-echo "✅ Canvas AI worker started (PID: $WORKER_PID)"
 
 # Start the application
 echo "🌐 Starting FastAPI server..."

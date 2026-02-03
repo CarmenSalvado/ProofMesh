@@ -5,12 +5,13 @@ import Link from "next/link";
 import { useAuth } from "@/lib/auth";
 
 export default function RegisterPage() {
-	const { register } = useAuth();
+	const { register, demo } = useAuth();
 	const [email, setEmail] = useState("");
 	const [username, setUsername] = useState("");
 	const [password, setPassword] = useState("");
 	const [error, setError] = useState("");
 	const [loading, setLoading] = useState(false);
+	const [demoLoading, setDemoLoading] = useState(false);
 
 	const handleSubmit = async (e: React.FormEvent) => {
 		e.preventDefault();
@@ -29,6 +30,18 @@ export default function RegisterPage() {
 			setError(err instanceof Error ? err.message : "Registration failed");
 		} finally {
 			setLoading(false);
+		}
+	};
+
+	const handleDemo = async () => {
+		setError("");
+		setDemoLoading(true);
+		try {
+			await demo();
+		} catch (err) {
+			setError(err instanceof Error ? err.message : "Demo login failed");
+		} finally {
+			setDemoLoading(false);
 		}
 	};
 
@@ -116,6 +129,15 @@ export default function RegisterPage() {
 							className="w-full btn btn-primary py-2.5 mt-2 disabled:opacity-50"
 						>
 							{loading ? "Creating account..." : "Create account"}
+						</button>
+
+						<button
+							type="button"
+							onClick={handleDemo}
+							disabled={demoLoading}
+							className="w-full btn btn-secondary py-2.5 disabled:opacity-50"
+						>
+							{demoLoading ? "Entering demo..." : "Try demo (no account)"}
 						</button>
 					</form>
 				</div>

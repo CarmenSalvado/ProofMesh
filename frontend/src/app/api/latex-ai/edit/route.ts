@@ -38,6 +38,7 @@ export async function POST(request: Request) {
     "- Line/column are 1-based.",
     "- If a selection was provided, edits must stay inside it.",
     "- Preserve valid LaTeX and do not change unrelated parts.",
+    "- Avoid non-ASCII characters; replace Unicode symbols with LaTeX commands (e.g., \\mathbb{N}, \\mathbb{Z}, \\leq, \\geq, \\alpha).",
     "- Use multiple small edits when helpful.",
     "- If no edits are needed, call updateDocument with an empty edits array and explain why in comment.",
   ]
@@ -46,9 +47,9 @@ export async function POST(request: Request) {
 
   const system = shouldEdit
     ? `You are a precise LaTeX editor. Unless the user is asking a purely curious question or a standalone explanation, you MUST call updateDocument and apply changes to the document.
-Use 1-based line/column positions. Keep explanations brief and do not emit raw JSON.`
+Use 1-based line/column positions. Keep explanations brief and do not emit raw JSON. Avoid non-ASCII characters; replace Unicode symbols with LaTeX commands.`
     : `You are a precise LaTeX assistant. Provide explanations only when the user is asking a curious question or wants a conceptual explanation.
-If you decide to edit, call updateDocument with 1-based line/column positions and keep explanations brief.`;
+If you decide to edit, call updateDocument with 1-based line/column positions and keep explanations brief. Avoid non-ASCII characters; replace Unicode symbols with LaTeX commands.`;
 
   const requestedModel =
     typeof body?.model_id === "string" && body.model_id.trim() ? body.model_id.trim() : "";

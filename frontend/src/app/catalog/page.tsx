@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth";
 import { getProblems, Problem, getTrendingProblems, TrendingProblem, seedProblems } from "@/lib/api";
@@ -56,6 +56,7 @@ function getInitials(name: string) {
 export default function CatalogPage() {
   const { user, isLoading: authLoading, logout } = useAuth();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [userDropdownOpen, setUserDropdownOpen] = useState(false);
   const userDropdownRef = useRef<HTMLDivElement>(null);
   const [problems, setProblems] = useState<Problem[]>([]);
@@ -65,6 +66,7 @@ export default function CatalogPage() {
   const [selectedDifficulty, setSelectedDifficulty] = useState<"all" | "easy" | "medium" | "hard">("all");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [seeding, setSeeding] = useState(false);
+  const lastSearchParam = useRef<string | null>(null);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -81,6 +83,13 @@ export default function CatalogPage() {
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
+
+  useEffect(() => {
+    const queryParam = searchParams.get("q") ?? "";
+    if (lastSearchParam.current === queryParam) return;
+    lastSearchParam.current = queryParam;
+    setSearchQuery(queryParam);
+  }, [searchParams]);
 
   const loadData = useCallback(async () => {
     if (!user) return;

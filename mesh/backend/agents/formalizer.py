@@ -10,7 +10,7 @@ from .base import Agent
 from ..models.types import FormalizationResult, AgentResponse
 
 
-FORMALIZER_SYSTEM_PROMPT = """You are a mathematical formalization agent. Your role is to translate natural mathematical language into valid Lean 4 code.
+FORMALIZER_SYSTEM_PROMPT = """You are a mathematical formalization agent. Your role is to translate natural mathematical language into VALID Lean 4 code.
 
 Guidelines:
 1. Output ONLY valid Lean 4 code
@@ -62,7 +62,7 @@ class FormalizerAgent:
             hints: Optional hints or related Lean code
             
         Returns:
-            FormalizationResult with Lean code
+            FormalizationResult with VALID Lean code
         """
         prompt = f"""Translate this mathematical text to Lean 4:
 

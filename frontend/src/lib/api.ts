@@ -83,8 +83,22 @@ export interface SocialFeedItem {
 	actor: { id: string; username: string; avatar_url?: string | null };
 	problem?: { id: string; title: string; visibility: string } | null;
 	target_id?: string | null;
+	item_status?: string | null;
+	item_kind?: string | null;
+	verification_status?: string | null;
+	verification_method?: string | null;
+	has_lean_code?: boolean | null;
 	extra_data?: Record<string, unknown> | null;
 	created_at: string;
+}
+
+// Teams
+export async function acceptTeamInvite(teamSlug: string, notificationId: string) {
+	return apiFetch(`/social/teams/${teamSlug}/invites/${notificationId}/accept`, { method: "POST" });
+}
+
+export async function declineTeamInvite(teamSlug: string, notificationId: string) {
+	return apiFetch(`/social/teams/${teamSlug}/invites/${notificationId}/decline`, { method: "POST" });
 }
 
 export interface SocialFeedResponse {

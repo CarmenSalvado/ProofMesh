@@ -59,13 +59,17 @@ import {
   appendLatexAiRunStep,
   putLatexFile,
   renameLatexPath,
+  getCanvasBlocks,
   updateLatexAiMemory,
   updateLatexAiRunSummary,
   updateLatexAiRun,
+  getLibraryItems,
   type LatexFileInfo,
   type LatexFileResponse,
   type Problem,
+  type CanvasBlock,
 } from "@/lib/api";
+import { LibraryItem } from "@/lib/types";
 import { useAuth } from "@/lib/auth";
 import ReactMarkdown from "react-markdown";
 import remarkMath from "remark-math";
@@ -81,6 +85,14 @@ type FileNode = {
   path: string;
   type: "file" | "directory";
   children?: FileNode[];
+};
+
+type MentionSuggestion = {
+  insert: string;
+  label: string;
+  type: "file" | "node" | "block";
+  description?: string;
+  preview?: string;
 };
 
 const AUTO_COMPILE_DELAY = 5000;
@@ -353,6 +365,10 @@ export default function LabPage({ params }: PageProps) {
   const [mentionOpen, setMentionOpen] = useState<"temp" | "persistent" | null>(null);
   const [mentionQuery, setMentionQuery] = useState("");
   const [mentionIndex, setMentionIndex] = useState(0);
+  const [canvasNodes, setCanvasNodes] = useState<LibraryItem[]>([]);
+  const [canvasNodesLoaded, setCanvasNodesLoaded] = useState(false);
+  const [canvasBlocks, setCanvasBlocks] = useState<CanvasBlock[]>([]);
+  const [canvasBlocksLoaded, setCanvasBlocksLoaded] = useState(false);
   const [aiModelMode, setAiModelMode] = useState<"flash" | "thinking">("flash");
   const [attachedImages, setAttachedImages] = useState<string[]>([]);
   const selectionRangeLabel = useMemo(() => {
@@ -435,6 +451,53 @@ export default function LabPage({ params }: PageProps) {
     if (!selectionRangeLabel) return "";
     return selectionRangeLabel;
   }, [selectionRangeLabel]);
+  const canvasNodesContext = useCallback(
+    (ids: string[]) => {
+      if (!ids.length) return "";
+      const summarizeNode = (node: LibraryItem) => {
+        const content = (node.content || "").replace(/\s+/g, " ").trim();
+        const snippet = content.slice(0, 280);
+        const suffix = content.length > 280 ? "…" : "";
+        const verification = node.verification?.status ? `, verification: ${node.verification.status}` : "";
+        return `${node.kind.toLowerCase()}: ${node.title} (status: ${node.status.toLowerCase()}${verification})\nContent: ${snippet}${suffix}`;
+      };
+      const lines = ids
+        .map((id) => canvasNodes.find((node) => node.id === id))
+        .filter(Boolean)
+        .map((node) => summarizeNode(node as LibraryItem));
+      if (!lines.length) return "";
+      return `Canvas nodes selected:\n${lines.join("\n")}`;
+    },
+    [canvasNodes]
+  );
+  const canvasBlocksContext = useCallback(
+    (ids: string[]) => {
+      if (!ids.length) return "";
+      const lines = ids
+        .map((id) => canvasBlocks.find((block) => block.id === id))
+        .filter(Boolean)
+        .map((block) => {
+          const nodes = block?.node_ids
+            ?.map((nodeId) => canvasNodes.find((node) => node.id === nodeId))
+            .filter(Boolean) as LibraryItem[];
+          const nodeSummaries = nodes
+            .slice(0, 5)
+            .map((node) => {
+              const content = (node.content || "").replace(/\s+/g, " ").trim();
+              const snippet = content.slice(0, 180);
+              const suffix = content.length > 180 ? "…" : "";
+              return `- ${node.kind.toLowerCase()}: ${node.title}\n  ${snippet}${suffix}`;
+            })
+            .join("\n");
+          const extra =
+            nodes && nodes.length > 5 ? `\n  …y ${nodes.length - 5} nodos más` : "";
+          return `Bloque "${block?.name}" (${block?.node_ids?.length || 0} nodos):\n${nodeSummaries}${extra}`;
+        });
+      if (!lines.length) return "";
+      return `Canvas blocks selected:\n${lines.join("\n\n")}`;
+    },
+    [canvasBlocks, canvasNodes]
+  );
   const activeChat = useMemo(
     () => persistentChats.find((chat) => chat.id === activePersistentChatId) || null,
     [persistentChats, activePersistentChatId]
@@ -470,46 +533,49 @@ export default function LabPage({ params }: PageProps) {
     api: "/api/latex-ai/chat",
     id: "temp",
   });
-  const tempMentionFiles = useMemo(() => extractMentions(tempInput), [tempInput]);
-  const persistentMentionFiles = useMemo(() => extractMentions(persistentInput), [persistentInput]);
-  const persistentMentionMeta = useMemo(() => {
-    if (persistentMentionFiles.length === 0) return "";
-    return `Mentioned files: ${persistentMentionFiles.join(", ")}`;
-  }, [persistentMentionFiles]);
-  const tempMentionMeta = useMemo(() => {
-    if (tempMentionFiles.length === 0) return "";
-    return `Mentioned files: ${tempMentionFiles.join(", ")}`;
-  }, [tempMentionFiles]);
+  const persistentMentions = useMemo(() => extractMentions(persistentInput), [persistentInput]);
+  const tempMentions = useMemo(() => extractMentions(tempInput), [tempInput]);
+
+  const persistentMentionFiles = useMemo(
+    () => persistentMentions.filter((item) => !item.startsWith("node-") && !item.startsWith("block-")),
+    [persistentMentions]
+  );
+  const tempMentionFiles = useMemo(
+    () => tempMentions.filter((item) => !item.startsWith("node-") && !item.startsWith("block-")),
+    [tempMentions]
+  );
+  const persistentMentionNodes = useMemo(
+    () =>
+      persistentMentions
+        .filter((item) => item.startsWith("node-"))
+        .map((item) => item.replace(/^node-/, "")),
+    [persistentMentions]
+  );
+  const tempMentionNodes = useMemo(
+    () =>
+      tempMentions
+        .filter((item) => item.startsWith("node-"))
+        .map((item) => item.replace(/^node-/, "")),
+    [tempMentions]
+  );
+  const persistentMentionBlocks = useMemo(
+    () =>
+      persistentMentions
+        .filter((item) => item.startsWith("block-"))
+        .map((item) => item.replace(/^block-/, "")),
+    [persistentMentions]
+  );
+  const tempMentionBlocks = useMemo(
+    () =>
+      tempMentions
+        .filter((item) => item.startsWith("block-"))
+        .map((item) => item.replace(/^block-/, "")),
+    [tempMentions]
+  );
   const attachedImagesMeta = useMemo(() => {
     if (attachedImages.length === 0) return "";
     return `Attached images: ${attachedImages.join(", ")}`;
   }, [attachedImages]);
-  const persistentChatContext = useMemo(
-    () =>
-      [
-        selectionContextMeta,
-        persistentMentionMeta,
-        attachedImagesMeta,
-        editorValue,
-        selectionContextLines.map((item) => `L${item.line}: ${item.text}`).join("\n"),
-      ]
-        .filter(Boolean)
-        .join("\n\n"),
-    [selectionContextMeta, persistentMentionMeta, attachedImagesMeta, editorValue, selectionContextLines]
-  );
-  const tempChatContext = useMemo(
-    () =>
-      [
-        selectionContextMeta,
-        tempMentionMeta,
-        attachedImagesMeta,
-        editorValue,
-        selectionContextLines.map((item) => `L${item.line}: ${item.text}`).join("\n"),
-      ]
-        .filter(Boolean)
-        .join("\n\n"),
-    [selectionContextMeta, tempMentionMeta, attachedImagesMeta, editorValue, selectionContextLines]
-  );
   const lastTempAssistantIndex = getLastAssistantIndex(tempMessages);
 
   const handleClearTempChat = useCallback(() => {
@@ -795,21 +861,21 @@ export default function LabPage({ params }: PageProps) {
             {
               label: "section",
               kind: kind.Function,
-              insertText: "\\\\section{${1:Título}}\\n$0",
+              insertText: "\\\\section{${1:Title}}\\n$0",
               range,
               insertTextRules: snippet,
             },
             {
               label: "subsection",
               kind: kind.Function,
-              insertText: "\\\\subsection{${1:Título}}\\n$0",
+              insertText: "\\\\subsection{${1:Title}}\\n$0",
               range,
               insertTextRules: snippet,
             },
             {
               label: "subsubsection",
               kind: kind.Function,
-              insertText: "\\\\subsubsection{${1:Título}}\\n$0",
+              insertText: "\\\\subsubsection{${1:Title}}\\n$0",
               range,
               insertTextRules: snippet,
             },
@@ -1266,25 +1332,111 @@ export default function LabPage({ params }: PageProps) {
   }, [problemId, refreshFiles, ensureGraphicxPackage, insertAtCursor]);
 
   const getMentionSuggestions = useCallback(
-    (query: string) => {
+    (query: string): MentionSuggestion[] => {
       const normalized = query.toLowerCase();
-      return files
+      const fileMatches: MentionSuggestion[] = files
         .map((file) => file.path)
         .filter((path) => path.toLowerCase().includes(normalized))
-        .slice(0, 8);
+        .slice(0, 6)
+        .map((path) => ({
+          insert: path,
+          label: path,
+          type: "file" as const,
+          description: "Archivo o asset de LaTeX",
+        }));
+
+      const blockMatches: MentionSuggestion[] = canvasBlocks
+        .filter((block) => block.name.toLowerCase().includes(normalized))
+        .slice(0, 4)
+        .map((block) => {
+          const nodes = block.node_ids
+            .map((id) => canvasNodes.find((node) => node.id === id))
+            .filter(Boolean) as LibraryItem[];
+          const nodeTitles = nodes.slice(0, 3).map((node) => node.title).join(" • ");
+          return {
+            insert: `block-${block.id}`,
+            label: block.name,
+            type: "block" as const,
+            description: `${nodes.length} nodos`,
+            preview: nodeTitles || "Sin nodos",
+          };
+        });
+
+      const nodeMatches: MentionSuggestion[] = canvasNodes
+        .filter((node) => {
+          const content = (node.content || "").toLowerCase();
+          return (
+            node.title.toLowerCase().includes(normalized) ||
+            node.id.toLowerCase().includes(normalized) ||
+            content.includes(normalized)
+          );
+        })
+        .slice(0, 5)
+        .map((node) => {
+          const content = (node.content || "").replace(/\s+/g, " ").trim();
+          const snippet = content.slice(0, 220);
+          const suffix = content.length > 220 ? "…" : "";
+          return {
+            insert: `node-${node.id}`,
+            label: node.title,
+            type: "node" as const,
+            description: `${node.kind.toLowerCase()} • estado ${node.status.toLowerCase()}`,
+            preview: snippet ? `${snippet}${suffix}` : undefined,
+          };
+        });
+
+      return [...fileMatches, ...blockMatches, ...nodeMatches];
     },
-    [files]
+    [files, canvasNodes, canvasBlocks]
   );
 
   const applyMention = useCallback(
-    (value: string, path: string, setValue: (next: string) => void) => {
-      const next = value.replace(/@([A-Za-z0-9._\\/-]*)$/, `@${path} `);
+    (value: string, suggestion: MentionSuggestion, setValue: (next: string) => void) => {
+      const next = value.replace(/@([A-Za-z0-9._\\/-]*)$/, `@${suggestion.insert} `);
       setValue(next);
       setMentionOpen(null);
       setMentionQuery("");
       setMentionIndex(0);
     },
     []
+  );
+
+  const mentionSuggestions = useMemo(
+    () => getMentionSuggestions(mentionQuery),
+    [mentionQuery, getMentionSuggestions]
+  );
+
+  const buildMentionContext = useCallback(
+    (mentions: string[]) => {
+      const mentionFiles = mentions.filter((item) => !item.startsWith("node-") && !item.startsWith("block-"));
+      const mentionNodes = mentions
+        .filter((item) => item.startsWith("node-"))
+        .map((item) => item.replace(/^node-/, ""));
+      const mentionBlocks = mentions
+        .filter((item) => item.startsWith("block-"))
+        .map((item) => item.replace(/^block-/, ""));
+
+      const parts = [
+        selectionRangeLabel && !contextDismissed ? selectionContextMeta : "",
+        canvasBlocksContext(mentionBlocks),
+        canvasNodesContext(mentionNodes),
+        mentionFiles.length ? `Mentioned files: ${mentionFiles.join(", ")}` : "",
+        attachedImagesMeta,
+        editorValue,
+        selectionContextLines.map((item) => `L${item.line}: ${item.text}`).join("\n"),
+      ];
+      return parts.filter(Boolean).join("\n\n");
+    },
+    [
+      selectionRangeLabel,
+      contextDismissed,
+      selectionContextMeta,
+      canvasBlocksContext,
+      canvasNodesContext,
+      attachedImagesMeta,
+      editorValue,
+      selectionContextLines,
+    ]
   );
 
   const toggleDir = useCallback((path: string) => {
@@ -1592,6 +1744,7 @@ export default function LabPage({ params }: PageProps) {
 
       const selectionText = selection ? model.getValueInRange(selection) : "";
       const content = model.getValue();
+      const mentionContext = buildMentionContext(extractMentions(trimmed));
 
       setAiChanges([]);
       setAiChangeIndex(0);
@@ -1702,6 +1855,7 @@ export default function LabPage({ params }: PageProps) {
             memory: aiMemory || undefined,
             force_edit: forceEdit,
             model_id: aiModelId,
+            context_files: mentionContext || undefined,
           }),
           signal: controller.signal,
         });
@@ -2228,6 +2382,8 @@ export default function LabPage({ params }: PageProps) {
       clearDiffDecorations,
       setPersistentMessages,
       isUuid,
+      buildMentionContext,
+      editorValue,
     ]
   );
 
@@ -2238,6 +2394,8 @@ export default function LabPage({ params }: PageProps) {
   const handleSendPersistentChat = useCallback(async () => {
     const text = persistentInput.trim();
     if (!text || !activePersistentChatId) return;
+    const mentions = extractMentions(text);
+    const context = buildMentionContext(mentions);
     setPersistentInput("");
     setMentionOpen(null);
     setMentionQuery("");
@@ -2260,7 +2418,7 @@ export default function LabPage({ params }: PageProps) {
         body: {
           file_path: activePath,
           model_id: aiModelId,
-          context: persistentChatContext,
+          context,
         },
       }
     );
@@ -2273,7 +2431,7 @@ export default function LabPage({ params }: PageProps) {
     setPersistentMessages,
     activePath,
     aiModelId,
-    persistentChatContext,
+    buildMentionContext,
   ]);
 
   const handleStopAi = useCallback(() => {
@@ -2286,6 +2444,8 @@ export default function LabPage({ params }: PageProps) {
   const handleSendTempChat = useCallback(async () => {
     const text = tempInput.trim();
     if (!text) return;
+    const mentions = extractMentions(text);
+    const context = buildMentionContext(mentions);
     setTempInput(""); // Immediate reset
     setMentionOpen(null);
     setMentionQuery("");
@@ -2308,11 +2468,19 @@ export default function LabPage({ params }: PageProps) {
         body: {
           file_path: activePath,
           model_id: aiModelId,
-          context: tempChatContext,
+          context,
         },
       }
     );
-  }, [tempInput, appendTemp, runEdit, setTempMessages, activePath, aiModelId, tempChatContext]);
+  }, [
+    tempInput,
+    appendTemp,
+    runEdit,
+    setTempMessages,
+    activePath,
+    aiModelId,
+    buildMentionContext,
+  ]);
 
   const handleAcceptSingle = useCallback((id: string) => {
     const accepted = aiChanges.find((item) => item.id === id);
@@ -2663,6 +2831,30 @@ export default function LabPage({ params }: PageProps) {
     if (!workspaceReady) return;
     refreshFiles();
   }, [workspaceReady, refreshFiles]);
+
+  useEffect(() => {
+    if (canvasBlocksLoaded) return;
+    getCanvasBlocks(problemId)
+      .then((res) => {
+        setCanvasBlocks(res || []);
+      })
+      .catch((error) => {
+        console.warn("Failed to load canvas blocks for LaTeX context", error);
+      })
+      .finally(() => setCanvasBlocksLoaded(true));
+  }, [problemId, canvasBlocksLoaded]);
+
+  useEffect(() => {
+    if (canvasNodesLoaded) return;
+    getLibraryItems(problemId)
+      .then((res) => {
+        setCanvasNodes(res.items || []);
+        setCanvasNodesLoaded(true);
+      })
+      .catch((error) => {
+        console.warn("Failed to load canvas nodes for LaTeX context", error);
+      });
+  }, [problemId, canvasNodesLoaded]);
 
   useEffect(() => {
     if (!workspaceReady || !activePath) return;
@@ -3616,6 +3808,48 @@ export default function LabPage({ params }: PageProps) {
                           </button>
                         </span>
                       ))}
+                      {persistentMentionBlocks
+                        .map((blockId) => canvasBlocks.find((block) => block.id === blockId))
+                        .filter((block): block is CanvasBlock => Boolean(block))
+                        .map((block) => {
+                          const nodes = block.node_ids
+                            .map((id) => canvasNodes.find((node) => node.id === id))
+                            .filter(Boolean) as LibraryItem[];
+                          const titles = nodes.slice(0, 3).map((node) => node.title).join(" • ");
+                          return (
+                            <span key={`block-${block.id}`} className="pm-context-item pm-context-mention" title={titles || block.name}>
+                              <Folder size={11} className="text-sky-400" />
+                              <span className="truncate max-w-[150px]">
+                                {block.name}
+                              </span>
+                              <span className="text-[10px] text-neutral-500">
+                                {nodes.length} {nodes.length === 1 ? "nodo" : "nodos"}
+                              </span>
+                              <span className="text-[10px] text-neutral-500 hidden sm:inline">
+                                {titles || "Sin nodos"}
+                              </span>
+                            </span>
+                          );
+                        })}
+                      {persistentMentionNodes
+                        .map((nodeId) => canvasNodes.find((node) => node.id === nodeId))
+                        .filter((node): node is LibraryItem => Boolean(node))
+                        .map((node) => (
+                          <span
+                          key={`node-${node.id}`}
+                          className="pm-context-item pm-context-mention"
+                          title={node.content || undefined}
+                        >
+                          <FileText size={11} className="text-emerald-500" />
+                          <span className="truncate max-w-[160px]">
+                            {node.title} <span className="uppercase text-[9px] text-neutral-500">({node.kind.toLowerCase()})</span>
+                          </span>
+                          <span className="text-[10px] text-neutral-500 hidden sm:inline">
+                            {node.content?.slice(0, 160) || "No content"}
+                            {node.content && node.content.length > 160 ? "…" : ""}
+                          </span>
+                        </span>
+                        ))}
                     </div>
                     <div className="relative group">
                       <div className="pointer-events-none absolute -inset-0.5 rounded-2xl bg-gradient-to-r from-zinc-700/20 via-zinc-600/10 to-zinc-700/20 blur opacity-10 group-hover:opacity-25 transition-opacity duration-300" />
@@ -3640,7 +3874,7 @@ export default function LabPage({ params }: PageProps) {
                               if (mentionOpen === "persistent") {
                                 if (event.key === "ArrowDown") {
                                   event.preventDefault();
-                                  const list = getMentionSuggestions(mentionQuery);
+                                  const list = mentionSuggestions;
                                   const maxIndex = Math.max(list.length - 1, 0);
                                   setMentionIndex((prev) => Math.min(prev + 1, maxIndex));
                                   return;
@@ -3651,7 +3885,7 @@ export default function LabPage({ params }: PageProps) {
                                   return;
                                 }
                                 if (event.key === "Enter") {
-                                  const list = getMentionSuggestions(mentionQuery);
+                                  const list = mentionSuggestions;
                                   if (list[mentionIndex]) {
                                     event.preventDefault();
                                     applyMention(persistentInput, list[mentionIndex], setPersistentInput);
@@ -3675,17 +3909,40 @@ export default function LabPage({ params }: PageProps) {
                           />
                           {mentionOpen === "persistent" && (
                             <div className="absolute bottom-4 left-4 right-4 bg-[#0f0f0f] border border-[#252525] rounded-md shadow-lg z-20 max-h-40 overflow-y-auto">
-                              {getMentionSuggestions(mentionQuery).map((path, index) => (
-                                <button
-                                  key={path}
-                                  type="button"
-                                  className={`w-full text-left px-3 py-2 text-[11px] ${index === mentionIndex ? "bg-[#1a1a1a] text-neutral-200" : "text-neutral-400 hover:bg-[#151515]"}`}
-                                  onClick={() => applyMention(persistentInput, path, setPersistentInput)}
-                                >
-                                  @{path}
-                                </button>
-                              ))}
-                              {getMentionSuggestions(mentionQuery).length === 0 && (
+                              {mentionSuggestions.map((suggestion, index) => {
+                                const badgeClass =
+                                  suggestion.type === "node"
+                                    ? "bg-emerald-500/10 text-emerald-300 border border-emerald-500/20"
+                                    : suggestion.type === "block"
+                                      ? "bg-sky-500/10 text-sky-300 border border-sky-500/20"
+                                      : "bg-zinc-800 text-zinc-300 border border-zinc-700";
+                                return (
+                                  <button
+                                    key={suggestion.insert}
+                                    type="button"
+                                    className={`w-full text-left px-3 py-2 text-[11px] ${index === mentionIndex ? "bg-[#1a1a1a] text-neutral-200" : "text-neutral-400 hover:bg-[#151515]"}`}
+                                    onClick={() => applyMention(persistentInput, suggestion, setPersistentInput)}
+                                  >
+                                    <div className="flex flex-col gap-1">
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-neutral-100">@{suggestion.insert}</span>
+                                        <span className={`text-[10px] px-1.5 py-0.5 rounded-md border ${badgeClass}`}>
+                                          {suggestion.type === "node" ? "Nodo" : suggestion.type === "block" ? "Bloque" : "Archivo"}
+                                        </span>
+                                      </div>
+                                      {suggestion.description && (
+                                        <div className="text-[10px] text-neutral-500">{suggestion.description}</div>
+                                      )}
+                                      {suggestion.preview && (
+                                        <div className="text-[10px] text-neutral-500 leading-snug whitespace-normal">
+                                          {suggestion.preview}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </button>
+                                );
+                              })}
+                              {mentionSuggestions.length === 0 && (
                                 <div className="px-3 py-2 text-[11px] text-neutral-600">No matches</div>
                               )}
                             </div>
@@ -4055,12 +4312,12 @@ export default function LabPage({ params }: PageProps) {
                               type="button"
                               onClick={() => setTempInput((prev) => removeMention(prev, path))}
                               className="pm-context-remove"
-                              aria-label={`Remove @${path}`}
-                            >
-                              ×
-                            </button>
-                          </span>
-                        ))}
+                            aria-label={`Remove @${path}`}
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))}
                         {attachedImages.map((path) => (
                           <span key={`image-temp-${path}`} className="pm-context-item pm-context-image">
                             <ImageIcon size={11} />
@@ -4069,12 +4326,54 @@ export default function LabPage({ params }: PageProps) {
                               type="button"
                               onClick={() => setAttachedImages((prev) => prev.filter((item) => item !== path))}
                               className="pm-context-remove"
-                              aria-label={`Remove ${path}`}
-                            >
-                              ×
-                            </button>
+                            aria-label={`Remove ${path}`}
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))}
+                        {tempMentionBlocks
+                          .map((blockId) => canvasBlocks.find((block) => block.id === blockId))
+                          .filter((block): block is CanvasBlock => Boolean(block))
+                          .map((block) => {
+                            const nodes = block.node_ids
+                              .map((id) => canvasNodes.find((node) => node.id === id))
+                              .filter(Boolean) as LibraryItem[];
+                            const titles = nodes.slice(0, 3).map((node) => node.title).join(" • ");
+                            return (
+                              <span key={`block-temp-${block.id}`} className="pm-context-item pm-context-mention" title={titles || block.name}>
+                                <Folder size={11} className="text-sky-400" />
+                                <span className="truncate max-w-[150px]">
+                                  {block.name}
+                                </span>
+                                <span className="text-[10px] text-neutral-500">
+                                  {nodes.length} {nodes.length === 1 ? "nodo" : "nodos"}
+                                </span>
+                                <span className="text-[10px] text-neutral-500 hidden sm:inline">
+                                  {titles || "Sin nodos"}
+                                </span>
+                              </span>
+                            );
+                          })}
+                        {tempMentionNodes
+                          .map((nodeId) => canvasNodes.find((node) => node.id === nodeId))
+                          .filter((node): node is LibraryItem => Boolean(node))
+                          .map((node) => (
+                          <span
+                            key={`node-temp-${node.id}`}
+                            className="pm-context-item pm-context-mention"
+                            title={node.content || undefined}
+                          >
+                            <FileText size={11} className="text-emerald-500" />
+                            <span className="truncate max-w-[160px]">
+                              {node.title} <span className="uppercase text-[9px] text-neutral-500">({node.kind.toLowerCase()})</span>
+                            </span>
+                            <span className="text-[10px] text-neutral-500 hidden sm:inline">
+                              {node.content?.slice(0, 160) || "No content"}
+                              {node.content && node.content.length > 160 ? "…" : ""}
+                            </span>
                           </span>
-                        ))}
+                          ))}
                       </div>
                       <div className="relative group">
                         <div className="pointer-events-none absolute -inset-0.5 rounded-2xl bg-gradient-to-r from-zinc-700/20 via-zinc-600/10 to-zinc-700/20 blur opacity-10 group-hover:opacity-25 transition-opacity duration-300" />
@@ -4100,7 +4399,7 @@ export default function LabPage({ params }: PageProps) {
                                 if (mentionOpen === "temp") {
                                   if (event.key === "ArrowDown") {
                                     event.preventDefault();
-                                    const list = getMentionSuggestions(mentionQuery);
+                                    const list = mentionSuggestions;
                                     const maxIndex = Math.max(list.length - 1, 0);
                                     setMentionIndex((prev) => Math.min(prev + 1, maxIndex));
                                     return;
@@ -4111,7 +4410,7 @@ export default function LabPage({ params }: PageProps) {
                                     return;
                                   }
                                   if (event.key === "Enter") {
-                                    const list = getMentionSuggestions(mentionQuery);
+                                    const list = mentionSuggestions;
                                     if (list[mentionIndex]) {
                                       event.preventDefault();
                                       applyMention(tempInput, list[mentionIndex], setTempInput);
@@ -4135,17 +4434,40 @@ export default function LabPage({ params }: PageProps) {
                             />
                             {mentionOpen === "temp" && (
                               <div className="absolute bottom-4 left-4 right-4 bg-[#0f0f0f] border border-[#252525] rounded-md shadow-lg z-20 max-h-40 overflow-y-auto">
-                                {getMentionSuggestions(mentionQuery).map((path, index) => (
-                                  <button
-                                    key={path}
-                                    type="button"
-                                    className={`w-full text-left px-3 py-2 text-[11px] ${index === mentionIndex ? "bg-[#1a1a1a] text-neutral-200" : "text-neutral-400 hover:bg-[#151515]"}`}
-                                    onClick={() => applyMention(tempInput, path, setTempInput)}
-                                  >
-                                    @{path}
-                                  </button>
-                                ))}
-                                {getMentionSuggestions(mentionQuery).length === 0 && (
+                                {mentionSuggestions.map((suggestion, index) => {
+                                  const badgeClass =
+                                    suggestion.type === "node"
+                                      ? "bg-emerald-500/10 text-emerald-300 border border-emerald-500/20"
+                                      : suggestion.type === "block"
+                                        ? "bg-sky-500/10 text-sky-300 border border-sky-500/20"
+                                        : "bg-zinc-800 text-zinc-300 border border-zinc-700";
+                                  return (
+                                    <button
+                                      key={suggestion.insert}
+                                      type="button"
+                                      className={`w-full text-left px-3 py-2 text-[11px] ${index === mentionIndex ? "bg-[#1a1a1a] text-neutral-200" : "text-neutral-400 hover:bg-[#151515]"}`}
+                                      onClick={() => applyMention(tempInput, suggestion, setTempInput)}
+                                    >
+                                      <div className="flex flex-col gap-1">
+                                        <div className="flex items-center gap-2">
+                                          <span className="text-neutral-100">@{suggestion.insert}</span>
+                                          <span className={`text-[10px] px-1.5 py-0.5 rounded-md border ${badgeClass}`}>
+                                            {suggestion.type === "node" ? "Nodo" : suggestion.type === "block" ? "Bloque" : "Archivo"}
+                                          </span>
+                                        </div>
+                                        {suggestion.description && (
+                                          <div className="text-[10px] text-neutral-500">{suggestion.description}</div>
+                                        )}
+                                        {suggestion.preview && (
+                                          <div className="text-[10px] text-neutral-500 leading-snug whitespace-normal">
+                                            {suggestion.preview}
+                                          </div>
+                                        )}
+                                      </div>
+                                    </button>
+                                  );
+                                })}
+                                {mentionSuggestions.length === 0 && (
                                   <div className="px-3 py-2 text-[11px] text-neutral-600">No matches</div>
                                 )}
                               </div>
@@ -4295,7 +4617,7 @@ export default function LabPage({ params }: PageProps) {
               <div className="h-10 px-3 flex items-center justify-between border-b border-[#1a1a1a] bg-[#0a0a0a]">
                 <div className="flex items-center gap-2 text-xs text-neutral-500">
                   <span className="text-neutral-300 font-medium">Preview</span>
-                  {canPreview && <span className="text-[10px] text-neutral-600">click para ir al código</span>}
+                  {canPreview && <span className="text-[10px] text-neutral-600">click to jump to the code</span>}
                   {pdfSyncNotice && (
                     <span className="text-[10px] text-amber-500">{pdfSyncNotice}</span>
                   )}

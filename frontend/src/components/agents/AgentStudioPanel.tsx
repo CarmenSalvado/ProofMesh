@@ -13,6 +13,7 @@ import {
   BookOpen,
   AlertTriangle,
   Map,
+  Loader2,
 } from "lucide-react";
 import { getAgents, runAgent, AgentProfile, AgentProposal } from "@/lib/api";
 
@@ -117,6 +118,7 @@ export function AgentStudioPanel({
   const [insertedId, setInsertedId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [agentsError, setAgentsError] = useState<string | null>(null);
+  const [runningAgents, setRunningAgents] = useState<Set<string>>(new Set());
   const insertTimeoutRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -158,10 +160,13 @@ export function AgentStudioPanel({
     return "Select at least one agent to run.";
   }, [selectedProfiles]);
   const runLabel = useMemo(() => {
-    if (loading) return "Running...";
+    if (loading) {
+      const count = runningAgents.size || selectedProfiles.length;
+      return `Running ${count}`;
+    }
     if (selectedProfiles.length > 1) return "Run selected";
     return "Run";
-  }, [loading, selectedProfiles.length]);
+  }, [loading, runningAgents.size, selectedProfiles.length]);
 
   const toggleAgent = (agentId: string) => {
     setSelectedAgents((prev) => {
@@ -189,12 +194,12 @@ export function AgentStudioPanel({
       return;
     }
     setLoading(true);
+    setRunningAgents(new Set(selectedProfiles.map((agent) => agent.id)));
     setError(null);
     try {
-      const results = await Promise.all(
-        selectedProfiles.map(async (agent) => ({
-          agent,
-          result: await runAgent({
+      const runSingle = async (agent: AgentProfile) => {
+        try {
+          const result = await runAgent({
             problem_id: problemId,
             file_path: filePath || null,
             cell_id: null,
@@ -202,21 +207,50 @@ export function AgentStudioPanel({
             task: agent.task,
             instructions: instructions || null,
             agent_id: agent.id,
-          }),
-        }))
+          });
+          return { agent, result };
+        } catch (err) {
+          throw { agent, error: err };
+        } finally {
+          setRunningAgents((prev) => {
+            const next = new Set(prev);
+            next.delete(agent.id);
+            return next;
+          });
+        }
+      };
+
+      const settled = await Promise.allSettled(selectedProfiles.map(runSingle));
+
+      const successes = settled.filter(
+        (res): res is PromiseFulfilledResult<{ agent: AgentProfile; result: Awaited<ReturnType<typeof runAgent>> }>
+          => res.status === "fulfilled"
       );
-      const merged = results.flatMap(({ agent, result }) =>
+
+      const merged = successes.flatMap(({ value: { agent, result } }) =>
         (result.proposals || []).map((proposal) => ({
           ...proposal,
           agent_id: proposal.agent_id ?? agent.id,
           agent_name: proposal.agent_name ?? agent.name,
         }))
       );
+
       setProposals(merged);
+
+      const failures = settled.filter((res) => res.status === "rejected");
+      if (failures.length > 0) {
+        const first = failures[0];
+        const agentId = first.status === "rejected" && (first.reason?.agent?.id as string | undefined);
+        const message = first.status === "rejected" && first.reason?.error instanceof Error
+          ? first.reason.error.message
+          : "Failed to run agents";
+        setError(agentId ? `Agent ${agentId}: ${message}` : message);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to run agents");
     } finally {
       setLoading(false);
+      setRunningAgents(new Set());
     }
   };
 
@@ -273,9 +307,17 @@ export function AgentStudioPanel({
           <h2 className="text-xs font-semibold text-neutral-300 uppercase tracking-wider">
             Agents
           </h2>
-          <div className="flex items-center gap-1">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span className="text-[10px] text-emerald-500 font-medium">Active</span>
+          <div className="flex items-center gap-2">
+            {loading ? (
+              <span className="flex items-center gap-1 rounded bg-emerald-500/10 border border-emerald-500/30 px-2 py-1 text-[10px] text-emerald-200">
+                <Loader2 size={12} className="animate-spin" /> Running
+              </span>
+            ) : (
+              <div className="flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                <span className="text-[10px] text-emerald-500 font-medium">Active</span>
+              </div>
+            )}
           </div>
         </div>
 
@@ -288,17 +330,23 @@ export function AgentStudioPanel({
             };
             const Icon = ui.icon;
             const isActive = selectedAgents.has(agent.id);
+            const isRunning = runningAgents.has(agent.id);
             return (
               <button
                 key={agent.id}
                 onClick={() => toggleAgent(agent.id)}
-                className={`flex flex-col items-center justify-center gap-1 bg-neutral-900 border border-neutral-800 ${ui.hover} hover:bg-neutral-800 p-2 rounded transition-all group ${
+                className={`relative flex flex-col items-center justify-center gap-1 bg-neutral-900 border border-neutral-800 ${ui.hover} hover:bg-neutral-800 p-2 rounded transition-all group ${
                   isActive ? "border-white/10 bg-neutral-800" : ""
-                }`}
+                } ${isRunning ? "ring-1 ring-emerald-400/60" : ""}`}
                 aria-pressed={isActive}
               >
                 <Icon className={`${ui.accent} ${isActive ? "scale-110" : "group-hover:scale-110"} transition-transform`} size={16} />
                 <span className="text-[10px] font-medium text-neutral-400">{agent.name}</span>
+                {isRunning && (
+                  <div className="absolute top-1 right-1 flex items-center gap-1 rounded bg-neutral-900/80 px-1 py-[2px] text-[9px] text-emerald-200 border border-emerald-500/30">
+                    <Loader2 size={10} className="animate-spin" />
+                  </div>
+                )}
               </button>
             );
           })}
@@ -362,9 +410,22 @@ export function AgentStudioPanel({
             disabled={loading || loadingAgents || selectedProfiles.length === 0}
             className="px-3 py-1.5 rounded text-[12px] font-medium bg-indigo-600 text-white hover:bg-indigo-500 transition disabled:opacity-60"
           >
-            {runLabel}
+            <span className="flex items-center gap-2">
+              {loading && <Loader2 size={14} className="animate-spin" />}
+              {runLabel}
+            </span>
           </button>
         </div>
+
+        {loading && (
+          <div className="mt-2 flex items-center gap-2 rounded border border-neutral-800 bg-neutral-900/70 px-3 py-2 text-[11px] text-neutral-200">
+            <Loader2 size={14} className="animate-spin text-emerald-300" />
+            <div className="flex flex-col">
+              <span className="font-semibold text-emerald-200">Agents running</span>
+              <span className="text-neutral-400">{runningAgents.size} active · {selectedProfiles.length} requested</span>
+            </div>
+          </div>
+        )}
 
         {error && (
           <div className="mt-3 rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-[11px] text-red-300">
@@ -396,7 +457,7 @@ export function AgentStudioPanel({
         <div className="space-y-3 max-h-48 overflow-y-auto pr-1">
           {proposals.length === 0 ? (
             <div className="rounded border border-dashed border-neutral-800 p-3 text-[11px] text-neutral-500">
-              No proposals yet. Run an agent to generate suggestions.
+              {loading ? "Agents are running..." : "No proposals yet. Run an agent to generate suggestions."}
             </div>
           ) : (
             proposals.map((proposal) => {

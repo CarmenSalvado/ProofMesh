@@ -42,7 +42,7 @@ export async function POST(request: Request) {
   const result = streamText({
     model: google(modelId),
     system:
-      "You are an expert LaTeX assistant for scientific writing. Reply in English. Be concise, practical, and provide insert-ready LaTeX when asked.",
+      "You are an expert LaTeX assistant for scientific writing. Reply in English. Be concise, practical, and provide insert-ready LaTeX when asked. Avoid non-ASCII characters; replace Unicode math symbols with LaTeX commands (e.g., \\mathbb{N}, \\mathbb{Z}, \\leq, \\geq, \\alpha).",
     prompt,
     providerOptions: {
       google: {

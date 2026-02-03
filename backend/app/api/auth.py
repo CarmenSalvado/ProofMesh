@@ -22,6 +22,10 @@ from app.api.deps import get_current_user
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
+DEMO_EMAIL = "demo@proofmesh.app"
+DEMO_USERNAME = "proofmesh-demo"
+DEMO_PASSWORD = "proofmesh-demo"
+
 
 @router.post("/register", response_model=TokenResponse, status_code=201)
 async def register(data: UserCreate, db: AsyncSession = Depends(get_db)):
@@ -66,7 +70,38 @@ async def login(data: UserLogin, db: AsyncSession = Depends(get_db)):
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
         )
-    
+
+    return create_tokens(str(user.id))
+
+
+@router.post("/demo", response_model=TokenResponse)
+async def demo_login(db: AsyncSession = Depends(get_db)):
+    """Return tokens for a pre-made demo user (auto-creates if missing)."""
+    result = await db.execute(select(User).where(User.email == DEMO_EMAIL))
+    user = result.scalar_one_or_none()
+
+    if not user:
+        user = User(
+            email=DEMO_EMAIL,
+            username=DEMO_USERNAME,
+            password_hash=get_password_hash(DEMO_PASSWORD),
+            bio="Demo account for ProofMesh preview",
+        )
+        db.add(user)
+        try:
+            await db.commit()
+            await db.refresh(user)
+        except Exception:
+            await db.rollback()
+            # If another request created it concurrently, fetch it
+            result = await db.execute(select(User).where(User.email == DEMO_EMAIL))
+            user = result.scalar_one_or_none()
+            if not user:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Unable to provision demo user",
+                )
+
     return create_tokens(str(user.id))
 
 

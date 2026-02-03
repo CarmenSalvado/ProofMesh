@@ -50,6 +50,11 @@ class FeedItem(BaseModel):
     actor: FeedActor
     problem: FeedProblem | None = None
     target_id: UUID | None = None
+    item_status: str | None = None
+    item_kind: str | None = None
+    verification_status: str | None = None
+    verification_method: str | None = None
+    has_lean_code: bool | None = None
     extra_data: dict | None = None
     created_at: datetime
 
