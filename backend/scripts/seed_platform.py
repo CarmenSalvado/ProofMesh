@@ -1,9 +1,43 @@
 #!/usr/bin/env python3
 """
-Seed script to populate ProofMesh with realistic data.
-Creates users, problems, library items, follows, stars, discussions, and activity.
-Run from backend directory: python -m scripts.seed_platform
+DEPRECATED: This script has been replaced by the modular seeding system.
+
+Please use the new organized seeding system instead:
+    python -m scripts.seed_realistic.run
+
+For more information, see: scripts/seed_realistic/README.md
+
+This file is kept for backwards compatibility but will redirect to the new system.
 """
+
+import sys
+import subprocess
+from pathlib import Path
+
+# Redirect to new seeding system
+print("=" * 70)
+print("⚠️  DEPRECATED SCRIPT".center(70))
+print("=" * 70)
+print()
+print("This script has been replaced by the new modular seeding system.")
+print("Redirecting to: python -m scripts.seed_realistic.run")
+print()
+print("For documentation, see: scripts/seed_realistic/README.md")
+print("=" * 70)
+print()
+
+# Get the backend directory
+backend_dir = Path(__file__).parent.parent
+
+# Run the new seeding system
+sys.exit(subprocess.call(
+    [sys.executable, "-m", "scripts.seed_realistic.run"] + sys.argv[1:],
+    cwd=backend_dir
+))
+
+# ============================================================================
+# OLD CODE BELOW - KEPT FOR REFERENCE
+# ============================================================================
 
 import argparse
 import asyncio

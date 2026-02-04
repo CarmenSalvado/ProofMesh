@@ -61,3 +61,19 @@ clean:
 rebuild:
 	docker compose build --no-cache
 	docker compose up -d
+
+# Seed realistic platform data
+seed:
+	docker compose exec backend python -m scripts.seed_realistic.run
+
+# Seed with clearing existing data
+seed-clean:
+	docker compose exec backend python -m scripts.seed_realistic.run --clear
+
+# Seed with custom quantities
+seed-custom:
+	@read -p "Number of users (default 80): " users; \
+	read -p "Number of teams (default 25): " teams; \
+	read -p "Number of problems (default 120): " problems; \
+	docker compose exec backend python -m scripts.seed_realistic.run \
+		--users $${users:-80} --teams $${teams:-25} --problems $${problems:-120}

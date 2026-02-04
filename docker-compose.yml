@@ -69,6 +69,7 @@ services:
       # Mount source code for hot-reload
       - ./backend/app:/app/app:cached
       - ./backend/alembic:/app/alembic:cached
+      - ./backend/scripts:/app/scripts:cached
       # Mount mesh for orchestration agent access
       - ./mesh:/app/mesh:cached
       # Mount papers directory for import scripts
@@ -111,6 +112,7 @@ services:
       - .env
     volumes:
       - ./backend/app:/app/app:cached
+      - ./backend/scripts:/app/scripts:cached
       - ./mesh:/app/mesh:cached
     environment:
       DATABASE_URL: ${DATABASE_URL}

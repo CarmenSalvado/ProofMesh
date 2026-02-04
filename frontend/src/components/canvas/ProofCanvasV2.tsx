@@ -51,6 +51,10 @@ interface ProofCanvasV2Props {
   collaborators?: Collaborator[];
   onCursorMove?: (x: number, y: number) => void;
   readOnly?: boolean;
+  hideZoomControls?: boolean;
+  hideMinimap?: boolean;
+  hideHelpText?: boolean;
+  disableInteraction?: boolean;
 }
 
 export interface ProofCanvasHandle {
@@ -271,6 +275,10 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
   collaborators = [],
   onCursorMove,
   readOnly = false,
+  hideZoomControls = false,
+  hideMinimap = false,
+  hideHelpText = false,
+  disableInteraction = false,
 }: ProofCanvasV2Props, ref) {
   const canvasRef = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(1);
@@ -640,6 +648,7 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
     if (!canvas) return;
 
     const handleWheel = (e: WheelEvent) => {
+      if (disableInteraction) return;
       if (e.ctrlKey || e.metaKey) {
         e.preventDefault();
         const delta = e.deltaY > 0 ? 0.92 : 1.08;
@@ -660,7 +669,7 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
 
     canvas.addEventListener("wheel", handleWheel, { passive: false });
     return () => canvas.removeEventListener("wheel", handleWheel);
-  }, [updateTransformDirect, syncStateDebounced]);
+  }, [updateTransformDirect, syncStateDebounced, disableInteraction]);
 
   // Convert screen coords to canvas coords
   const screenToCanvas = useCallback((screenX: number, screenY: number) => {
@@ -974,6 +983,7 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
   // Mouse handlers - cursor mode = selection, hand mode = pan
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
+      if (disableInteraction) return;
       if (e.button === 2) return; // Right click handled by context menu
       
       // Middle mouse button (wheel click) - always start panning
@@ -1616,43 +1626,47 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
       )}
 
       {/* Help hint */}
-      <div 
-        className="absolute top-4 right-4 text-[11px] text-neutral-500 bg-white px-3 py-1.5 rounded-md border border-neutral-200 shadow-sm z-30"
-        onDoubleClick={(e) => e.stopPropagation()}
-      >
-        Double-click to add · <kbd className="font-mono">V</kbd> select · <kbd className="font-mono">H</kbd> hand · <span className="font-mono">Ctrl/Cmd+G</span> group · Right-click for menu
-      </div>
+      {!hideHelpText && (
+        <div 
+          className="absolute top-4 right-4 text-[11px] text-neutral-500 bg-white px-3 py-1.5 rounded-md border border-neutral-200 shadow-sm z-30"
+          onDoubleClick={(e) => e.stopPropagation()}
+        >
+          Double-click to add · <kbd className="font-mono">V</kbd> select · <kbd className="font-mono">H</kbd> hand · <span className="font-mono">Ctrl/Cmd+G</span> group · Right-click for menu
+        </div>
+      )}
 
       {/* Zoom Controls - moved to bottom left */}
-      <div 
-        className="absolute bottom-4 left-4 flex items-center gap-1 bg-white/80 backdrop-blur-xl rounded-full shadow-lg shadow-black/5 p-1 z-30"
-        onDoubleClick={(e) => e.stopPropagation()}
-      >
-        <button
-          onClick={handleZoomOut}
-          className="p-1.5 rounded-full text-neutral-500 hover:text-neutral-700 transition-colors"
-          title="Zoom Out"
+      {!hideZoomControls && (
+        <div 
+          className="absolute bottom-4 left-4 flex items-center gap-1 bg-white/80 backdrop-blur-xl rounded-full shadow-lg shadow-black/5 p-1 z-30"
+          onDoubleClick={(e) => e.stopPropagation()}
         >
-          <ZoomOut className="w-3.5 h-3.5" />
-        </button>
-        <div className="px-2 py-0.5 text-[10px] font-medium text-neutral-500 min-w-[36px] text-center">
-          {Math.round(zoom * 100)}%
+          <button
+            onClick={handleZoomOut}
+            className="p-1.5 rounded-full text-neutral-500 hover:text-neutral-700 transition-colors"
+            title="Zoom Out"
+          >
+            <ZoomOut className="w-3.5 h-3.5" />
+          </button>
+          <div className="px-2 py-0.5 text-[10px] font-medium text-neutral-500 min-w-[36px] text-center">
+            {Math.round(zoom * 100)}%
+          </div>
+          <button
+            onClick={handleZoomIn}
+            className="p-1.5 rounded-full text-neutral-500 hover:text-neutral-700 transition-colors"
+            title="Zoom In"
+          >
+            <ZoomIn className="w-3.5 h-3.5" />
+          </button>
+          <button
+            onClick={handleFit}
+            className="p-1.5 rounded-full text-neutral-500 hover:text-neutral-700 transition-colors"
+            title="Fit to View (F)"
+          >
+            <Maximize2 className="w-3.5 h-3.5" />
+          </button>
         </div>
-        <button
-          onClick={handleZoomIn}
-          className="p-1.5 rounded-full text-neutral-500 hover:text-neutral-700 transition-colors"
-          title="Zoom In"
-        >
-          <ZoomIn className="w-3.5 h-3.5" />
-        </button>
-        <button
-          onClick={handleFit}
-          className="p-1.5 rounded-full text-neutral-500 hover:text-neutral-700 transition-colors"
-          title="Fit to View (F)"
-        >
-          <Maximize2 className="w-3.5 h-3.5" />
-        </button>
-      </div>
+      )}
 
       {/* Transform Container */}
       <div
@@ -1984,37 +1998,39 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
       </div>
 
       {/* Minimap */}
-      <div 
-        className="absolute bottom-24 right-4 w-36 h-24 bg-white border border-neutral-200 rounded-lg shadow-sm overflow-hidden z-30"
-        onDoubleClick={(e) => e.stopPropagation()}
-      >
-        <div className="px-2 py-1 text-[9px] font-semibold text-neutral-400 uppercase tracking-wider border-b border-neutral-100">
-          Overview
-        </div>
-        <div className="relative w-full h-[calc(100%-20px)] p-1">
-          {minimapNodes.map((node) => (
+      {!hideMinimap && (
+        <div 
+          className="absolute bottom-24 right-4 w-36 h-24 bg-white border border-neutral-200 rounded-lg shadow-sm overflow-hidden z-30"
+          onDoubleClick={(e) => e.stopPropagation()}
+        >
+          <div className="px-2 py-1 text-[9px] font-semibold text-neutral-400 uppercase tracking-wider border-b border-neutral-100">
+            Overview
+          </div>
+          <div className="relative w-full h-[calc(100%-20px)] p-1">
+            {minimapNodes.map((node) => (
+              <div
+                key={node.id}
+                className="absolute rounded-full bg-neutral-300/80"
+                style={{
+                  left: `${node.left}%`,
+                  top: `${node.top}%`,
+                  width: "4px",
+                  height: "4px",
+                }}
+              />
+            ))}
             <div
-              key={node.id}
-              className="absolute rounded-full bg-neutral-300/80"
+              className="absolute border border-indigo-500 bg-indigo-500/10 rounded-sm"
               style={{
-                left: `${node.left}%`,
-                top: `${node.top}%`,
-                width: "4px",
-                height: "4px",
+                left: `${minimapViewport.left}%`,
+                top: `${minimapViewport.top}%`,
+                width: `${minimapViewport.width}%`,
+                height: `${minimapViewport.height}%`,
               }}
             />
-          ))}
-          <div
-            className="absolute border border-indigo-500 bg-indigo-500/10 rounded-sm"
-            style={{
-              left: `${minimapViewport.left}%`,
-              top: `${minimapViewport.top}%`,
-              width: `${minimapViewport.width}%`,
-              height: `${minimapViewport.height}%`,
-            }}
-          />
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Inline Node Editor */}
       {inlineEditor && (
