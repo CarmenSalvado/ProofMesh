@@ -159,7 +159,7 @@ function HeroSection() {
         </div>
 
         {/* Headline */}
-        <h1 className="text-4xl sm:text-5xl md:text-6xl font-bold tracking-tight text-neutral-900 mb-6">
+        <h1 className="text-4xl sm:text-5xl md:text-6xl font-bold tracking-tight text-neutral-900 mb-6 animate-float">
           Where ideas become
           <br />
           <span className="text-indigo-600">verified proofs</span>
@@ -248,7 +248,7 @@ const DEMO_NODES_INITIAL: CanvasNode[] = [
     title: "Infinitude of Primes",
     formula: "$\\exists^\\infty p : \\text{Prime}(p)$",
     leanCode: "theorem prime_infinite : ∀ n, ∃ p > n, Prime p",
-    x: 270,
+    x: 320,
     y: 320,
     width: 260,
     status: "VERIFIED",
@@ -262,7 +262,7 @@ const AI_SUGGESTED_NODE: CanvasNode = {
   type: "LEMMA",
   title: "Prime Divisor Lemma",
   content: "$N$ has a prime divisor $q \\notin \\{p_1, \\ldots, p_n\\}$",
-  x: 600,
+  x: 20,
   y: 320,
   width: 260,
   status: "PROPOSED",
@@ -299,81 +299,96 @@ function CanvasShowcase() {
   const aiResponse = "Consider showing that N = p₁·p₂···pₙ + 1 must have a prime divisor not in {p₁...pₙ}";
 
   useEffect(() => {
-    const ctx = gsap.context(() => {
-      // Set initial states
-      gsap.set(canvasRef.current, { opacity: 0, y: 30 });
-      gsap.set(aiBarRef.current, { opacity: 0, y: 20 });
-      gsap.set(aiResponseRef.current, { opacity: 0, y: 10, scale: 0.95 });
-      gsap.set(textRefs.current[1], { opacity: 0 });
-      gsap.set(textRefs.current[2], { opacity: 0 });
+    let isActive = true;
+    const safeSet = (fn: () => void) => {
+      if (isActive) fn();
+    };
 
-      // Simple timeline - canvas fades in, text transitions
-      const tl = gsap.timeline({
-        scrollTrigger: {
-          trigger: sectionRef.current,
-          start: "top top",
-          end: "+=2500",
-          scrub: 0.5,
-          pin: true,
-          anticipatePin: 1,
-          invalidateOnRefresh: true,
-          onUpdate: (self) => {
-            const progress = self.progress;
-            // Typing animation for AI bar (between 20% and 35%)
-            if (progress > 0.20 && progress < 0.35) {
-              const typeProgress = (progress - 0.20) / 0.15;
-              const chars = Math.floor(typeProgress * aiPrompt.length);
-              setTypedText(aiPrompt.slice(0, chars));
+    const ctx = gsap.context(() => {
+      const resetStates = () => {
+        safeSet(() => {
+          setTypedText("");
+          setShowThinking(false);
+          setShowResponse(false);
+          setShowNewNode(false);
+        });
+
+        if (canvasRef.current) gsap.set(canvasRef.current, { opacity: 0, y: 30 });
+        if (aiBarRef.current) gsap.set(aiBarRef.current, { opacity: 0, y: 20 });
+        if (aiResponseRef.current) gsap.set(aiResponseRef.current, { opacity: 0, y: 10, scale: 0.95 });
+
+        const [text0, text1, text2] = textRefs.current;
+        if (text0) gsap.set(text0, { opacity: 0, y: 20 });
+        if (text1) gsap.set(text1, { opacity: 0, y: 20 });
+        if (text2) gsap.set(text2, { opacity: 0, y: 20 });
+      };
+
+      resetStates();
+
+      const typing = { progress: 0 };
+
+      const tl = gsap.timeline({ paused: true });
+
+      tl.addLabel("intro")
+        .to(canvasRef.current, { opacity: 1, y: 0, duration: 0.9, ease: "power2.out" }, "intro")
+        .to(textRefs.current[0], { opacity: 1, y: 0, duration: 0.5 }, "intro+=0.1")
+        .to(aiBarRef.current, { opacity: 1, y: 0, duration: 0.4 }, "intro+=0.6")
+        .addLabel("typing")
+        .to(textRefs.current[0], { opacity: 0, duration: 0.25 }, "typing")
+        .to(textRefs.current[1], { opacity: 1, y: 0, duration: 0.4 }, "typing+=0.05")
+        .to(typing, {
+          progress: 1,
+          duration: 1.4,
+          ease: "none",
+          onStart: () => {
+            safeSet(() => {
               setShowThinking(false);
               setShowResponse(false);
               setShowNewNode(false);
-            } else if (progress >= 0.35 && progress < 0.45) {
-              setTypedText(aiPrompt);
-              setShowThinking(true);
-              setShowResponse(false);
-              setShowNewNode(false);
-            } else if (progress >= 0.45 && progress < 0.65) {
-              setTypedText(aiPrompt);
-              setShowThinking(false);
-              setShowResponse(true);
-              setShowNewNode(false);
-            } else if (progress >= 0.65) {
-              setTypedText(aiPrompt);
-              setShowThinking(false);
-              setShowResponse(true);
-              setShowNewNode(true);
-            } else {
-              setTypedText("");
-              setShowThinking(false);
-              setShowResponse(false);
-              setShowNewNode(false);
-            }
+            });
           },
+          onUpdate: () => {
+            safeSet(() => {
+              const chars = Math.floor(typing.progress * aiPrompt.length);
+              setTypedText(aiPrompt.slice(0, chars));
+            });
+          },
+        }, "typing+=0.1")
+        .addLabel("thinking")
+        .call(() => safeSet(() => {
+          setTypedText(aiPrompt);
+          setShowThinking(true);
+        }), [], "thinking")
+        .to({}, { duration: 0.6 })
+        .addLabel("response")
+        .call(() => safeSet(() => {
+          setShowThinking(false);
+          setShowResponse(true);
+        }), [], "response")
+        .to(aiResponseRef.current, { opacity: 1, y: 0, scale: 1, duration: 0.35 }, "response+=0.1")
+        .to({}, { duration: 0.8 })
+        .addLabel("newNode")
+        .call(() => safeSet(() => setShowNewNode(true)), [], "newNode")
+        .to(textRefs.current[1], { opacity: 0, duration: 0.25 }, "newNode")
+        .to(textRefs.current[2], { opacity: 1, y: 0, duration: 0.4 }, "newNode+=0.05")
+        .to({}, { duration: 1.0 });
+
+      ScrollTrigger.create({
+        trigger: sectionRef.current,
+        start: "top 70%",
+        onEnter: () => tl.play(0),
+        onLeaveBack: () => {
+          tl.pause(0);
+          resetStates();
         },
       });
 
-      // Canvas and first text appear together
-      tl.to(canvasRef.current, 
-        { opacity: 1, y: 0, duration: 1, ease: "power2.out" }
-      )
-      .fromTo(textRefs.current[0], 
-        { opacity: 0, y: 20 }, 
-        { opacity: 1, y: 0, duration: 0.6 }, 
-        "<"
-      )
-      // AI bar appears
-      .to(aiBarRef.current, { opacity: 1, y: 0, duration: 0.5 }, "+=0.3")
-      // Text transitions
-      .to(textRefs.current[0], { opacity: 0, duration: 0.3 }, "+=0.8")
-      .to(textRefs.current[1], { opacity: 1, y: 0, duration: 0.5 }, "<0.1")
-      // AI response appears
-      .to(aiResponseRef.current, { opacity: 1, y: 0, scale: 1, duration: 0.4 }, "+=0.3")
-      .to(textRefs.current[1], { opacity: 0, duration: 0.3 }, "+=0.6")
-      .to(textRefs.current[2], { opacity: 1, y: 0, duration: 0.5 }, "<0.1");
-
     }, sectionRef);
 
-    return () => ctx.revert();
+    return () => {
+      isActive = false;
+      ctx.revert();
+    };
   }, []);
 
   const steps = [
@@ -603,11 +618,11 @@ function KnowledgeGraphSection() {
       <div className="absolute right-0 top-0 w-[65%] h-full flex items-center justify-center pr-12">
         <div
           ref={graphRef}
-          className="relative w-full max-w-[700px] h-[600px] bg-gradient-to-br from-white via-purple-50/60 to-indigo-50/60 rounded-2xl border border-purple-200/50 shadow-2xl overflow-hidden backdrop-blur-sm"
+          className="relative w-full max-w-[700px] h-[680px] bg-gradient-to-br from-white via-purple-50/60 to-indigo-50/60 rounded-2xl border border-purple-200/50 shadow-2xl backdrop-blur-sm"
           style={{ opacity: 0 }}
         >
           {/* Graph visualization */}
-          <div className="absolute inset-0 p-12">
+          <div className="absolute inset-0 p-12 pb-20">
             {/* Connections */}
             <svg className="absolute inset-0 w-full h-full">
               <defs>
@@ -678,8 +693,11 @@ function KnowledgeGraphSection() {
 
             {/* LaTeX connection indicator */}
             {showConnection && (
-              <div className="absolute bottom-4 right-4 animate-in slide-in-from-bottom duration-500">
-                <div className="bg-indigo-500 text-white rounded-lg px-4 py-2 shadow-lg flex items-center gap-2">
+              <div
+                className="absolute z-20 animate-in slide-in-from-bottom duration-500"
+                style={{ left: "85%", top: "70%" }}
+              >
+                <div className="bg-indigo-600 text-white rounded-lg px-4 py-2 shadow-xl ring-1 ring-white/20 flex items-center gap-2 -translate-x-1/2 -translate-y-1/2">
                   <Zap className="w-4 h-4" />
                   <span className="text-sm font-medium">Informing LaTeX generation...</span>
                 </div>
@@ -1294,7 +1312,7 @@ function FinalCTA() {
             <ArrowRight className="w-4 h-4" />
           </Link>
           <Link
-            href="https://github.com"
+            href="https://github.com/CarmenSalvado/ProofMesh"
             className="inline-flex items-center justify-center gap-2 px-6 py-3 bg-white text-neutral-700 font-medium rounded-lg border border-neutral-200 hover:bg-neutral-50 transition-colors"
           >
             View on GitHub
@@ -1320,7 +1338,7 @@ function Footer() {
         <div className="flex items-center gap-6 text-sm text-neutral-500">
           <Link href="/docs" className="hover:text-neutral-900 transition-colors">Docs</Link>
           <Link href="/problems" className="hover:text-neutral-900 transition-colors">Problems</Link>
-          <Link href="https://github.com" className="hover:text-neutral-900 transition-colors">GitHub</Link>
+          <Link href="https://github.com/CarmenSalvado/ProofMesh" className="hover:text-neutral-900 transition-colors">GitHub</Link>
         </div>
       </div>
     </footer>
