@@ -22,6 +22,12 @@ import {
   ChevronRight,
   ZoomIn,
   ZoomOut,
+  Send,
+  Compass,
+  Lightbulb,
+  FileCode,
+  Plus,
+  Brain,
 } from "lucide-react";
 
 // Import REAL components
@@ -128,10 +134,14 @@ function HeroSection() {
   }, []);
 
   return (
-    <section ref={sectionRef} className="relative min-h-screen pt-14 bg-neutral-50">
+    <section ref={sectionRef} className="relative min-h-screen pt-14 bg-gradient-to-br from-white via-indigo-50/60 to-purple-50/70">
+      {/* Animated gradient blobs */}
+      <div className="absolute top-0 right-0 w-[600px] h-[600px] bg-gradient-to-br from-indigo-400/30 to-purple-400/30 rounded-full blur-3xl animate-pulse" style={{ animationDuration: '8s' }} />
+      <div className="absolute bottom-0 left-0 w-[600px] h-[600px] bg-gradient-to-tr from-blue-400/30 to-cyan-400/30 rounded-full blur-3xl animate-pulse" style={{ animationDuration: '10s' }} />
+      
       {/* Subtle dot grid */}
       <div
-        className="absolute inset-0 opacity-40"
+        className="absolute inset-0 opacity-30"
         style={{
           backgroundImage: "radial-gradient(#d4d4d4 1px, transparent 1px)",
           backgroundSize: "24px 24px",
@@ -145,7 +155,7 @@ function HeroSection() {
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
             <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
           </span>
-          <span className="text-xs font-medium text-neutral-600">Public Beta</span>
+          <span className="text-xs font-medium text-neutral-600">Live Demo — Powered by Gemini 3.0</span>
         </div>
 
         {/* Headline */}
@@ -158,7 +168,7 @@ function HeroSection() {
         {/* Subtitle */}
         <p className="text-lg text-neutral-500 max-w-2xl mx-auto mb-10">
           The collaborative workspace for mathematical research.
-          Write in LaTeX, visualize your reasoning, verify with Lean 4.
+          Watch the demo below: write in LaTeX, visualize reasoning, verify with Lean 4—all powered by Gemini AI.
         </p>
 
         {/* CTA */}
@@ -167,7 +177,7 @@ function HeroSection() {
             href="/register"
             className="inline-flex items-center justify-center gap-2 px-6 py-3 bg-neutral-900 text-white font-medium rounded-lg hover:bg-neutral-800 transition-colors shadow-sm"
           >
-            Start Free
+            Try Demo
             <ArrowRight className="w-4 h-4" />
           </Link>
           <Link
@@ -175,7 +185,7 @@ function HeroSection() {
             className="inline-flex items-center justify-center gap-2 px-6 py-3 bg-white text-neutral-700 font-medium rounded-lg border border-neutral-200 hover:bg-neutral-50 transition-colors"
           >
             <Play className="w-4 h-4" />
-            Explore Problems
+            Explore Examples
           </Link>
         </div>
 
@@ -209,15 +219,15 @@ function HeroSection() {
 // ============================================================================
 
 // Mock nodes with the real CanvasNode structure
-const DEMO_NODES: CanvasNode[] = [
+const DEMO_NODES_INITIAL: CanvasNode[] = [
   {
     id: "def-001",
     type: "DEFINITION",
     title: "Prime Number",
     formula: "$n \\in \\mathbb{N}, n > 1$",
-    x: 50,
-    y: 40,
-    width: 240,
+    x: 60,
+    y: 50,
+    width: 260,
     status: "DRAFT",
     dependencies: [],
   },
@@ -226,9 +236,9 @@ const DEMO_NODES: CanvasNode[] = [
     type: "LEMMA",
     title: "Euclid's Construction",
     content: "$N = p_1 \\cdot p_2 \\cdots p_n + 1$",
-    x: 420,
-    y: 40,
-    width: 240,
+    x: 480,
+    y: 50,
+    width: 260,
     status: "VERIFIED",
     dependencies: [],
   },
@@ -238,28 +248,62 @@ const DEMO_NODES: CanvasNode[] = [
     title: "Infinitude of Primes",
     formula: "$\\exists^\\infty p : \\text{Prime}(p)$",
     leanCode: "theorem prime_infinite : ∀ n, ∃ p > n, Prime p",
-    x: 235,
-    y: 280,
-    width: 240,
+    x: 270,
+    y: 320,
+    width: 260,
     status: "VERIFIED",
     dependencies: [],
   },
 ];
 
-const DEMO_EDGES: CanvasEdge[] = [
+// New node that AI suggests
+const AI_SUGGESTED_NODE: CanvasNode = {
+  id: "lem-002",
+  type: "LEMMA",
+  title: "Prime Divisor Lemma",
+  content: "$N$ has a prime divisor $q \\notin \\{p_1, \\ldots, p_n\\}$",
+  x: 600,
+  y: 320,
+  width: 260,
+  status: "PROPOSED",
+  dependencies: [],
+};
+
+const DEMO_EDGES_INITIAL: CanvasEdge[] = [
   { id: "e1", from: "def-001", to: "thm-001", type: "implies" },
   { id: "e2", from: "lem-001", to: "thm-001", type: "uses" },
 ];
 
+const AI_SUGGESTED_EDGE: CanvasEdge = { id: "e3", from: "lem-002", to: "thm-001", type: "uses" };
+
 function CanvasShowcase() {
   const sectionRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
+  const aiBarRef = useRef<HTMLDivElement>(null);
+  const aiResponseRef = useRef<HTMLDivElement>(null);
   const textRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const [typedText, setTypedText] = useState("");
+  const [showResponse, setShowResponse] = useState(false);
+  const [showThinking, setShowThinking] = useState(false);
+  const [showNewNode, setShowNewNode] = useState(false);
+
+  // Dynamic nodes and edges based on AI interaction
+  const currentNodes = showNewNode 
+    ? [...DEMO_NODES_INITIAL, AI_SUGGESTED_NODE] 
+    : DEMO_NODES_INITIAL;
+  const currentEdges = showNewNode 
+    ? [...DEMO_EDGES_INITIAL, AI_SUGGESTED_EDGE] 
+    : DEMO_EDGES_INITIAL;
+
+  const aiPrompt = "Suggest a lemma for Euclid's proof";
+  const aiResponse = "Consider showing that N = p₁·p₂···pₙ + 1 must have a prime divisor not in {p₁...pₙ}";
 
   useEffect(() => {
     const ctx = gsap.context(() => {
       // Set initial states
       gsap.set(canvasRef.current, { opacity: 0, y: 30 });
+      gsap.set(aiBarRef.current, { opacity: 0, y: 20 });
+      gsap.set(aiResponseRef.current, { opacity: 0, y: 10, scale: 0.95 });
       gsap.set(textRefs.current[1], { opacity: 0 });
       gsap.set(textRefs.current[2], { opacity: 0 });
 
@@ -268,11 +312,43 @@ function CanvasShowcase() {
         scrollTrigger: {
           trigger: sectionRef.current,
           start: "top top",
-          end: "+=1500",
+          end: "+=2500",
           scrub: 0.5,
           pin: true,
           anticipatePin: 1,
           invalidateOnRefresh: true,
+          onUpdate: (self) => {
+            const progress = self.progress;
+            // Typing animation for AI bar (between 20% and 35%)
+            if (progress > 0.20 && progress < 0.35) {
+              const typeProgress = (progress - 0.20) / 0.15;
+              const chars = Math.floor(typeProgress * aiPrompt.length);
+              setTypedText(aiPrompt.slice(0, chars));
+              setShowThinking(false);
+              setShowResponse(false);
+              setShowNewNode(false);
+            } else if (progress >= 0.35 && progress < 0.45) {
+              setTypedText(aiPrompt);
+              setShowThinking(true);
+              setShowResponse(false);
+              setShowNewNode(false);
+            } else if (progress >= 0.45 && progress < 0.65) {
+              setTypedText(aiPrompt);
+              setShowThinking(false);
+              setShowResponse(true);
+              setShowNewNode(false);
+            } else if (progress >= 0.65) {
+              setTypedText(aiPrompt);
+              setShowThinking(false);
+              setShowResponse(true);
+              setShowNewNode(true);
+            } else {
+              setTypedText("");
+              setShowThinking(false);
+              setShowResponse(false);
+              setShowNewNode(false);
+            }
+          },
         },
       });
 
@@ -285,10 +361,14 @@ function CanvasShowcase() {
         { opacity: 1, y: 0, duration: 0.6 }, 
         "<"
       )
+      // AI bar appears
+      .to(aiBarRef.current, { opacity: 1, y: 0, duration: 0.5 }, "+=0.3")
       // Text transitions
-      .to(textRefs.current[0], { opacity: 0, duration: 0.3 }, "+=0.5")
+      .to(textRefs.current[0], { opacity: 0, duration: 0.3 }, "+=0.8")
       .to(textRefs.current[1], { opacity: 1, y: 0, duration: 0.5 }, "<0.1")
-      .to(textRefs.current[1], { opacity: 0, duration: 0.3 }, "+=0.5")
+      // AI response appears
+      .to(aiResponseRef.current, { opacity: 1, y: 0, scale: 1, duration: 0.4 }, "+=0.3")
+      .to(textRefs.current[1], { opacity: 0, duration: 0.3 }, "+=0.6")
       .to(textRefs.current[2], { opacity: 1, y: 0, duration: 0.5 }, "<0.1");
 
     }, sectionRef);
@@ -298,15 +378,18 @@ function CanvasShowcase() {
 
   const steps = [
     { title: "Visual Proof\nCanvas", sub: "Map your mathematical reasoning spatially" },
-    { title: "Define\nConcepts", sub: "Start with precise definitions" },
-    { title: "Build Your\nProof", sub: "Connect lemmas to theorems" },
+    { title: "AI-Powered\nExploration", sub: "Ask Mesh to suggest lemmas and insights" },
+    { title: "Build Your\nProof", sub: "Connect AI suggestions to your work" },
   ];
 
   // Dummy handlers
   const noop = () => {};
 
   return (
-    <section ref={sectionRef} className="relative min-h-screen bg-neutral-50 overflow-hidden">
+    <section ref={sectionRef} className="relative min-h-screen bg-gradient-to-br from-blue-50/40 via-white to-indigo-50/40 overflow-hidden">
+      {/* Decorative gradient orb */}
+      <div className="absolute top-20 left-20 w-96 h-96 bg-gradient-to-br from-blue-400/25 to-indigo-400/25 rounded-full blur-3xl" />
+      
       {/* Left text column - centered in space */}
       <div className="absolute left-0 top-0 w-[32%] h-full flex items-center justify-center z-20">
         <div className="relative h-44 w-full max-w-[320px]">
@@ -327,14 +410,14 @@ function CanvasShowcase() {
       </div>
 
       {/* Right canvas area - using REAL ProofCanvasV2 */}
-      <div className="absolute right-0 top-0 w-[68%] h-full flex items-center justify-center pr-8">
+      <div className="absolute right-0 top-0 w-[70%] h-full flex items-center justify-center pr-6">
         <div
           ref={canvasRef}
-          className="relative w-full max-w-[850px] h-[560px] rounded-2xl border border-neutral-200 shadow-2xl overflow-hidden bg-white"
+          className="relative w-full max-w-[1000px] h-[700px] rounded-2xl border border-neutral-200 shadow-2xl overflow-hidden bg-white"
         >
           <ProofCanvasV2
-            nodes={DEMO_NODES}
-            edges={DEMO_EDGES}
+            nodes={currentNodes}
+            edges={currentEdges}
             selectedNodeId={null}
             onNodeSelect={noop}
             readOnly={true}
@@ -343,6 +426,281 @@ function CanvasShowcase() {
             hideHelpText={true}
             disableInteraction={true}
           />
+
+          {/* Floating AI Bar */}
+          <div
+            ref={aiBarRef}
+            className="absolute bottom-4 left-1/2 -translate-x-1/2 w-[90%] max-w-[500px] bg-white/95 backdrop-blur-xl rounded-2xl shadow-xl shadow-black/10 border border-neutral-200 z-40"
+            style={{ opacity: 0 }}
+          >
+            {/* Main Input */}
+            <div className="flex items-center gap-3 px-4 py-3">
+              <Sparkles className="w-5 h-5 text-indigo-500 flex-shrink-0" />
+              <div className="flex-1 text-sm text-neutral-800 min-h-[20px]">
+                {typedText || <span className="text-neutral-400">Ask Mesh AI...</span>}
+                {typedText && typedText.length < aiPrompt.length && (
+                  <span className="inline-block w-0.5 h-4 bg-indigo-500 ml-0.5 animate-pulse" />
+                )}
+              </div>
+              {showThinking ? (
+                <Loader2 className="w-4 h-4 text-indigo-500 animate-spin" />
+              ) : (
+                <Send className="w-4 h-4 text-neutral-400" />
+              )}
+            </div>
+            {/* Quick Actions */}
+            <div className="flex items-center gap-2 px-4 py-2 border-t border-neutral-100 bg-neutral-50/50 rounded-b-2xl">
+              <button className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-indigo-600 bg-indigo-50 rounded-full">
+                <Compass className="w-3 h-3" />
+                Explore
+              </button>
+              <button className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-neutral-500 rounded-full">
+                <Lightbulb className="w-3 h-3" />
+                Insight
+              </button>
+              <button className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-neutral-500 rounded-full">
+                <FileCode className="w-3 h-3" />
+                Formalize
+              </button>
+            </div>
+          </div>
+
+          {/* AI Response Bubble */}
+          <div
+            ref={aiResponseRef}
+            className="absolute bottom-28 right-6 w-72 bg-white/95 backdrop-blur-xl rounded-xl shadow-xl shadow-black/10 border border-neutral-200 overflow-hidden z-40"
+            style={{ opacity: 0 }}
+          >
+            <div className="flex items-center gap-2 px-3 py-2 border-b border-neutral-100">
+              <div className="w-5 h-5 rounded-full bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center">
+                <Sparkles className="w-3 h-3 text-white" />
+              </div>
+              <span className="text-xs font-medium text-neutral-700">Mesh AI</span>
+              <span className="text-[9px] text-indigo-600 ml-auto font-medium">Gemini 3.0</span>
+              <span className="text-[10px] text-emerald-500">Suggestion</span>
+            </div>
+            <div className="px-3 py-2.5">
+              <p className="text-xs text-neutral-600 leading-relaxed">
+                {showResponse ? aiResponse : ""}
+              </p>
+            </div>
+            <div className="flex items-center gap-2 px-3 py-2 bg-neutral-50/50">
+              <button className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium text-indigo-600 bg-indigo-50 rounded-full">
+                <Plus className="w-3 h-3" />
+                Add as Lemma
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ============================================================================
+// KNOWLEDGE GRAPH SECTION - Inspired by Idea2Paper
+// ============================================================================
+
+function KnowledgeGraphSection() {
+  const sectionRef = useRef<HTMLDivElement>(null);
+  const graphRef = useRef<HTMLDivElement>(null);
+  const textRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const [activeNodes, setActiveNodes] = useState<number>(0);
+  const [showPapers, setShowPapers] = useState(false);
+  const [showConnection, setShowConnection] = useState(false);
+
+  useEffect(() => {
+    const ctx = gsap.context(() => {
+      gsap.set(graphRef.current, { opacity: 0, scale: 0.9 });
+      gsap.set(textRefs.current[1], { opacity: 0 });
+      gsap.set(textRefs.current[2], { opacity: 0 });
+
+      const tl = gsap.timeline({
+        scrollTrigger: {
+          trigger: sectionRef.current,
+          start: "top top",
+          end: "+=2000",
+          scrub: 0.5,
+          pin: true,
+          anticipatePin: 1,
+          invalidateOnRefresh: true,
+          onUpdate: (self) => {
+            const p = self.progress;
+            // Animate graph nodes appearing
+            if (p < 0.3) {
+              setActiveNodes(Math.floor(p / 0.3 * 5));
+              setShowPapers(false);
+              setShowConnection(false);
+            } else if (p >= 0.3 && p < 0.6) {
+              setActiveNodes(5);
+              setShowPapers(true);
+              setShowConnection(false);
+            } else if (p >= 0.6) {
+              setActiveNodes(5);
+              setShowPapers(true);
+              setShowConnection(true);
+            }
+          },
+        },
+      });
+
+      // Graph appears
+      tl.to(graphRef.current, { opacity: 1, scale: 1, duration: 1, ease: "power2.out" })
+        .fromTo(textRefs.current[0], { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.6 }, "<")
+        // Text transition 1
+        .to(textRefs.current[0], { opacity: 0, duration: 0.3 }, "+=0.5")
+        .to(textRefs.current[1], { opacity: 1, y: 0, duration: 0.5 }, "<0.1")
+        // Text transition 2
+        .to(textRefs.current[1], { opacity: 0, duration: 0.3 }, "+=0.5")
+        .to(textRefs.current[2], { opacity: 1, y: 0, duration: 0.5 }, "<0.1");
+
+    }, sectionRef);
+
+    return () => ctx.revert();
+  }, []);
+
+  const steps = [
+    { title: "Mathematical\nKnowledge Graph", sub: "Every concept you explore builds your knowledge base" },
+    { title: "Powered by\nResearch", sub: "Connected to 50K+ math papers from arXiv" },
+    { title: "Gemini-Powered\nFormalization", sub: "AI guides LaTeX and Lean generation using context" },
+  ];
+
+  // Knowledge graph nodes with glow
+  const graphNodes = [
+    { id: 1, label: "Prime Numbers", x: 30, y: 35, color: "bg-blue-500", glow: "shadow-blue-500/50" },
+    { id: 2, label: "Euclid's Lemma", x: 55, y: 20, color: "bg-emerald-500", glow: "shadow-emerald-500/50" },
+    { id: 3, label: "Infinitude", x: 70, y: 45, color: "bg-amber-500", glow: "shadow-amber-500/50" },
+    { id: 4, label: "Divisibility", x: 50, y: 60, color: "bg-purple-500", glow: "shadow-purple-500/50" },
+    { id: 5, label: "Number Theory", x: 20, y: 55, color: "bg-rose-500", glow: "shadow-rose-500/50" },
+  ];
+
+  return (
+    <section ref={sectionRef} className="relative min-h-screen bg-gradient-to-br from-purple-50/70 via-white to-indigo-50/70 overflow-hidden">
+      {/* Animated background orbs */}
+      <div className="absolute top-1/4 right-1/4 w-80 h-80 bg-gradient-to-br from-purple-400/25 to-pink-400/25 rounded-full blur-3xl animate-pulse" style={{ animationDuration: '7s' }} />
+      <div className="absolute bottom-1/4 left-1/4 w-80 h-80 bg-gradient-to-br from-indigo-400/25 to-blue-400/25 rounded-full blur-3xl animate-pulse" style={{ animationDuration: '9s' }} />
+      
+      {/* Left text column */}
+      <div className="absolute left-0 top-0 w-[35%] h-full flex items-center justify-center z-20 pl-12">
+        <div className="relative h-44 w-full max-w-[380px]">
+          {steps.map((step, i) => (
+            <div
+              key={i}
+              ref={(el) => { textRefs.current[i] = el; }}
+              className="absolute inset-0 flex flex-col justify-center"
+              style={{ opacity: i === 0 ? 1 : 0 }}
+            >
+              <h2 className="text-4xl md:text-5xl font-extrabold text-neutral-900 mb-4 leading-[1.1] tracking-tight whitespace-pre-line">
+                {step.title}
+              </h2>
+              <p className="text-base md:text-lg text-neutral-500 font-normal leading-relaxed">{step.sub}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Right graph visualization */}
+      <div className="absolute right-0 top-0 w-[65%] h-full flex items-center justify-center pr-12">
+        <div
+          ref={graphRef}
+          className="relative w-full max-w-[700px] h-[600px] bg-gradient-to-br from-white via-purple-50/60 to-indigo-50/60 rounded-2xl border border-purple-200/50 shadow-2xl overflow-hidden backdrop-blur-sm"
+          style={{ opacity: 0 }}
+        >
+          {/* Graph visualization */}
+          <div className="absolute inset-0 p-12">
+            {/* Connections */}
+            <svg className="absolute inset-0 w-full h-full">
+              <defs>
+                <linearGradient id="connectionGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.6" />
+                  <stop offset="100%" stopColor="#8b5cf6" stopOpacity="0.6" />
+                </linearGradient>
+              </defs>
+              {activeNodes >= 2 && (
+                <>
+                  <line x1="30%" y1="35%" x2="55%" y2="20%" stroke="url(#connectionGradient)" strokeWidth="2" />
+                  <line x1="55%" y1="20%" x2="70%" y2="45%" stroke="url(#connectionGradient)" strokeWidth="2" />
+                </>
+              )}
+              {activeNodes >= 4 && (
+                <>
+                  <line x1="30%" y1="35%" x2="50%" y2="60%" stroke="url(#connectionGradient)" strokeWidth="2" />
+                  <line x1="50%" y1="60%" x2="70%" y2="45%" stroke="url(#connectionGradient)" strokeWidth="2" />
+                </>
+              )}
+              {activeNodes >= 5 && (
+                <>
+                  <line x1="20%" y1="55%" x2="30%" y2="35%" stroke="url(#connectionGradient)" strokeWidth="2" />
+                  <line x1="20%" y1="55%" x2="50%" y2="60%" stroke="url(#connectionGradient)" strokeWidth="2" />
+                </>
+              )}
+              {showConnection && (
+                <line x1="70%" y1="45%" x2="85%" y2="70%" stroke="#4f46e5" strokeWidth="3" strokeDasharray="6,3" className="animate-pulse" />
+              )}
+            </svg>
+
+            {/* Nodes */}
+            {graphNodes.slice(0, activeNodes).map((node) => (
+              <div
+                key={node.id}
+                className="absolute transform -translate-x-1/2 -translate-y-1/2 animate-in zoom-in duration-500"
+                style={{ left: `${node.x}%`, top: `${node.y}%` }}
+              >
+                <div className={`w-4 h-4 ${node.color} rounded-full shadow-xl ${node.glow} animate-pulse`} style={{ animationDuration: '3s' }} />
+                <div className={`absolute inset-0 w-4 h-4 ${node.color} rounded-full blur-sm opacity-50`} />
+                <div className="absolute top-full mt-2 left-1/2 -translate-x-1/2 whitespace-nowrap">
+                  <span className="text-xs font-medium text-neutral-700 bg-white px-2 py-1 rounded-md shadow-sm">
+                    {node.label}
+                  </span>
+                </div>
+              </div>
+            ))}
+
+            {/* Papers floating in */}
+            {showPapers && (
+              <div className="absolute right-4 top-4 space-y-2 animate-in slide-in-from-right duration-500">
+                <div className="bg-white/90 backdrop-blur-sm rounded-lg px-3 py-2 shadow-md border border-neutral-200 max-w-[200px]">
+                  <div className="flex items-center gap-2 mb-1">
+                    <BookOpen className="w-3 h-3 text-neutral-400" />
+                    <span className="text-[10px] text-neutral-400">arXiv:2103.xxxxx</span>
+                  </div>
+                  <p className="text-xs text-neutral-600 line-clamp-2">Prime number distribution theory</p>
+                </div>
+                <div className="bg-white/90 backdrop-blur-sm rounded-lg px-3 py-2 shadow-md border border-neutral-200 max-w-[200px]">
+                  <div className="flex items-center gap-2 mb-1">
+                    <BookOpen className="w-3 h-3 text-neutral-400" />
+                    <span className="text-[10px] text-neutral-400">arXiv:1905.xxxxx</span>
+                  </div>
+                  <p className="text-xs text-neutral-600 line-clamp-2">Fundamental theorem of arithmetic</p>
+                </div>
+              </div>
+            )}
+
+            {/* LaTeX connection indicator */}
+            {showConnection && (
+              <div className="absolute bottom-4 right-4 animate-in slide-in-from-bottom duration-500">
+                <div className="bg-indigo-500 text-white rounded-lg px-4 py-2 shadow-lg flex items-center gap-2">
+                  <Zap className="w-4 h-4" />
+                  <span className="text-sm font-medium">Informing LaTeX generation...</span>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Stats overlay */}
+          <div className="absolute bottom-0 left-0 right-0 bg-white/80 backdrop-blur-sm border-t border-neutral-200 px-4 py-3">
+            <div className="flex items-center justify-between text-xs">
+              <div className="flex items-center gap-4">
+                <span className="text-neutral-600">{activeNodes} concepts</span>
+                {showPapers && <span className="text-neutral-600">2 papers</span>}
+                {showConnection && <span className="text-indigo-600 font-medium">→ LaTeX ready</span>}
+              </div>
+              <div className="flex items-center gap-1 text-neutral-400">
+                <Brain className="w-3 h-3" />
+                <span>Knowledge Graph</span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </section>
@@ -388,7 +746,10 @@ function LatexSection() {
   }, []);
 
   return (
-    <section ref={sectionRef} className="min-h-screen bg-[#0a0a0a]">
+    <section ref={sectionRef} className="min-h-screen bg-gradient-to-br from-neutral-900 via-emerald-900/40 to-teal-900/30">
+      {/* Decorative gradient orb */}
+      <div className="absolute top-1/3 right-1/4 w-96 h-96 bg-gradient-to-br from-emerald-500/15 to-teal-500/15 rounded-full blur-3xl" />
+      
       <div ref={containerRef} className="h-screen flex items-center justify-center px-8" style={{ opacity: 0 }}>
         <div className="max-w-7xl w-full">
           {/* Section header */}
@@ -790,7 +1151,11 @@ function AgentsSection() {
       <div className="max-w-5xl mx-auto px-6">
         <div className="text-center mb-14">
           <h2 className="text-3xl md:text-4xl font-bold text-neutral-900 mb-3">AI agents that think mathematically</h2>
-          <p className="text-lg text-neutral-500">Specialized assistants for mathematical reasoning</p>
+          <p className="text-lg text-neutral-500">Specialized assistants powered by Google Gemini 3.0</p>
+          <div className="inline-flex items-center gap-2 mt-3 px-3 py-1.5 rounded-full bg-indigo-50 border border-indigo-200">
+            <Sparkles className="w-4 h-4 text-indigo-600" />
+            <span className="text-xs font-medium text-indigo-700">Powered by Gemini</span>
+          </div>
         </div>
 
         <div className="grid md:grid-cols-3 gap-6">
@@ -918,14 +1283,14 @@ function FinalCTA() {
   return (
     <section ref={sectionRef} className="py-24 bg-white border-t border-neutral-100">
       <div ref={contentRef} className="max-w-2xl mx-auto px-6 text-center">
-        <h2 className="text-3xl md:text-4xl font-bold text-neutral-900 mb-4">Ready to prove something?</h2>
-        <p className="text-lg text-neutral-500 mb-8">Join researchers building the future of formal verification.</p>
+        <h2 className="text-3xl md:text-4xl font-bold text-neutral-900 mb-4">Experience the platform</h2>
+        <p className="text-lg text-neutral-500 mb-8">See how ProofMesh transforms mathematical collaboration with AI-powered verification.</p>
         <div className="flex flex-col sm:flex-row gap-3 justify-center">
           <Link
             href="/register"
             className="inline-flex items-center justify-center gap-2 px-6 py-3 bg-neutral-900 text-white font-medium rounded-lg hover:bg-neutral-800 transition-colors"
           >
-            Start Free
+            Try Interactive Demo
             <ArrowRight className="w-4 h-4" />
           </Link>
           <Link
@@ -986,6 +1351,7 @@ export default function LandingPage() {
       <Navbar />
       <HeroSection />
       <CanvasShowcase />
+      <KnowledgeGraphSection />
       <LatexSection />
       <AgentsSection />
       <FeaturesGrid />
