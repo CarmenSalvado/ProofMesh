@@ -3,7 +3,7 @@
 **Human-controlled reasoning workspace for mathematics.**
 
 ProofMesh is a collaborative platform for mathematical exploration and proof development. It combines:
-- 📝 **Markdown workspaces** for informal mathematical writing
+- 📝 **Latex workspaces** for formal mathematical writing
 - 🎨 **Visual canvas** for proof exploration and diagram generation
 - 🤖 **AI agents** for mathematical assistance (exploration, formalization, critique)
 - 📚 **Knowledge library** for theorems, lemmas, and definitions
