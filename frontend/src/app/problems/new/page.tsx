@@ -9,11 +9,7 @@ import { DashboardNavbar } from "@/components/layout/DashboardNavbar";
 import {
   Globe,
   Lock,
-  FileText,
-  Zap,
-  Upload,
   Check,
-  ArrowRight,
   CornerDownLeft,
 } from "lucide-react";
 
@@ -24,7 +20,6 @@ export default function NewProblemPage() {
   const [description, setDescription] = useState("");
   const [visibility, setVisibility] = useState<"private" | "public">("private");
   const [difficulty, setDifficulty] = useState<"easy" | "medium" | "hard" | "">("medium");
-  const [template, setTemplate] = useState<"empty" | "induction" | "import">("empty");
   const [tags, setTags] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -190,83 +185,6 @@ export default function NewProblemPage() {
                     <span className="block text-xs text-neutral-500 mt-1">
                       Access limited to invited collaborators.
                     </span>
-                  </div>
-                </label>
-              </div>
-            </div>
-
-            <hr className="border-neutral-100" />
-
-            {/* Template Selection */}
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-semibold text-neutral-900">Starting Template</label>
-                <button
-                  type="button"
-                  className="text-[10px] text-indigo-600 hover:text-indigo-700 font-medium flex items-center gap-1"
-                >
-                  Browse all templates <ArrowRight className="w-3 h-3" />
-                </button>
-              </div>
-
-              <div className="grid grid-cols-3 gap-4">
-                {/* Empty */}
-                <label className="relative cursor-pointer group">
-                  <input
-                    type="radio"
-                    name="template"
-                    className="peer sr-only"
-                    checked={template === "empty"}
-                    onChange={() => setTemplate("empty")}
-                  />
-                  <div className="h-32 rounded-lg border border-neutral-200 hover:border-neutral-300 bg-white flex flex-col items-center justify-center gap-3 transition-all group-hover:shadow-sm peer-checked:border-neutral-900 peer-checked:bg-neutral-50">
-                    <div className="w-8 h-8 rounded bg-neutral-50 border border-neutral-100 flex items-center justify-center text-neutral-400">
-                      <FileText className="w-4 h-4" />
-                    </div>
-                    <span className="text-xs font-medium text-neutral-700">Empty Canvas</span>
-                    <div className="absolute top-2 right-2 opacity-0 peer-checked:opacity-100 transition-all scale-75 peer-checked:scale-100 text-neutral-900">
-                      <Check className="w-4 h-4" />
-                    </div>
-                  </div>
-                </label>
-
-                {/* Induction */}
-                <label className="relative cursor-pointer group">
-                  <input
-                    type="radio"
-                    name="template"
-                    className="peer sr-only"
-                    checked={template === "induction"}
-                    onChange={() => setTemplate("induction")}
-                  />
-                  <div className="h-32 rounded-lg border border-neutral-200 hover:border-neutral-300 bg-white flex flex-col items-center justify-center gap-3 transition-all group-hover:shadow-sm peer-checked:border-neutral-900 peer-checked:bg-neutral-50">
-                    <div className="w-8 h-8 rounded bg-orange-50 border border-orange-100 flex items-center justify-center text-orange-500">
-                      <Zap className="w-4 h-4" />
-                    </div>
-                    <span className="text-xs font-medium text-neutral-700">Induction</span>
-                    <div className="absolute top-2 right-2 opacity-0 peer-checked:opacity-100 transition-all scale-75 peer-checked:scale-100 text-neutral-900">
-                      <Check className="w-4 h-4" />
-                    </div>
-                  </div>
-                </label>
-
-                {/* Import */}
-                <label className="relative cursor-pointer group">
-                  <input
-                    type="radio"
-                    name="template"
-                    className="peer sr-only"
-                    checked={template === "import"}
-                    onChange={() => setTemplate("import")}
-                  />
-                  <div className="h-32 rounded-lg border border-dashed border-neutral-300 hover:border-neutral-400 bg-neutral-50 hover:bg-neutral-100 flex flex-col items-center justify-center gap-3 transition-all peer-checked:border-neutral-900 peer-checked:bg-neutral-100">
-                    <div className="w-8 h-8 rounded bg-white border border-neutral-200 flex items-center justify-center text-neutral-500">
-                      <Upload className="w-4 h-4" />
-                    </div>
-                    <span className="text-xs font-medium text-neutral-700">Import .tex</span>
-                    <div className="absolute top-2 right-2 opacity-0 peer-checked:opacity-100 transition-all scale-75 peer-checked:scale-100 text-neutral-900">
-                      <Check className="w-4 h-4" />
-                    </div>
                   </div>
                 </label>
               </div>

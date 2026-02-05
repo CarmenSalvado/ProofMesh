@@ -22,7 +22,11 @@ import {
   BookOpen,
   GitMerge,
   Filter,
+  MoreHorizontal,
 } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
 import { useChat, Message } from "@ai-sdk/react";
 import { CanvasNode, NODE_TYPE_CONFIG } from "./types";
 import {
@@ -104,6 +108,143 @@ const deriveGroupTitle = (value: string, fallback = "Proposal") => {
   const words = sentence.trim().split(/\s+/).slice(0, 8).join(" ");
   if (!words) return fallback;
   return words.length < sentence.length ? `${words}…` : words;
+};
+
+const SECTION_KEYWORDS = [
+  "definition",
+  "lemma",
+  "theorem",
+  "claim",
+  "proposition",
+  "corollary",
+  "counterexample",
+  "computation",
+  "idea",
+  "note",
+  "resource",
+  "example",
+  "proof",
+  "understanding",
+  "key concepts",
+  "approaches",
+  "insights",
+  "next steps",
+];
+
+const mapKeywordToType = (keyword: string) => {
+  switch (keyword) {
+    case "definition":
+      return "DEFINITION";
+    case "lemma":
+      return "LEMMA";
+    case "theorem":
+      return "THEOREM";
+    case "claim":
+    case "proposition":
+      return "CLAIM";
+    case "corollary":
+      return "LEMMA";
+    case "counterexample":
+      return "COUNTEREXAMPLE";
+    case "computation":
+      return "COMPUTATION";
+    case "idea":
+      return "IDEA";
+    case "resource":
+      return "RESOURCE";
+    case "example":
+      return "CONTENT";
+    case "proof":
+      return "CONTENT";
+    case "understanding":
+      return "NOTE";
+    case "key concepts":
+      return "DEFINITION";
+    case "approaches":
+      return "IDEA";
+    case "insights":
+      return "CLAIM";
+    case "next steps":
+      return "CONTENT";
+    case "note":
+    default:
+      return "NOTE";
+  }
+};
+
+const inferNodeTypeFromText = (value: string) => {
+  const lower = value.toLowerCase();
+  if (lower.includes("definition")) return "DEFINITION";
+  if (lower.includes("theorem")) return "THEOREM";
+  if (lower.includes("lemma")) return "LEMMA";
+  if (lower.includes("claim") || lower.includes("proposition")) return "CLAIM";
+  if (lower.includes("corollary")) return "LEMMA";
+  if (lower.includes("counterexample")) return "COUNTEREXAMPLE";
+  if (lower.includes("computation") || lower.includes("calculation")) return "COMPUTATION";
+  if (lower.includes("resource") || lower.includes("reference") || lower.includes("paper")) return "RESOURCE";
+  if (lower.includes("idea") || lower.includes("approach")) return "IDEA";
+  if (lower.includes("insight")) return "CLAIM";
+  return "NOTE";
+};
+
+const parseTypedSections = (text: string) => {
+  const lines = text.split("\n");
+  const sections: Array<{ type: string; title: string; content: string }> = [];
+  let current: { type: string; title: string; content: string } | null = null;
+
+  const flush = () => {
+    if (!current) return;
+    const content = current.content.trim();
+    if (content.length === 0 && current.title.length === 0) return;
+    const title = current.title || deriveGroupTitle(content, "Insight");
+    sections.push({ type: current.type, title, content });
+  };
+
+  const headerRegex = new RegExp(
+    `^(?:[-*+]\\s+|\\d+\\.\\s+)?(?:#{1,3}\\s*)?(?:\\*\\*?)?(${SECTION_KEYWORDS.join("|")})(?:\\*\\*?)?\\s*[:\\-–]?\\s*(.*)$`,
+    "i"
+  );
+
+  lines.forEach((line) => {
+    const match = line.match(headerRegex);
+    if (match) {
+      flush();
+      const keyword = match[1].toLowerCase();
+      const remainder = match[2] ? match[2].trim() : "";
+      current = {
+        type: mapKeywordToType(keyword),
+        title: remainder,
+        content: "",
+      };
+      return;
+    }
+
+    if (!current) {
+      current = { type: inferNodeTypeFromText(text), title: "", content: "" };
+    }
+    current.content += `${line}\n`;
+  });
+
+  flush();
+
+  if (sections.length === 0) {
+    const cleaned = text.trim();
+    if (!cleaned) return [];
+    return [
+      {
+        type: inferNodeTypeFromText(cleaned),
+        title: deriveGroupTitle(cleaned, "Insight"),
+        content: cleaned,
+      },
+    ];
+  }
+
+  return sections;
+};
+
+const extractChatResponse = (content: string) => {
+  const stripped = content.replace(/<thinking>[\s\S]*?<\/thinking>/g, "").trim();
+  return stripped || content.trim();
 };
 
 const buildChatContext = (messages: ChatMessage[]) => {
@@ -305,6 +446,8 @@ export function FloatingAIBar({
   const [generatedStory, setGeneratedStory] = useState<Story | null>(null);
   const [isGeneratingStory, setIsGeneratingStory] = useState(false);
   const [selectedStoriesForFusion, setSelectedStoriesForFusion] = useState<string[]>([]);
+  const [showMoreActions, setShowMoreActions] = useState(false);
+  const processedChatMessageIdsRef = useRef<Set<string>>(new Set());
   const onCreateNodeRef = useRef<FloatingAIBarProps["onCreateNode"]>(onCreateNode);
   const startContextRef = useRef<{ dependencyIds: string[]; baseX: number; baseY: number }>({
     dependencyIds: [],
@@ -382,19 +525,8 @@ export function FloatingAIBar({
             title: "AI Exploration Complete",
             content: finalResponse.slice(0, 300) + (finalResponse.length > 300 ? "..." : ""),
           });
-          const createNode = onCreateNodeRef.current;
-          if (createNode) {
-            const { dependencyIds, baseX, baseY } = startContextRef.current;
-            void createNode({
-              type: "NOTE",
-              title: deriveGroupTitle(finalResponse, "Chat Insight"),
-              content: finalResponse,
-              x: baseX + 220,
-              y: baseY + 180,
-              dependencies: dependencyIds,
-              authors: [AI_AUTHOR],
-            });
-          }
+          processedChatMessageIdsRef.current.add(message.id);
+          void createTypedNodesFromText(finalResponse);
         }
       } else {
         addInsight({
@@ -402,19 +534,8 @@ export function FloatingAIBar({
           title: "AI Exploration Complete",
           content: content.slice(0, 300) + (content.length > 300 ? "..." : ""),
         });
-        const createNode = onCreateNodeRef.current;
-        if (createNode) {
-          const { dependencyIds, baseX, baseY } = startContextRef.current;
-          void createNode({
-            type: "NOTE",
-            title: deriveGroupTitle(content, "Chat Insight"),
-            content,
-            x: baseX + 220,
-            y: baseY + 180,
-            dependencies: dependencyIds,
-            authors: [AI_AUTHOR],
-          });
-        }
+        processedChatMessageIdsRef.current.add(message.id);
+        void createTypedNodesFromText(content);
       }
     },
   });
@@ -501,6 +622,32 @@ export function FloatingAIBar({
     }
   }, [selectedNode, contextNodes]);
 
+  useEffect(() => {
+    if (isAiLoading) return;
+    const lastAssistant = [...aiMessages].reverse().find((msg) => msg.role === "assistant");
+    if (!lastAssistant) return;
+    if (processedChatMessageIdsRef.current.has(lastAssistant.id)) return;
+    const response = extractChatResponse(lastAssistant.content);
+    if (!response) {
+      processedChatMessageIdsRef.current.add(lastAssistant.id);
+      return;
+    }
+    processedChatMessageIdsRef.current.add(lastAssistant.id);
+    void createTypedNodesFromText(response);
+  }, [aiMessages, isAiLoading, createTypedNodesFromText]);
+
+  useEffect(() => {
+    if (!showMoreActions) return;
+    const handleClick = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!target) return;
+      if (target.closest('[data-floating-ai-more]')) return;
+      setShowMoreActions(false);
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [showMoreActions]);
+
   // Keyboard shortcut
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -523,6 +670,80 @@ export function FloatingAIBar({
       timestamp: new Date(),
     };
     setInsights((prev) => [newInsight, ...prev].slice(0, 5));
+  }, []);
+
+  const createTypedNodesFromText = useCallback(async (text: string) => {
+    const createNode = onCreateNodeRef.current;
+    if (!createNode) return;
+    const trimmed = text.trim();
+    if (!trimmed) return;
+
+    const { dependencyIds, baseX, baseY } = startContextRef.current;
+    let sections = parseTypedSections(trimmed);
+    if (sections.length === 0) return;
+
+    if (sections.length === 1 && sections[0].type === "NOTE") {
+      const paragraphs = sections[0].content
+        .split(/\n{2,}/)
+        .map((para) => para.trim())
+        .filter(Boolean);
+      if (paragraphs.length >= 2) {
+        const cycle = ["IDEA", "CLAIM", "CONTENT", "NOTE"];
+        sections = paragraphs.map((para, idx) => {
+          let type = inferNodeTypeFromText(para);
+          if (type === "NOTE") {
+            type = cycle[idx % cycle.length];
+          }
+          return {
+            type,
+            title: deriveGroupTitle(para, `Insight ${idx + 1}`),
+            content: para,
+          };
+        });
+      }
+    }
+
+    let lastCreatedId: string | null = null;
+    const createdIds: string[] = [];
+
+    for (let index = 0; index < sections.length; index += 1) {
+      const section = sections[index];
+      const column = index % 2;
+      const row = Math.floor(index / 2);
+      const position = {
+        x: baseX + 220 + column * 260,
+        y: baseY + 180 + row * 200,
+      };
+      const deps = new Set(dependencyIds);
+      if (lastCreatedId) deps.add(lastCreatedId);
+
+      const created = await createNode({
+        type: section.type,
+        title: section.title,
+        content: section.content,
+        x: position.x,
+        y: position.y,
+        dependencies: Array.from(deps),
+        authors: [AI_AUTHOR],
+      });
+
+      if (created && typeof created === "object" && "id" in created && created.id) {
+        lastCreatedId = created.id;
+        createdIds.push(created.id);
+      }
+    }
+
+    if (createdIds.length > 0 && (sections.length > 1 || sections[0].type !== "NOTE")) {
+      await createNode({
+        type: "NOTE",
+        title: "Explanation",
+        content: trimmed,
+        x: baseX + 220,
+        y: baseY + 180 + Math.ceil(sections.length / 2) * 210,
+        dependencies: createdIds,
+        authors: [AI_AUTHOR],
+      });
+    }
   }, []);
 
   const handleExplore = useCallback(async () => {
@@ -715,6 +936,22 @@ export function FloatingAIBar({
                 onCreateBlock(groupTitle, createdNodeIds);
               }
 
+              // Optional explanation node from proposal reasoning
+              if (proposal.reasoning && onCreateNode) {
+                const explanationDeps = createdNodeIds.length > 0 ? [createdNodeIds[0]] : dependencyIds;
+                const explanationTitle = deriveGroupTitle(proposal.reasoning, "Explanation");
+                await onCreateNode({
+                  type: "NOTE",
+                  title: explanationTitle,
+                  content: `**Reasoning**\n\n${proposal.reasoning}`,
+                  x: baseX + 320,
+                  y: diagramBaseY + 240,
+                  dependencies: explanationDeps,
+                  authors: [AI_AUTHOR],
+                  source: buildAISource(runId),
+                });
+              }
+
               return { diagramIdToActualId, createdNodeIds };
             },
             {
@@ -749,8 +986,8 @@ export function FloatingAIBar({
           `create-single-node-${proposal.content.slice(0, 30)}`,
           async () => {
             const created = await onCreateNode({
-              type: "NOTE",
-              title: proposal.content.slice(0, 60) + (proposal.content.length > 60 ? "..." : ""),
+              type: inferNodeTypeFromText(`${proposal.content}\n${proposal.reasoning || ""}`),
+              title: deriveGroupTitle(proposal.content, "Proposal"),
               content: nodeContent,
               x: nodeX,
               y: nodeY,
@@ -758,6 +995,20 @@ export function FloatingAIBar({
               authors: [AI_AUTHOR],
               source: buildAISource(runId),
             });
+
+            if (proposal.reasoning && created && typeof created === "object" && "id" in created && created.id) {
+              const explanationTitle = deriveGroupTitle(proposal.reasoning, "Explanation");
+              await onCreateNode({
+                type: "NOTE",
+                title: explanationTitle,
+                content: `**Reasoning**\n\n${proposal.reasoning}`,
+                x: nodeX + 240,
+                y: nodeY + 160,
+                dependencies: [created.id],
+                authors: [AI_AUTHOR],
+                source: buildAISource(runId),
+              });
+            }
 
             if (onCreateBlock && created && typeof created === "object" && "id" in created && created.id) {
               const groupTitle = deriveGroupTitle(proposal.content);
@@ -812,18 +1063,6 @@ export function FloatingAIBar({
       content: trimmed,
     });
   }, [command, problemId, isAiLoading, appendAiMessage]);
-
-  const handlePrimarySend = useCallback(async () => {
-    const trimmed = command.trim();
-    if (!trimmed || !problemId || isAiLoading || isLoading) return;
-
-    if (isOrchestrationAvailable && onCreateNode) {
-      await handleExplore();
-      return;
-    }
-
-    await handleChatSend();
-  }, [command, problemId, isAiLoading, isLoading, isOrchestrationAvailable, onCreateNode, handleExplore, handleChatSend]);
 
   const handleUseChatInExplore = useCallback((content: string) => {
     setCommand(content);
@@ -1436,7 +1675,7 @@ export function FloatingAIBar({
         className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 w-full max-w-xl px-4 pointer-events-none"
         onDoubleClick={(e) => e.stopPropagation()}
       >
-        <div className="bg-white/90 backdrop-blur-xl rounded-2xl shadow-2xl shadow-black/10 overflow-hidden pointer-events-auto animate-in fade-in slide-in-from-bottom-4 duration-300">
+        <div className="bg-white/90 backdrop-blur-xl rounded-2xl shadow-2xl shadow-black/10 overflow-visible pointer-events-auto animate-in fade-in slide-in-from-bottom-4 duration-300">
           {(isInputFocused && (command.trim().length > 0 || aiMessages.length > 0)) || isAiLoading ? (
             <div className="border-b border-neutral-100">
               <div className="max-h-64 overflow-y-auto px-3 py-3 space-y-2">
@@ -1447,7 +1686,11 @@ export function FloatingAIBar({
                     return (
                       <div key={msg.id} className="flex justify-end">
                         <div className="max-w-[80%] rounded-xl px-3 py-2 text-xs leading-relaxed bg-neutral-900 text-white">
-                          {msg.content}
+                          <div className="text-xs text-white [&_p]:text-white [&_li]:text-white [&_strong]:text-white [&_em]:text-white [&_code]:text-white [&_a]:text-white [&_h1]:text-white [&_h2]:text-white [&_h3]:text-white [&_pre]:text-white">
+                            <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                              {msg.content}
+                            </ReactMarkdown>
+                          </div>
                         </div>
                       </div>
                     );
@@ -1469,7 +1712,11 @@ export function FloatingAIBar({
                               <span className="font-medium text-[10px] uppercase tracking-wide">Thinking</span>
                             </div>
                             <div className="text-purple-600 whitespace-pre-wrap max-h-32 overflow-y-auto">
-                              {thinkingBlocks.map(block => block.replace(/<\/?thinking>/g, "")).join("\n\n")}
+                              <div className="markdown-content text-xs text-purple-700">
+                                <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                                  {thinkingBlocks.map(block => block.replace(/<\/?thinking>/g, "")).join("\n\n")}
+                                </ReactMarkdown>
+                              </div>
                             </div>
                           </div>
                         </div>
@@ -1479,7 +1726,11 @@ export function FloatingAIBar({
                       {responseText && (
                         <div className="flex justify-start">
                           <div className="max-w-[85%] rounded-xl px-3 py-2 text-xs leading-relaxed bg-neutral-50 border border-neutral-200 text-neutral-700 whitespace-pre-wrap">
-                            {responseText}
+                            <div className="markdown-content text-xs text-neutral-700">
+                              <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                                {responseText}
+                              </ReactMarkdown>
+                            </div>
                             <div className="mt-2 flex gap-2">
                               <button
                                 onClick={() => handleUseChatInExplore(responseText)}
@@ -1506,7 +1757,11 @@ export function FloatingAIBar({
                             <span className="font-medium text-[10px] uppercase tracking-wide">Thinking...</span>
                           </div>
                           <div className="whitespace-pre-wrap max-h-24 overflow-y-auto">
-                            {currentThinking.slice(-500)}
+                            <div className="markdown-content text-xs text-purple-700">
+                              <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                                {currentThinking.slice(-500)}
+                              </ReactMarkdown>
+                            </div>
                             <span className="inline-block w-1.5 h-3 bg-purple-400 animate-pulse ml-0.5" />
                           </div>
                         </div>
@@ -1515,7 +1770,11 @@ export function FloatingAIBar({
                     {currentResponse && (
                       <div className="flex justify-start">
                         <div className="max-w-[85%] rounded-xl px-3 py-2 text-xs leading-relaxed bg-neutral-50 border border-neutral-200 text-neutral-700 whitespace-pre-wrap">
-                          {currentResponse}
+                          <div className="markdown-content text-xs text-neutral-700">
+                            <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                              {currentResponse}
+                            </ReactMarkdown>
+                          </div>
                           <span className="inline-block w-1.5 h-3 bg-neutral-400 animate-pulse ml-0.5" />
                         </div>
                       </div>
@@ -1597,7 +1856,7 @@ export function FloatingAIBar({
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
-                  handlePrimarySend();
+                  handleChatSend();
                 }
               }}
               placeholder={contextNodes.length > 0 ? `Insights about ${contextNodes[0].title}...` : "Insights..."}
@@ -1630,8 +1889,8 @@ export function FloatingAIBar({
                 </div>
               ) : (
                 <button
-                  onClick={handlePrimarySend}
-                  disabled={!command.trim() || isAiLoading || isLoading}
+                  onClick={handleChatSend}
+                  disabled={!command.trim() || isAiLoading}
                   className="p-2 text-neutral-500 hover:text-neutral-700 rounded-full transition-colors disabled:opacity-30"
                 >
                   <Send className="w-4 h-4" />
@@ -1648,7 +1907,7 @@ export function FloatingAIBar({
           </div>
 
           {/* Quick Actions - minimal bottom bar */}
-          <div className="flex items-center gap-1 px-4 py-2 bg-neutral-50/50">
+          <div className="flex items-center gap-1 px-4 py-2 bg-neutral-50/50 relative">
             <QuickActionButton
               icon={Compass}
               label="Explore"
@@ -1665,60 +1924,92 @@ export function FloatingAIBar({
               active={activeAction === "insight"}
             />
 
-            <QuickActionButton
-              icon={FileCode}
-              label="Formalize"
-              onClick={handleFormalize}
-              disabled={contextNodes.length === 0 || !isOrchestrationAvailable || isLoading}
-              active={activeAction === "formalize"}
-            />
-
-            <QuickActionButton
-              icon={Play}
-              label="Verify"
-              onClick={handleVerify}
-              disabled={!currentLeanCode || !isOrchestrationAvailable || isLoading}
-              active={activeAction === "verify"}
-            />
-
-            <div className="w-px h-4 bg-neutral-200 mx-1" />
-
-            <QuickActionButton
-              icon={Zap}
-              label="Pipeline"
-              onClick={handleFullPipeline}
-              disabled={(!command.trim() && contextNodes.length === 0 && chatMessages.length === 0) || !isOrchestrationAvailable || isLoading || isPipelineRunning}
-              active={activeAction === "pipeline"}
-            />
-
-            <div className="w-px h-4 bg-neutral-200 mx-1" />
-
-            {/* Idea2Paper Actions */}
-            <QuickActionButton
-              icon={Filter}
-              label="Patterns"
-              onClick={handleExploreWithPatterns}
-              disabled={(!command.trim() && contextNodes.length === 0) || isLoading}
-              active={activeAction === "explore-patterns"}
-            />
-
-            <QuickActionButton
-              icon={BookOpen}
-              label="Story"
-              onClick={handleGenerateStory}
-              disabled={(!command.trim() && contextNodes.length === 0) || isGeneratingStory}
-              active={activeAction === "generate-story"}
-            />
-
-            <QuickActionButton
-              icon={GitMerge}
-              label="Fusion"
-              onClick={handleFusionIdeas}
-              disabled={contextNodes.length < 2 || isLoading}
-              active={activeAction === "fusion"}
-            />
-
             <div className="flex-1" />
+
+            <div className="relative" data-floating-ai-more>
+              <button
+                type="button"
+                onClick={() => setShowMoreActions((prev) => !prev)}
+                className={`flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-full transition-colors ${showMoreActions ? "text-neutral-800 bg-neutral-200" : "text-neutral-500 hover:text-neutral-700"}`}
+              >
+                <MoreHorizontal className="w-3 h-3" />
+                More
+              </button>
+
+              {showMoreActions && (
+                <div className="absolute right-0 bottom-9 w-44 rounded-xl border border-neutral-200 bg-white shadow-lg p-2 z-50">
+                  <div className="text-[10px] uppercase tracking-wide text-neutral-400 px-2 py-1">Core</div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowMoreActions(false);
+                      handleFormalize();
+                    }}
+                    disabled={contextNodes.length === 0 || !isOrchestrationAvailable || isLoading}
+                    className="w-full text-left px-2 py-1.5 text-xs rounded-md text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 disabled:opacity-40"
+                  >
+                    Formalize
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowMoreActions(false);
+                      handleVerify();
+                    }}
+                    disabled={!currentLeanCode || !isOrchestrationAvailable || isLoading}
+                    className="w-full text-left px-2 py-1.5 text-xs rounded-md text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 disabled:opacity-40"
+                  >
+                    Verify
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowMoreActions(false);
+                      handleFullPipeline();
+                    }}
+                    disabled={(!command.trim() && contextNodes.length === 0 && chatMessages.length === 0) || !isOrchestrationAvailable || isLoading || isPipelineRunning}
+                    className="w-full text-left px-2 py-1.5 text-xs rounded-md text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 disabled:opacity-40"
+                  >
+                    Pipeline
+                  </button>
+
+                  <div className="mt-2 text-[10px] uppercase tracking-wide text-neutral-400 px-2 py-1">Idea2Paper</div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowMoreActions(false);
+                      handleExploreWithPatterns();
+                    }}
+                    disabled={(!command.trim() && contextNodes.length === 0) || isLoading}
+                    className="w-full text-left px-2 py-1.5 text-xs rounded-md text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 disabled:opacity-40"
+                  >
+                    Patterns
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowMoreActions(false);
+                      handleGenerateStory();
+                    }}
+                    disabled={(!command.trim() && contextNodes.length === 0) || isGeneratingStory}
+                    className="w-full text-left px-2 py-1.5 text-xs rounded-md text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 disabled:opacity-40"
+                  >
+                    Story
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowMoreActions(false);
+                      handleFusionIdeas();
+                    }}
+                    disabled={contextNodes.length < 2 || isLoading}
+                    className="w-full text-left px-2 py-1.5 text-xs rounded-md text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 disabled:opacity-40"
+                  >
+                    Fusion
+                  </button>
+                </div>
+              )}
+            </div>
 
             {verificationResult && (
               <span className={`flex items-center gap-1 text-[10px] ${verificationResult.success ? "text-emerald-600" : "text-red-500"}`}>

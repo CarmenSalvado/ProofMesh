@@ -29,6 +29,7 @@ import {
   Play,
   Pencil,
   RefreshCw,
+  LayoutGrid,
   Zap,
   Trash2,
   Upload,
@@ -36,6 +37,7 @@ import {
   ZoomIn,
   ZoomOut,
   Square, // Added import
+  BookOpen,
 } from "lucide-react";
 import {
   compileLatexProject,
@@ -115,6 +117,22 @@ const normalizeInstruction = (value: string) =>
 const isEditIntent = (value: string) => EDIT_INTENT_PATTERN.test(normalizeInstruction(value));
 
 const countLines = (value?: string) => (value ? value.split("\n").length : 0);
+
+const escapeLatexText = (value: string) =>
+  value
+    .replace(/\\/g, "\\textbackslash{}")
+    .replace(/([#$%&_{}])/g, "\\$1")
+    .replace(/\^/g, "\\^{}")
+    .replace(/~/g, "\\~{}");
+
+const looksLikeLatex = (value: string) =>
+  /\\[a-zA-Z]+|\\begin\{|\\end\{|\\\[|\\\]|\$\$|\$/.test(value);
+
+const normalizeLatexText = (value: string) => {
+  const trimmed = value.replace(/\s+/g, " ").trim();
+  if (!trimmed) return "";
+  return looksLikeLatex(trimmed) ? trimmed : escapeLatexText(trimmed);
+};
 
 const estimateRemovedLines = (edit: { start: { line: number; column: number }; end: { line: number; column: number } }) => {
   const isPoint =
@@ -348,7 +366,9 @@ export default function LabPage({ params }: PageProps) {
     { id: string; timestamp: string; summary: string; content: string }[]
   >([]);
   const [aiReviewOpen, setAiReviewOpen] = useState(false);
-  const [leftTab, setLeftTab] = useState<"files" | "chats">("files");
+  const [leftTab, setLeftTab] = useState<"files" | "chats" | "knowledge">("files");
+  const [knowledgeQuery, setKnowledgeQuery] = useState("");
+  const [knowledgeSelection, setKnowledgeSelection] = useState<{ type: "node" | "block"; id: string } | null>(null);
   const [persistentChats, setPersistentChats] = useState<
     Array<{
       id: string;
@@ -1438,6 +1458,240 @@ export default function LabPage({ params }: PageProps) {
       selectionContextLines,
     ]
   );
+
+  const filteredCanvasNodes = useMemo(() => {
+    const query = knowledgeQuery.trim().toLowerCase();
+    if (!query) return canvasNodes;
+    return canvasNodes.filter((node) => {
+      const content = (node.content || "").toLowerCase();
+      return (
+        node.title.toLowerCase().includes(query) ||
+        node.kind.toLowerCase().includes(query) ||
+        node.id.toLowerCase().includes(query) ||
+        content.includes(query)
+      );
+    });
+  }, [canvasNodes, knowledgeQuery]);
+
+  const filteredCanvasBlocks = useMemo(() => {
+    const query = knowledgeQuery.trim().toLowerCase();
+    if (!query) return canvasBlocks;
+    return canvasBlocks.filter((block) => {
+      const nodeTitles = block.node_ids
+        .map((id) => canvasNodes.find((node) => node.id === id))
+        .filter(Boolean)
+        .map((node) => (node as LibraryItem).title.toLowerCase())
+        .join(" ");
+      return block.name.toLowerCase().includes(query) || nodeTitles.includes(query);
+    });
+  }, [canvasBlocks, canvasNodes, knowledgeQuery]);
+
+  useEffect(() => {
+    if (!knowledgeSelection) return;
+    if (knowledgeSelection.type === "node") {
+      const exists = canvasNodes.some((node) => node.id === knowledgeSelection.id);
+      if (!exists) setKnowledgeSelection(null);
+      return;
+    }
+    const exists = canvasBlocks.some((block) => block.id === knowledgeSelection.id);
+    if (!exists) setKnowledgeSelection(null);
+  }, [knowledgeSelection, canvasNodes, canvasBlocks]);
+
+  const knowledgeGraphLayout = useMemo(() => {
+    const nodeById = new Map(filteredCanvasNodes.map((node) => [node.id, node]));
+    const blockClusters = filteredCanvasBlocks
+      .map((block) => {
+        const nodeIds = block.node_ids.filter((id) => nodeById.has(id));
+        return { id: block.id, name: block.name, nodeIds, isUnassigned: false };
+      })
+      .filter((block) => block.nodeIds.length > 0);
+
+    const assigned = new Set<string>();
+    blockClusters.forEach((block) => block.nodeIds.forEach((id) => assigned.add(id)));
+    const unassigned = filteredCanvasNodes
+      .filter((node) => !assigned.has(node.id))
+      .map((node) => node.id);
+
+    if (unassigned.length > 0) {
+      blockClusters.push({
+        id: "unassigned",
+        name: "Unassigned",
+        nodeIds: unassigned,
+        isUnassigned: true,
+      });
+    }
+
+    const clusters = blockClusters.length > 0
+      ? blockClusters
+      : filteredCanvasNodes.length > 0
+        ? [{
+          id: "all",
+          name: "All Nodes",
+          nodeIds: filteredCanvasNodes.map((node) => node.id),
+          isUnassigned: true,
+        }]
+        : [];
+
+    const MAP_WIDTH = 360;
+    const MAP_HEIGHT = 240;
+    const padding = 24;
+    const columns = clusters.length > 4 ? 3 : clusters.length > 1 ? 2 : 1;
+    const rows = Math.ceil(clusters.length / columns);
+    const cellWidth = (MAP_WIDTH - padding * 2) / columns;
+    const cellHeight = (MAP_HEIGHT - padding * 2) / rows;
+
+    const positions = new Map<string, { x: number; y: number }>();
+    const clusterPositions = clusters.map((cluster, index) => {
+      const col = index % columns;
+      const row = Math.floor(index / columns);
+      const centerX = padding + cellWidth * (col + 0.5);
+      const centerY = padding + cellHeight * (row + 0.5);
+      const radius = Math.min(cellWidth, cellHeight) * 0.42;
+      const nodeCount = cluster.nodeIds.length;
+      const nodeRadius = Math.min(radius * 0.75, 54);
+
+      cluster.nodeIds.forEach((id, idx) => {
+        if (nodeCount === 1) {
+          positions.set(id, { x: centerX, y: centerY });
+          return;
+        }
+        const angle = (idx / nodeCount) * Math.PI * 2;
+        positions.set(id, {
+          x: centerX + Math.cos(angle) * nodeRadius,
+          y: centerY + Math.sin(angle) * nodeRadius,
+        });
+      });
+
+      return {
+        ...cluster,
+        centerX,
+        centerY,
+        radius,
+      };
+    });
+
+    const edges = filteredCanvasNodes.flatMap((node) =>
+      (node.dependencies || [])
+        .filter((dep) => positions.has(dep))
+        .map((dep) => ({ from: dep, to: node.id }))
+    );
+
+    return {
+      width: MAP_WIDTH,
+      height: MAP_HEIGHT,
+      clusters: clusterPositions,
+      positions,
+      edges,
+    };
+  }, [filteredCanvasNodes, filteredCanvasBlocks]);
+
+  const getNodeColor = useCallback((node: LibraryItem) => {
+    const kind = node.kind.toLowerCase();
+    const palette: Record<string, string> = {
+      lemma: "#60a5fa",
+      theorem: "#f472b6",
+      definition: "#34d399",
+      axiom: "#fbbf24",
+      claim: "#a78bfa",
+      idea: "#38bdf8",
+      content: "#fca5a5",
+      note: "#9ca3af",
+    };
+    return palette[kind] || "#9ca3af";
+  }, []);
+
+  const getNodeStroke = useCallback((node: LibraryItem) => {
+    const status = node.status.toLowerCase();
+    if (status === "verified") return "#34d399";
+    if (status === "rejected") return "#f87171";
+    if (status === "proposed") return "#fbbf24";
+    return "#3f3f46";
+  }, []);
+
+  const appendMentionToken = useCallback(
+    (token: string) => {
+      const apply = (prev: string) => {
+        const trimmed = prev.replace(/\s+$/, "");
+        return trimmed ? `${trimmed} @${token} ` : `@${token} `;
+      };
+      if (activePersistentChatId) {
+        setPersistentInput((prev) => apply(prev));
+        setMentionOpen("persistent");
+        return;
+      }
+      setTempChatOpen(true);
+      setTempInput((prev) => apply(prev));
+      setMentionOpen("temp");
+    },
+    [activePersistentChatId, setPersistentInput, setTempInput, setTempChatOpen]
+  );
+
+  const buildNodeLatexSnippet = useCallback((node: LibraryItem) => {
+    const title = escapeLatexText(node.title || "Untitled");
+    const content = normalizeLatexText(node.content || "");
+    const kind = (node.kind || "NOTE").toLowerCase();
+    const status = (node.status || "PROPOSED").toLowerCase();
+    const formula = node.formula ? node.formula.trim() : "";
+    const formattedFormula = formula
+      ? /\$|\\\[|\\\]/.test(formula)
+        ? formula
+        : `\\[\n${formula}\n\\]`
+      : "";
+    const parts = [
+      `% canvas-node:${node.id}`,
+      `% ${kind} (${status})`,
+      `\\paragraph{${title}}`,
+      content,
+      formattedFormula,
+      "",
+    ];
+    return `${parts.filter(Boolean).join("\n")}\n`;
+  }, []);
+
+  const buildBlockLatexSnippet = useCallback(
+    (block: CanvasBlock) => {
+      const name = escapeLatexText(block.name || "Canvas Block");
+      const nodes = block.node_ids
+        .map((id) => canvasNodes.find((node) => node.id === id))
+        .filter(Boolean) as LibraryItem[];
+      const items = nodes
+        .map((node) => `\\item ${escapeLatexText(node.title)} (${node.kind.toLowerCase()})`)
+        .join("\n");
+      const parts = [
+        `% canvas-block:${block.id}`,
+        `\\subsection*{${name}}`,
+        items ? "\\begin{itemize}\n" + items + "\n\\end{itemize}" : "",
+        "",
+      ];
+      return `${parts.filter(Boolean).join("\n")}\n`;
+    },
+    [canvasNodes]
+  );
+
+  const refreshCanvasKnowledge = useCallback(async () => {
+    try {
+      const [blocks, nodes] = await Promise.all([
+        getCanvasBlocks(problemId).catch(() => []),
+        getLibraryItems(problemId),
+      ]);
+      setCanvasBlocks(blocks || []);
+      setCanvasNodes(nodes.items || []);
+      setCanvasBlocksLoaded(true);
+      setCanvasNodesLoaded(true);
+    } catch (error) {
+      console.warn("Failed to refresh canvas knowledge", error);
+    }
+  }, [problemId]);
+
+  const selectedKnowledgeNode = useMemo(() => {
+    if (!knowledgeSelection || knowledgeSelection.type !== "node") return null;
+    return canvasNodes.find((node) => node.id === knowledgeSelection.id) || null;
+  }, [knowledgeSelection, canvasNodes]);
+
+  const selectedKnowledgeBlock = useMemo(() => {
+    if (!knowledgeSelection || knowledgeSelection.type !== "block") return null;
+    return canvasBlocks.find((block) => block.id === knowledgeSelection.id) || null;
+  }, [knowledgeSelection, canvasBlocks]);
 
   const toggleDir = useCallback((path: string) => {
     setExpandedDirs((prev) => {
@@ -3494,6 +3748,14 @@ export default function LabPage({ params }: PageProps) {
             <Play size={12} fill="currentColor" />
             Compile
           </button>
+          <Link
+            href={`/problems/${problemId}/canvas`}
+            className="px-3 py-1.5 rounded-md text-xs font-medium border border-[#2a2a2a] text-neutral-300 hover:text-white hover:border-[#3a3a3a] hover:bg-[#151515] flex items-center gap-1.5 transition-colors"
+            title="Open Proof Canvas"
+          >
+            <LayoutGrid size={12} />
+            Canvas
+          </Link>
           <button
             type="button"
             onClick={loadPdf}
@@ -3539,6 +3801,13 @@ export default function LabPage({ params }: PageProps) {
                     className={`px-3 py-1.5 rounded-md text-[11px] font-medium transition-all ${leftTab === "chats" ? "bg-[#1a1a1a] text-neutral-200" : "text-neutral-500 hover:text-neutral-300 hover:bg-[#151515]"}`}
                   >
                     Chats
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setLeftTab("knowledge")}
+                    className={`px-3 py-1.5 rounded-md text-[11px] font-medium transition-all ${leftTab === "knowledge" ? "bg-[#1a1a1a] text-neutral-200" : "text-neutral-500 hover:text-neutral-300 hover:bg-[#151515]"}`}
+                  >
+                    Knowledge
                   </button>
                   <div className="flex-1" />
                   <button
@@ -3606,6 +3875,19 @@ export default function LabPage({ params }: PageProps) {
                     </button>
                   </div>
                 )}
+                {leftTab === "knowledge" && (
+                  <div className="flex items-center justify-between">
+                    <h2 className="text-[11px] font-medium text-neutral-500 uppercase tracking-wide">Canvas Knowledge</h2>
+                    <button
+                      type="button"
+                      onClick={refreshCanvasKnowledge}
+                      className="p-1.5 rounded-md hover:bg-[#1a1a1a] text-neutral-500 hover:text-neutral-300 transition-colors"
+                      title="Refresh canvas knowledge"
+                    >
+                      <RefreshCw size={14} />
+                    </button>
+                  </div>
+                )}
                 {!canEdit && <p className="text-[10px] text-neutral-600">Read-only</p>}
               </div>
 
@@ -3654,6 +3936,274 @@ export default function LabPage({ params }: PageProps) {
                         </button>
                       ))
                     )}
+                  </div>
+                )}
+                {leftTab === "knowledge" && (
+                  <div className="space-y-4">
+                    <div className="px-1">
+                      <div className="flex items-center gap-2 bg-[#111111] border border-[#1f1f1f] rounded-lg px-2 py-1.5">
+                        <BookOpen size={12} className="text-neutral-500" />
+                        <input
+                          value={knowledgeQuery}
+                          onChange={(event) => setKnowledgeQuery(event.target.value)}
+                          placeholder="Search nodes or blocks..."
+                          className="flex-1 bg-transparent text-[11px] text-neutral-300 placeholder:text-neutral-600 outline-none"
+                        />
+                        {knowledgeQuery && (
+                          <button
+                            type="button"
+                            onClick={() => setKnowledgeQuery("")}
+                            className="text-neutral-600 hover:text-neutral-300 transition-colors"
+                            title="Clear search"
+                          >
+                            <X size={12} />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="mx-1 rounded-lg border border-[#1f1f1f] bg-[#0b0b0b] px-2.5 py-2">
+                      <div className="flex items-center justify-between text-[10px] uppercase tracking-wide text-neutral-600 mb-2">
+                        <span>Knowledge Map</span>
+                        <span>{filteredCanvasNodes.length} nodes</span>
+                      </div>
+                      {knowledgeGraphLayout.positions.size === 0 ? (
+                        <div className="text-[11px] text-neutral-600 px-1 py-6 text-center">
+                          No canvas knowledge yet
+                        </div>
+                      ) : (
+                        <svg
+                          viewBox={`0 0 ${knowledgeGraphLayout.width} ${knowledgeGraphLayout.height}`}
+                          className="w-full h-[220px] rounded-md bg-[#080808] border border-[#151515]"
+                          onClick={(event) => {
+                            if (event.target === event.currentTarget) {
+                              setKnowledgeSelection(null);
+                            }
+                          }}
+                        >
+                          {knowledgeGraphLayout.clusters.map((cluster) => (
+                            <g key={`cluster-${cluster.id}`}>
+                              <circle
+                                cx={cluster.centerX}
+                                cy={cluster.centerY}
+                                r={cluster.radius}
+                                fill={cluster.isUnassigned ? "rgba(63,63,70,0.08)" : "rgba(59,130,246,0.08)"}
+                                stroke={cluster.isUnassigned ? "rgba(82,82,91,0.4)" : "rgba(59,130,246,0.35)"}
+                                strokeDasharray={cluster.isUnassigned ? "4 4" : undefined}
+                                onClick={(event) => {
+                                  if (cluster.isUnassigned || cluster.id === "all") return;
+                                  event.stopPropagation();
+                                  setKnowledgeSelection({ type: "block", id: cluster.id });
+                                }}
+                              />
+                              <text
+                                x={cluster.centerX}
+                                y={cluster.centerY - cluster.radius + 12}
+                                textAnchor="middle"
+                                className="fill-neutral-500 text-[8px] uppercase tracking-wide"
+                              >
+                                {cluster.name.slice(0, 18)}
+                              </text>
+                            </g>
+                          ))}
+
+                          {knowledgeGraphLayout.edges.map((edge, index) => {
+                            const from = knowledgeGraphLayout.positions.get(edge.from);
+                            const to = knowledgeGraphLayout.positions.get(edge.to);
+                            if (!from || !to) return null;
+                            return (
+                              <line
+                                key={`edge-${edge.from}-${edge.to}-${index}`}
+                                x1={from.x}
+                                y1={from.y}
+                                x2={to.x}
+                                y2={to.y}
+                                stroke="rgba(100,116,139,0.35)"
+                                strokeWidth={1}
+                              />
+                            );
+                          })}
+
+                          {filteredCanvasNodes.map((node) => {
+                            const pos = knowledgeGraphLayout.positions.get(node.id);
+                            if (!pos) return null;
+                            const isSelected = knowledgeSelection?.type === "node" && knowledgeSelection.id === node.id;
+                            return (
+                              <g
+                                key={`node-${node.id}`}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  setKnowledgeSelection({ type: "node", id: node.id });
+                                }}
+                                className="cursor-pointer"
+                              >
+                                <circle
+                                  cx={pos.x}
+                                  cy={pos.y}
+                                  r={isSelected ? 7.5 : 6}
+                                  fill={getNodeColor(node)}
+                                  stroke={getNodeStroke(node)}
+                                  strokeWidth={isSelected ? 2 : 1}
+                                />
+                                <title>{`${node.title} (${node.kind.toLowerCase()})`}</title>
+                              </g>
+                            );
+                          })}
+                        </svg>
+                      )}
+
+                      {knowledgeSelection && (
+                        <div className="mt-2 flex items-center justify-between gap-2 text-[10px] text-neutral-500">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="uppercase">{knowledgeSelection.type}</span>
+                            <span className="text-neutral-300 truncate">
+                              {knowledgeSelection.type === "node"
+                                ? selectedKnowledgeNode?.title || "Node"
+                                : selectedKnowledgeBlock?.name || "Block"}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (knowledgeSelection.type === "node" && selectedKnowledgeNode) {
+                                  appendMentionToken(`node-${selectedKnowledgeNode.id}`);
+                                  return;
+                                }
+                                if (knowledgeSelection.type === "block" && selectedKnowledgeBlock) {
+                                  appendMentionToken(`block-${selectedKnowledgeBlock.id}`);
+                                }
+                              }}
+                              className="px-1.5 py-0.5 rounded border border-[#242424] text-neutral-500 hover:text-neutral-200 hover:border-[#333333] transition-colors"
+                            >
+                              @
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (!canEdit || !activePath) return;
+                                if (knowledgeSelection.type === "node" && selectedKnowledgeNode) {
+                                  insertAtCursor(buildNodeLatexSnippet(selectedKnowledgeNode));
+                                } else if (knowledgeSelection.type === "block" && selectedKnowledgeBlock) {
+                                  insertAtCursor(buildBlockLatexSnippet(selectedKnowledgeBlock));
+                                }
+                              }}
+                              disabled={!canEdit || !activePath}
+                              className="px-1.5 py-0.5 rounded border border-[#242424] text-neutral-500 hover:text-neutral-200 hover:border-[#333333] disabled:opacity-40 transition-colors"
+                            >
+                              Insert
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="px-2 text-[10px] uppercase tracking-wide text-neutral-600 flex items-center justify-between">
+                        <span>Blocks</span>
+                        <span>{filteredCanvasBlocks.length}</span>
+                      </div>
+                      {filteredCanvasBlocks.length === 0 ? (
+                        <div className="px-2 text-[11px] text-neutral-600">No blocks found</div>
+                      ) : (
+                        filteredCanvasBlocks.map((block) => {
+                          const nodes = block.node_ids
+                            .map((id) => canvasNodes.find((node) => node.id === id))
+                            .filter(Boolean) as LibraryItem[];
+                          const preview = nodes.slice(0, 3).map((node) => node.title).join(" • ");
+                          return (
+                            <div
+                              key={block.id}
+                              className="mx-1 rounded-lg border border-[#1f1f1f] bg-[#0f0f0f] px-2.5 py-2 space-y-1"
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <Folder size={12} className="text-sky-400 shrink-0" />
+                                  <span className="text-[11px] text-neutral-200 truncate">{block.name}</span>
+                                </div>
+                                <div className="flex items-center gap-1 shrink-0">
+                                  <button
+                                    type="button"
+                                    onClick={() => appendMentionToken(`block-${block.id}`)}
+                                    className="px-1.5 py-0.5 text-[10px] rounded border border-[#242424] text-neutral-500 hover:text-neutral-200 hover:border-[#333333] transition-colors"
+                                    title="Add to chat context"
+                                  >
+                                    @
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => insertAtCursor(buildBlockLatexSnippet(block))}
+                                    disabled={!canEdit || !activePath}
+                                    className="px-1.5 py-0.5 text-[10px] rounded border border-[#242424] text-neutral-500 hover:text-neutral-200 hover:border-[#333333] disabled:opacity-40 transition-colors"
+                                    title="Insert into LaTeX"
+                                  >
+                                    Insert
+                                  </button>
+                                </div>
+                              </div>
+                              <div className="text-[10px] text-neutral-500">
+                                {nodes.length} {nodes.length === 1 ? "node" : "nodes"}
+                                {preview ? ` • ${preview}` : ""}
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="px-2 text-[10px] uppercase tracking-wide text-neutral-600 flex items-center justify-between">
+                        <span>Nodes</span>
+                        <span>{filteredCanvasNodes.length}</span>
+                      </div>
+                      {filteredCanvasNodes.length === 0 ? (
+                        <div className="px-2 text-[11px] text-neutral-600">No nodes found</div>
+                      ) : (
+                        filteredCanvasNodes.map((node) => (
+                          <div
+                            key={node.id}
+                            className="mx-1 rounded-lg border border-[#1f1f1f] bg-[#0f0f0f] px-2.5 py-2 space-y-1"
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="flex items-center gap-2 min-w-0">
+                                <FileText size={12} className="text-emerald-500 shrink-0" />
+                                <span className="text-[11px] text-neutral-200 truncate">{node.title}</span>
+                              </div>
+                              <div className="flex items-center gap-1 shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => appendMentionToken(`node-${node.id}`)}
+                                  className="px-1.5 py-0.5 text-[10px] rounded border border-[#242424] text-neutral-500 hover:text-neutral-200 hover:border-[#333333] transition-colors"
+                                  title="Add to chat context"
+                                >
+                                  @
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => insertAtCursor(buildNodeLatexSnippet(node))}
+                                  disabled={!canEdit || !activePath}
+                                  className="px-1.5 py-0.5 text-[10px] rounded border border-[#242424] text-neutral-500 hover:text-neutral-200 hover:border-[#333333] disabled:opacity-40 transition-colors"
+                                  title="Insert into LaTeX"
+                                >
+                                  Insert
+                                </button>
+                              </div>
+                            </div>
+                            <div className="text-[10px] text-neutral-500 flex items-center gap-2">
+                              <span className="uppercase">{node.kind.toLowerCase()}</span>
+                              <span className="text-neutral-700">•</span>
+                              <span className="uppercase">{node.status.toLowerCase()}</span>
+                            </div>
+                            {node.content && (
+                              <div className="text-[10px] text-neutral-600 line-clamp-3">
+                                {node.content.slice(0, 160)}
+                                {node.content.length > 160 ? "..." : ""}
+                              </div>
+                            )}
+                          </div>
+                        ))
+                      )}
+                    </div>
                   </div>
                 )}
               </div>

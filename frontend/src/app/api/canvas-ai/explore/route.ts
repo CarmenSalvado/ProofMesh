@@ -20,6 +20,16 @@ Format your response with clear sections:
 - **Insights**: Notable observations or patterns
 - **Next Steps**: Suggested directions
 
+When possible, include explicitly labeled items so they can become canvas nodes:
+- Definition:
+- Lemma:
+- Theorem:
+- Claim:
+- Computation:
+- Idea:
+- Note:
+- Resource:
+
 Be rigorous but exploratory. Mathematics is about discovery.`;
 
 export async function POST(request: Request) {
