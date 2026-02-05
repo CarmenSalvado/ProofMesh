@@ -8,8 +8,8 @@ import json
 import re
 from typing import Optional, List
 
-# Asumimos que estas importaciones existen en tu estructura de proyecto
-# Si "base" o "models" fallan, asegúrate de que existen en tu path relativo
+# We assume these imports exist in your project structure
+# If "base" or "models" fail, make sure they exist in your relative path
 from .base import Agent, LoopAgent
 from ..models.types import Proposal, ExplorationResult, AgentResponse
 

@@ -37,8 +37,8 @@ class Runtime:
         
         Args:
             api_key: Gemini API key (defaults to GEMINI_API_KEY env var)
-            reasoning_model: Modelo para tareas intensivas en razonamiento
-            fast_model: Modelo para tareas generales y rápidas
+            reasoning_model: Model for reasoning-intensive tasks
+            fast_model: Model for general and fast tasks
         """
         self.api_key = api_key or os.environ.get("GEMINI_API_KEY")
         self.reasoning_model = reasoning_model

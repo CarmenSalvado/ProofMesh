@@ -490,8 +490,8 @@ export default function LabPage({ params }: PageProps) {
             })
             .join("\n");
           const extra =
-            nodes && nodes.length > 5 ? `\n  …y ${nodes.length - 5} nodos más` : "";
-          return `Bloque "${block?.name}" (${block?.node_ids?.length || 0} nodos):\n${nodeSummaries}${extra}`;
+            nodes && nodes.length > 5 ? `\n  …and ${nodes.length - 5} more nodes` : "";
+          return `Block "${block?.name}" (${block?.node_ids?.length || 0} nodes):\n${nodeSummaries}${extra}`;
         });
       if (!lines.length) return "";
       return `Canvas blocks selected:\n${lines.join("\n\n")}`;
@@ -1342,7 +1342,7 @@ export default function LabPage({ params }: PageProps) {
           insert: path,
           label: path,
           type: "file" as const,
-          description: "Archivo o asset de LaTeX",
+          description: "LaTeX file or asset",
         }));
 
       const blockMatches: MentionSuggestion[] = canvasBlocks
@@ -1357,8 +1357,8 @@ export default function LabPage({ params }: PageProps) {
             insert: `block-${block.id}`,
             label: block.name,
             type: "block" as const,
-            description: `${nodes.length} nodos`,
-            preview: nodeTitles || "Sin nodos",
+            description: `${nodes.length} nodes`,
+            preview: nodeTitles || "No nodes",
           };
         });
 
@@ -1380,7 +1380,7 @@ export default function LabPage({ params }: PageProps) {
             insert: `node-${node.id}`,
             label: node.title,
             type: "node" as const,
-            description: `${node.kind.toLowerCase()} • estado ${node.status.toLowerCase()}`,
+            description: `${node.kind.toLowerCase()} • status ${node.status.toLowerCase()}`,
             preview: snippet ? `${snippet}${suffix}` : undefined,
           };
         });
@@ -3823,10 +3823,10 @@ export default function LabPage({ params }: PageProps) {
                                 {block.name}
                               </span>
                               <span className="text-[10px] text-neutral-500">
-                                {nodes.length} {nodes.length === 1 ? "nodo" : "nodos"}
+                                {nodes.length} {nodes.length === 1 ? "node" : "nodes"}
                               </span>
                               <span className="text-[10px] text-neutral-500 hidden sm:inline">
-                                {titles || "Sin nodos"}
+                                {titles || "No nodes"}
                               </span>
                             </span>
                           );
@@ -3927,7 +3927,7 @@ export default function LabPage({ params }: PageProps) {
                                       <div className="flex items-center gap-2">
                                         <span className="text-neutral-100">@{suggestion.insert}</span>
                                         <span className={`text-[10px] px-1.5 py-0.5 rounded-md border ${badgeClass}`}>
-                                          {suggestion.type === "node" ? "Nodo" : suggestion.type === "block" ? "Bloque" : "Archivo"}
+                                          {suggestion.type === "node" ? "Node" : suggestion.type === "block" ? "Block" : "File"}
                                         </span>
                                       </div>
                                       {suggestion.description && (
@@ -4171,7 +4171,7 @@ export default function LabPage({ params }: PageProps) {
                                       </div>
                                       {hasOtherFiles && (
                                         <div className="text-[10px] text-neutral-600 mt-1">
-                                          Hay cambios pendientes en otros archivos.
+                                          There are pending changes in other files.
                                         </div>
                                       )}
                                       <div className="mt-2 space-y-1 max-h-28 overflow-y-auto pm-scrollbar-thin">
@@ -4347,10 +4347,10 @@ export default function LabPage({ params }: PageProps) {
                                   {block.name}
                                 </span>
                                 <span className="text-[10px] text-neutral-500">
-                                  {nodes.length} {nodes.length === 1 ? "nodo" : "nodos"}
+                                  {nodes.length} {nodes.length === 1 ? "node" : "nodes"}
                                 </span>
                                 <span className="text-[10px] text-neutral-500 hidden sm:inline">
-                                  {titles || "Sin nodos"}
+                                  {titles || "No nodes"}
                                 </span>
                               </span>
                             );
@@ -4452,7 +4452,7 @@ export default function LabPage({ params }: PageProps) {
                                         <div className="flex items-center gap-2">
                                           <span className="text-neutral-100">@{suggestion.insert}</span>
                                           <span className={`text-[10px] px-1.5 py-0.5 rounded-md border ${badgeClass}`}>
-                                            {suggestion.type === "node" ? "Nodo" : suggestion.type === "block" ? "Bloque" : "Archivo"}
+                                            {suggestion.type === "node" ? "Node" : suggestion.type === "block" ? "Block" : "File"}
                                           </span>
                                         </div>
                                         {suggestion.description && (

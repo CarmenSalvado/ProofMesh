@@ -4,7 +4,7 @@ import { ReactNode, useEffect, useState } from "react";
 import { motion, AnimatePresence, Variants } from "framer-motion";
 
 // ============================================
-// Animaciones específicas para nodos del canvas
+// Specific animations for canvas nodes
 // ============================================
 
 interface NodeEntranceProps {
@@ -64,7 +64,7 @@ export function NodeEntrance({
 }
 
 // ============================================
-// Efecto de conexión animada entre nodos
+// Animated connection effect between nodes
 // ============================================
 
 interface AnimatedConnectionProps {
@@ -150,7 +150,7 @@ export function AnimatedConnection({
 }
 
 // ============================================
-// Efecto de selección con halo
+// Selection halo effect
 // ============================================
 
 interface SelectionHaloProps {
@@ -194,7 +194,7 @@ export function SelectionHalo({
 }
 
 // ============================================
-// Efecto de drag con sombra
+// Drag effect with shadow
 // ============================================
 
 interface DraggableNodeProps {
@@ -229,7 +229,7 @@ export function DraggableNode({
 }
 
 // ============================================
-// Efecto de hover en nodos
+// Node hover effect
 // ============================================
 
 interface HoverableNodeProps {
@@ -269,7 +269,7 @@ export function HoverableNode({
 }
 
 // ============================================
-// Efecto de creación de conexión
+// Connection creation effect
 // ============================================
 
 interface ConnectionCreationEffectProps {
@@ -323,7 +323,7 @@ export function ConnectionCreationEffect({
 }
 
 // ============================================
-// Efecto de partículas para acciones especiales
+// Particle effect for special actions
 // ============================================
 
 interface ParticleBurstProps {
@@ -382,7 +382,7 @@ export function ParticleBurst({
 }
 
 // ============================================
-// Efecto de pulso para elementos importantes
+// Pulse effect for important elements
 // ============================================
 
 interface AttentionPulseProps {
@@ -441,7 +441,7 @@ export function AttentionPulse({
 }
 
 // ============================================
-// Efecto de shimmer para contenido en carga
+// Shimmer effect for loading content
 // ============================================
 
 interface ShimmerEffectProps {
@@ -480,7 +480,7 @@ export function ShimmerEffect({
 }
 
 // ============================================
-// Efecto de borde animado
+// Animated border effect
 // ============================================
 
 interface AnimatedBorderProps {
@@ -523,7 +523,7 @@ export function AnimatedBorder({
 }
 
 // ============================================
-// Efecto de flotación suave
+// Soft floating effect
 // ============================================
 
 interface FloatingElementProps {
@@ -557,7 +557,7 @@ export function FloatingElement({
 }
 
 // ============================================
-// Transición de layout suave
+// Smooth layout transition
 // ============================================
 
 interface LayoutTransitionProps {
@@ -582,7 +582,7 @@ export function LayoutTransition({ children, className = "" }: LayoutTransitionP
 }
 
 // ============================================
-// Contador animado
+// Animated counter
 // ============================================
 
 interface AnimatedCounterProps {
@@ -610,7 +610,7 @@ export function AnimatedCounter({
 }
 
 // ============================================
-// Efecto de onda al hacer clic
+// Click ripple effect
 // ============================================
 
 interface RippleButtonProps {

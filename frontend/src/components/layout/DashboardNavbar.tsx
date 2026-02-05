@@ -192,11 +192,11 @@ export function DashboardNavbar({ showSearch = true }: DashboardNavbarProps) {
                   <div className="absolute z-50 w-full mt-2 bg-white border border-neutral-200 rounded-lg shadow-lg max-h-96 overflow-y-auto">
                     {searching ? (
                       <div className="px-4 py-3 text-sm text-neutral-500 text-center">
-                        Buscando...
+                        Searching...
                       </div>
                     ) : searchResults.length === 0 ? (
                       <div className="px-4 py-3 text-sm text-neutral-500 text-center">
-                        No se encontraron usuarios
+                        No users found
                       </div>
                     ) : (
                       <div className="py-2">

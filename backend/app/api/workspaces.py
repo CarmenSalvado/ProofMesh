@@ -434,9 +434,13 @@ async def generate_story_endpoint(
     user_idea = request.get("user_idea", "")
     pattern_id = request.get("pattern_id")
     use_fusion = request.get("use_fusion", True)
+    context = request.get("context")
 
     if not user_idea:
         raise HTTPException(status_code=400, detail="user_idea is required")
+
+    if context:
+        user_idea = f"{user_idea}\n\nContext:\n{context}"
 
     # Create orchestrator
     orchestrator = Orchestrator()
@@ -512,6 +516,87 @@ async def generate_story_endpoint(
         "story": story,
         "review": review_result,
         "novelty": novelty_report
+    }
+
+
+@router.post("/fuse-ideas")
+async def fuse_ideas_endpoint(
+    problem_id: UUID,
+    request: dict,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Fuse multiple ideas into a single conceptual innovation.
+
+    Request body:
+    {
+        "ideas": ["Idea A", "Idea B", ...],
+        "context": "optional extra context",
+        "pattern_id": "optional-pattern-id"
+    }
+    """
+    from mesh.backend.agents.idea_fusion import IdeaFusionAgent
+    from mesh.backend.tools.pattern_store import PatternStore
+
+    await verify_problem_access(problem_id, db, current_user)
+
+    ideas = request.get("ideas") or []
+    context = request.get("context", "")
+    pattern_id = request.get("pattern_id")
+
+    if not isinstance(ideas, list) or len(ideas) < 2:
+        raise HTTPException(status_code=400, detail="At least two ideas are required for fusion")
+
+    idea_block = "\n".join(f"- {idea}" for idea in ideas)
+    user_idea = idea_block if not context else f"{idea_block}\n\nContext:\n{context}"
+
+    pattern_store = PatternStore()
+    pattern_info = None
+
+    try:
+        if pattern_id:
+            pattern_info = await pattern_store.get_pattern_by_id(db, pattern_id)
+
+        if not pattern_info:
+            patterns = await pattern_store.recall_patterns(session=db, query=user_idea, top_k=5)
+            if patterns:
+                pattern_info = patterns[0]
+                pattern_id = pattern_info.get("pattern_id")
+    except Exception:
+        pattern_info = None
+
+    if not pattern_info:
+        pattern_id = pattern_id or "ad-hoc"
+        pattern_info = {
+            "pattern_id": pattern_id,
+            "name": "Cross-Idea Fusion",
+            "summary": {
+                "solution_approaches": ideas,
+                "story": []
+            }
+        }
+
+    fusion_agent = IdeaFusionAgent()
+    fused = await fusion_agent.fuse(
+        user_idea=user_idea,
+        pattern_id=pattern_id,
+        pattern_info=pattern_info
+    )
+
+    fused_title = fused.get("fused_idea_title", "Fused Idea")
+    fused_description = fused.get("fused_idea_description", "")
+    fused_idea = f"{fused_title}: {fused_description}".strip(": ")
+
+    explanation = fused.get("why_not_straightforward_combination") or fused.get("problem_framing") or ""
+
+    return {
+        "fused_idea": fused_idea,
+        "source_ideas": ideas,
+        "fusion_type": "innovation_fusion",
+        "explanation": explanation,
+        "pattern_id": pattern_id,
+        "pattern_name": pattern_info.get("name", "")
     }
 
 

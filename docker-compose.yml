@@ -137,12 +137,27 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    ports:
+      - "9008:9008"
     environment:
       LEAN_PROJECT_DIR: /workspace/mesh_project
       LEAN_TIMEOUT: ${LEAN_TIMEOUT:-60}
+      # Limit parallelism to avoid consuming all CPU
+      LAKE_JOBS: 2
+      LEANTAR_JOBS: 2
+      LEAN_NUM_THREADS: 2
     volumes:
       - lean-elan:/root/.elan
       - lean-lake-cache:/workspace/mesh_project/.lake
+    # Resource limits to avoid consuming the entire system
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
 
   # TeXLive compiler service
   texlive-compiler:

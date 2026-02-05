@@ -113,6 +113,7 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
   const [commitModalOpen, setCommitModalOpen] = useState(false);
   const [detailPanelNodeId, setDetailPanelNodeId] = useState<string | null>(null);
   const [newNodePosition, setNewNodePosition] = useState({ x: 200, y: 200 });
+  const [lastCreatedNodeId, setLastCreatedNodeId] = useState<string | null>(null);
   const positionUpdateTimeout = useRef<NodeJS.Timeout | null>(null);
   const canvasRef = useRef<ProofCanvasHandle | null>(null);
 
@@ -684,13 +685,21 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
         ? { x: data.x, y: data.y }
         : newNodePosition;
 
+      const resolvedDependencies = data.dependencies && data.dependencies.length > 0
+        ? Array.from(new Set(data.dependencies))
+        : selectedNodeId
+          ? [selectedNodeId]
+          : lastCreatedNodeId
+            ? [lastCreatedNodeId]
+            : [];
+
       const newItem = await createLibraryItem(problemId, {
         title: data.title,
         kind: data.type as LibraryItem["kind"],
         content: data.content,
         formula: data.formula,
         lean_code: data.leanCode,
-        dependencies: data.dependencies,
+        dependencies: resolvedDependencies,
         authors: data.authors,
         source: data.source,
       });
@@ -718,9 +727,10 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
 
       // Select the new node
       setSelectedNodeId(newItem.id);
+      setLastCreatedNodeId(newItem.id);
       return newItem;
     },
-    [problemId, newNodePosition, collaboration, positions, libraryItems, recordCreate]
+    [problemId, newNodePosition, collaboration, positions, libraryItems, recordCreate, selectedNodeId, lastCreatedNodeId]
   );
 
   // Handle opening add modal from canvas
@@ -744,13 +754,21 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
       }
 
       try {
+        const resolvedDependencies = nodeData.dependencies && nodeData.dependencies.length > 0
+          ? Array.from(new Set(nodeData.dependencies))
+          : selectedNodeId
+            ? [selectedNodeId]
+            : lastCreatedNodeId
+              ? [lastCreatedNodeId]
+              : [];
+
         const newItem = await createLibraryItem(problemId, {
           title: nodeData.title,
           kind: (nodeData.type?.toUpperCase() || "NOTE") as LibraryItem["kind"],
           content: nodeData.content || "",
           formula: nodeData.formula,
           lean_code: nodeData.leanCode,
-          dependencies: nodeData.dependencies || [],
+          dependencies: resolvedDependencies,
         });
 
         const pos = { x: nodeData.x || 300, y: nodeData.y || 200 };
@@ -775,11 +793,12 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
         });
 
         setSelectedNodeId(newItem.id);
+        setLastCreatedNodeId(newItem.id);
       } catch (err) {
         console.error("Failed to create node:", err);
       }
     },
-    [problemId, collaboration, handleOpenAddModal, positions, libraryItems, recordCreate]
+    [problemId, collaboration, handleOpenAddModal, positions, libraryItems, recordCreate, selectedNodeId, lastCreatedNodeId]
   );
 
   // Handle quick update from context menu (type/status changes)

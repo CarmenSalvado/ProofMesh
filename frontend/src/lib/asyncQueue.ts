@@ -18,7 +18,7 @@ export class AsyncQueue {
   private retryDelay = 1000; // ms
 
   /**
-   * Agrega una operación a la cola
+   * Adds an operation to the queue
    */
   async enqueue<T>(operation: QueuedOperation<T>): Promise<T> {
     return new Promise((resolve, reject) => {
@@ -40,7 +40,7 @@ export class AsyncQueue {
   }
 
   /**
-   * Procesa la cola de operaciones
+   * Processes the operation queue
    */
   private async processQueue() {
     if (this.isProcessing || this.queue.length === 0) {
@@ -58,7 +58,7 @@ export class AsyncQueue {
   }
 
   /**
-   * Ejecuta una operación con reintentos automáticos
+   * Executes an operation with automatic retries
    */
   private async executeWithRetry<T>(operation: QueuedOperation<T>) {
     let lastError: Error | null = null;
@@ -77,14 +77,14 @@ export class AsyncQueue {
         );
 
         if (attempt < this.maxRetries) {
-          // Esperar antes de reintentar con backoff exponencial
+          // Wait before retrying with exponential backoff
           const delay = this.retryDelay * Math.pow(2, attempt);
           await this.sleep(delay);
         }
       }
     }
 
-    // Todos los reintentos fallaron
+    // All retries failed
     console.error(
       `[AsyncQueue] Operation "${operation.name}" failed after ${this.maxRetries + 1} attempts:`,
       lastError
@@ -93,14 +93,14 @@ export class AsyncQueue {
   }
 
   /**
-   * Utilidad para esperar
+   * Utility to wait
    */
   private sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   /**
-   * Limpia la cola de operaciones pendientes
+   * Clears the pending operations queue
    */
   clear() {
     this.queue.forEach((op) => {
@@ -111,25 +111,25 @@ export class AsyncQueue {
   }
 
   /**
-   * Retorna el número de operaciones pendientes
+   * Returns the number of pending operations
    */
   get pendingCount(): number {
     return this.queue.length;
   }
 
   /**
-   * Retorna true si hay operaciones en proceso
+   * Returns true if there are operations in progress
    */
   get isRunning(): boolean {
     return this.isProcessing;
   }
 }
 
-// Instancia global de la cola para el canvas
+// Global canvas queue instance
 export const canvasQueue = new AsyncQueue();
 
 /**
- * Wrapper para ejecutar operaciones en la cola global del canvas
+ * Wrapper to execute operations in the global canvas queue
  */
 export function queueCanvasOperation<T>(
   name: string,

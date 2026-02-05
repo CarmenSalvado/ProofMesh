@@ -3,7 +3,12 @@ FROM python:3.12-slim
 ENV DEBIAN_FRONTEND=noninteractive \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_DEFAULT_TIMEOUT=120 \
-    PYTHONPATH="/app:${PYTHONPATH}"
+    PYTHONPATH="/app:${PYTHONPATH}" \
+    # Límites de paralelismo para no consumir todo el CPU
+    LAKE_JOBS=2 \
+    LEANTAR_JOBS=2 \
+    # Opciones de Lean para mejor rendimiento
+    LEAN_NUM_THREADS=2
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl git ca-certificates build-essential libgmp-dev \
@@ -26,18 +31,17 @@ COPY mesh/mesh_project/lakefile.toml mesh/mesh_project/lean-toolchain mesh/mesh_
 COPY mesh/mesh_project/*.lean ./
 COPY mesh/mesh_project/MeshProject ./MeshProject
 
-# Create entrypoint script to fetch cache on first run if needed
-RUN echo '#!/bin/bash\n\
-set -e\n\
-cd /workspace/mesh_project\n\
-if [ ! -d ".lake/packages" ]; then\n\
-  echo "Fetching Lean packages and Mathlib cache..."\n\
-  lake update\n\
-  lake exe cache get || true\n\
-fi\n\
-exec "$@"' > /entrypoint.sh && chmod +x /entrypoint.sh
+# Copy entrypoint script
+COPY lean-runner/docker-entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Opcional: Pre-download mathlib durante build (descomentar si se quiere imagen más grande pero arranque rápido)
+# RUN --mount=type=cache,target=/tmp/lake-cache \
+#     lake update --jobs 2 && \
+#     lake exe cache get --jobs 2 || true && \
+#     rm -rf .lake
 
 EXPOSE 9008
 
 ENTRYPOINT ["/entrypoint.sh"]
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "9008"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "9008", "--workers", "1"]

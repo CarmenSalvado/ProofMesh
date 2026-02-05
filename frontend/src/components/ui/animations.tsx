@@ -4,7 +4,7 @@ import { ReactNode, useEffect, useState } from "react";
 import { motion, AnimatePresence, Variants, Transition } from "framer-motion";
 
 // ============================================
-// Variantes de animación reutilizables
+// Reusable animation variants
 // ============================================
 
 export const fadeIn: Variants = {
@@ -176,7 +176,7 @@ export const staggerItem: Variants = {
 };
 
 // ============================================
-// Componentes de animación envolventes
+// Wrapper animation components
 // ============================================
 
 export interface AnimatedContainerProps {
@@ -432,7 +432,7 @@ export function Glow({ children, color = "rgba(99, 102, 241, 0.4)", className = 
 }
 
 // ============================================
-// Animaciones de página y transiciones
+// Page animations and transitions
 // ============================================
 
 export interface PageTransitionProps {
@@ -671,7 +671,7 @@ export function useScrollAnimation(threshold = 0.1) {
   return { ref: setRef, isVisible };
 }
 
-// Componente que anima al entrar en viewport
+// Component that animates when entering viewport
 export interface ScrollRevealProps {
   children: ReactNode;
   className?: string;

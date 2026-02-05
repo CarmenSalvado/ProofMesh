@@ -305,6 +305,12 @@ export function FloatingAIBar({
   const [generatedStory, setGeneratedStory] = useState<Story | null>(null);
   const [isGeneratingStory, setIsGeneratingStory] = useState(false);
   const [selectedStoriesForFusion, setSelectedStoriesForFusion] = useState<string[]>([]);
+  const onCreateNodeRef = useRef<FloatingAIBarProps["onCreateNode"]>(onCreateNode);
+  const startContextRef = useRef<{ dependencyIds: string[]; baseX: number; baseY: number }>({
+    dependencyIds: [],
+    baseX: 400,
+    baseY: 300,
+  });
 
   const getStartContext = useCallback(() => {
     const primaryNode = selectedNode || selectedNodes[0] || null;
@@ -322,6 +328,15 @@ export function FloatingAIBar({
       baseY: primaryNode?.y ?? 300,
     };
   }, [contextNodes, selectedNode, selectedNodes]);
+
+  useEffect(() => {
+    onCreateNodeRef.current = onCreateNode;
+  }, [onCreateNode]);
+
+  useEffect(() => {
+    const { dependencyIds, baseX, baseY } = getStartContext();
+    startContextRef.current = { dependencyIds, baseX, baseY };
+  }, [getStartContext]);
 
   // Build context for AI from selected nodes
   const aiContext = useMemo(() => {
@@ -367,6 +382,19 @@ export function FloatingAIBar({
             title: "AI Exploration Complete",
             content: finalResponse.slice(0, 300) + (finalResponse.length > 300 ? "..." : ""),
           });
+          const createNode = onCreateNodeRef.current;
+          if (createNode) {
+            const { dependencyIds, baseX, baseY } = startContextRef.current;
+            void createNode({
+              type: "NOTE",
+              title: deriveGroupTitle(finalResponse, "Chat Insight"),
+              content: finalResponse,
+              x: baseX + 220,
+              y: baseY + 180,
+              dependencies: dependencyIds,
+              authors: [AI_AUTHOR],
+            });
+          }
         }
       } else {
         addInsight({
@@ -374,6 +402,19 @@ export function FloatingAIBar({
           title: "AI Exploration Complete",
           content: content.slice(0, 300) + (content.length > 300 ? "..." : ""),
         });
+        const createNode = onCreateNodeRef.current;
+        if (createNode) {
+          const { dependencyIds, baseX, baseY } = startContextRef.current;
+          void createNode({
+            type: "NOTE",
+            title: deriveGroupTitle(content, "Chat Insight"),
+            content,
+            x: baseX + 220,
+            y: baseY + 180,
+            dependencies: dependencyIds,
+            authors: [AI_AUTHOR],
+          });
+        }
       }
     },
   });
@@ -609,7 +650,7 @@ export function FloatingAIBar({
             incomingCounts.set(edge.to, (incomingCounts.get(edge.to) || 0) + 1);
           });
 
-          // Ejecutar la creación del diagrama completo en la cola
+          // Execute full diagram creation in queue
           await queueCanvasOperation(
             `create-diagram-${proposal.content.slice(0, 30)}`,
             async () => {
@@ -617,7 +658,7 @@ export function FloatingAIBar({
               const baseDepsByActualId = new Map<string, string[]>();
               const createdNodeIds: string[] = [];
 
-              // Crear todos los nodos del diagrama
+              // Create all diagram nodes
               for (const node of diagram.nodes) {
                 const position = positions[node.id] || { x: baseX, y: diagramBaseY };
                 const baseDeps = (incomingCounts.get(node.id) || 0) === 0 ? dependencyIds : [];
@@ -643,7 +684,7 @@ export function FloatingAIBar({
                 }
               }
 
-              // Actualizar edges (dependencies) después de crear todos los nodos
+              // Update edges (dependencies) after creating all nodes
               if (onUpdateNode && diagram.edges && diagram.edges.length > 0) {
                 const depsByActualId = new Map<string, Set<string>>();
 
@@ -657,7 +698,7 @@ export function FloatingAIBar({
                   depsByActualId.get(toActual)?.add(fromActual);
                 });
 
-                // Actualizar todas las dependencias en paralelo
+                // Update all dependencies in parallel
                 await Promise.all(
                   Array.from(depsByActualId.entries()).map(async ([actualId, deps]) => {
                     const baseDeps = baseDepsByActualId.get(actualId) || [];
@@ -667,7 +708,7 @@ export function FloatingAIBar({
                 );
               }
 
-              // Crear bloque con todos los nodos creados
+              // Create block with all created nodes
               if (onCreateBlock && createdNodeIds.length > 0) {
                 const titleSeed = proposal.content || diagram.nodes[0]?.title || "Proposal";
                 const groupTitle = deriveGroupTitle(titleSeed);
@@ -703,7 +744,7 @@ export function FloatingAIBar({
 
         console.log(`[FloatingAIBar] Creating single node for proposal ${index + 1}`);
         
-        // Crear nodo individual en la cola
+        // Create individual node in queue
         await queueCanvasOperation(
           `create-single-node-${proposal.content.slice(0, 30)}`,
           async () => {
@@ -733,7 +774,7 @@ export function FloatingAIBar({
               console.error(`[FloatingAIBar] ❌ Error creating single node:`, error);
               addInsight({
                 type: "insight",
-                title: "Error creando nodo",
+                title: "Error creating node",
                 content: error.message,
               });
             },
@@ -771,6 +812,18 @@ export function FloatingAIBar({
       content: trimmed,
     });
   }, [command, problemId, isAiLoading, appendAiMessage]);
+
+  const handlePrimarySend = useCallback(async () => {
+    const trimmed = command.trim();
+    if (!trimmed || !problemId || isAiLoading || isLoading) return;
+
+    if (isOrchestrationAvailable && onCreateNode) {
+      await handleExplore();
+      return;
+    }
+
+    await handleChatSend();
+  }, [command, problemId, isAiLoading, isLoading, isOrchestrationAvailable, onCreateNode, handleExplore, handleChatSend]);
 
   const handleUseChatInExplore = useCallback((content: string) => {
     setCommand(content);
@@ -817,7 +870,7 @@ export function FloatingAIBar({
       setCurrentLeanCode(result.lean_code);
 
       const { primaryNode, dependencyIds, baseX, baseY } = getStartContext();
-      const leanTitle = primaryNode ? `Lean de ${primaryNode.title}` : "Lean 4 code";
+      const leanTitle = primaryNode ? `Lean for ${primaryNode.title}` : "Lean 4 code";
 
       if (onCreateNode) {
         await onCreateNode({
@@ -878,9 +931,9 @@ export function FloatingAIBar({
         await onCreateNode({
           type: "NOTE",
           title: result.success
-            ? `✓ Verificación de ${primaryNode?.title || "Lean code"}`
-            : `✗ Verificación de ${primaryNode?.title || "Lean code"}`,
-          content: `**Resultado:** ${result.success ? "OK" : "Falló"}\n\n${result.log || result.error || "Sin log"}\n\n\`\`\`lean\n${currentLeanCode}\n\`\`\``,
+            ? `✓ Verification of ${primaryNode?.title || "Lean code"}`
+            : `✗ Verification of ${primaryNode?.title || "Lean code"}`,
+          content: `**Result:** ${result.success ? "OK" : "Failed"}\n\n${result.log || result.error || "No log"}\n\n\`\`\`lean\n${currentLeanCode}\n\`\`\``,
           leanCode: currentLeanCode,
           x: baseX + 320,
           y: baseY + 260,
@@ -978,7 +1031,7 @@ export function FloatingAIBar({
       if (onCreateNode) {
         const createdProposal = await onCreateNode({
           type: "LEMMA",
-          title: deriveGroupTitle(bestProposal.content, "Propuesta"),
+          title: deriveGroupTitle(bestProposal.content, "Proposal"),
           content: bestProposal.content,
           x: baseX + 240,
           y: baseY + 140,
@@ -1022,7 +1075,7 @@ export function FloatingAIBar({
 
         const createdLean = await onCreateNode({
           type: "LEMMA",
-          title: primaryNode ? `Lean de ${primaryNode.title}` : "Lean formalization",
+          title: primaryNode ? `Lean for ${primaryNode.title}` : "Lean formalization",
           content: `\`\`\`lean\n${formalization.lean_code}\n\`\`\``,
           leanCode: formalization.lean_code,
           x: baseX + 260,
@@ -1059,8 +1112,8 @@ export function FloatingAIBar({
       if (onCreateNode) {
         await onCreateNode({
           type: "NOTE",
-          title: verification.success ? "Verificación ✓" : "Verificación ✗",
-          content: `${verification.success ? "La prueba se verificó correctamente." : "La verificación falló."}\n\n${verification.log || verification.error || ""}\n\n\`\`\`lean\n${formalization.lean_code}\n\`\`\``,
+          title: verification.success ? "Verification ✓" : "Verification ✗",
+          content: `${verification.success ? "The proof was verified successfully." : "Verification failed."}\n\n${verification.log || verification.error || ""}\n\n\`\`\`lean\n${formalization.lean_code}\n\`\`\``,
           leanCode: formalization.lean_code,
           x: baseX + 280,
           y: baseY + 500,
@@ -1209,7 +1262,7 @@ export function FloatingAIBar({
 
       // Optionally create nodes from story sections
       if (onCreateNode) {
-        const { baseX, baseY } = getStartContext();
+        const { baseX, baseY, dependencyIds } = getStartContext();
 
         // Create title node
         await onCreateNode({
@@ -1218,7 +1271,7 @@ export function FloatingAIBar({
           content: `**Abstract**\n${result.story.sections.abstract}`,
           x: baseX,
           y: baseY,
-          dependencies: [],
+          dependencies: dependencyIds,
           authors: [AI_AUTHOR],
         });
       }
@@ -1261,10 +1314,11 @@ export function FloatingAIBar({
         context: command.trim() || undefined,
       });
 
+      const patternLine = result.pattern_name ? `**Pattern:** ${result.pattern_name}\n\n` : "";
       addInsight({
         type: "proposal",
         title: "Idea Fusion Complete",
-        content: `**${result.fusion_type}**\n\n${result.fused_idea}`,
+        content: `**${result.fusion_type}**\n\n${patternLine}${result.fused_idea}`,
         score: 0.8,
       });
 
@@ -1276,7 +1330,7 @@ export function FloatingAIBar({
         await onCreateNode({
           type: "LEMMA",
           title: `Fused: ${result.fusion_type}`,
-          content: `**Fused Idea**\n\n${result.fused_idea}\n\n**Explanation:**\n${result.explanation}`,
+          content: `**Fused Idea**\n\n${patternLine}${result.fused_idea}\n\n**Explanation:**\n${result.explanation}`,
           x: baseX + 200,
           y: baseY,
           dependencies: dependencyIds,
@@ -1543,7 +1597,7 @@ export function FloatingAIBar({
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
-                  handleChatSend();
+                  handlePrimarySend();
                 }
               }}
               placeholder={contextNodes.length > 0 ? `Insights about ${contextNodes[0].title}...` : "Insights..."}
@@ -1576,8 +1630,8 @@ export function FloatingAIBar({
                 </div>
               ) : (
                 <button
-                  onClick={handleChatSend}
-                  disabled={!command.trim() || isAiLoading}
+                  onClick={handlePrimarySend}
+                  disabled={!command.trim() || isAiLoading || isLoading}
                   className="p-2 text-neutral-500 hover:text-neutral-700 rounded-full transition-colors disabled:opacity-30"
                 >
                   <Send className="w-4 h-4" />
@@ -1735,10 +1789,22 @@ export function FloatingAIBar({
                 <p className="text-sm text-neutral-700 leading-relaxed">{generatedStory.sections.solution_approach}</p>
               </section>
 
+              {/* Method Skeleton */}
+              <section>
+                <h3 className="text-sm font-semibold text-neutral-900 mb-2">Method Skeleton</h3>
+                <p className="text-sm text-neutral-700 leading-relaxed">{generatedStory.sections.method_skeleton}</p>
+              </section>
+
               {/* Innovation Claims */}
               <section>
                 <h3 className="text-sm font-semibold text-neutral-900 mb-2">Innovation Claims</h3>
                 <p className="text-sm text-neutral-700 leading-relaxed">{generatedStory.sections.innovation_claims}</p>
+              </section>
+
+              {/* Experiments Plan */}
+              <section>
+                <h3 className="text-sm font-semibold text-neutral-900 mb-2">Experiments Plan</h3>
+                <p className="text-sm text-neutral-700 leading-relaxed">{generatedStory.sections.experiments_plan}</p>
               </section>
 
               {/* Review Result */}
@@ -1825,7 +1891,11 @@ export function FloatingAIBar({
                   const storyText = "# " + generatedStory.sections.title + "\n\n" +
                     generatedStory.sections.abstract + "\n\n" +
                     generatedStory.sections.problem_framing + "\n\n" +
-                    generatedStory.sections.solution_approach;
+                    generatedStory.sections.gap_identification + "\n\n" +
+                    generatedStory.sections.solution_approach + "\n\n" +
+                    generatedStory.sections.method_skeleton + "\n\n" +
+                    generatedStory.sections.innovation_claims + "\n\n" +
+                    generatedStory.sections.experiments_plan;
                   navigator.clipboard.writeText(storyText);
                   addInsight({
                     type: "insight",

@@ -1991,6 +1991,7 @@ export interface StoryGenerationRequest {
 	user_idea: string;
 	pattern_id?: string;
 	context?: string;
+	use_fusion?: boolean;
 }
 
 export interface StorySection {
@@ -2035,7 +2036,7 @@ export interface Story {
 		}>;
 		pass_criteria: string;
 	};
-	novelty_result: {
+	novelty_result?: {
 		is_novel: boolean;
 		similarity_score: number;
 		risk_level: "low" | "medium" | "high";
@@ -2069,6 +2070,8 @@ export interface IdeaFusionResponse {
 	source_ideas: string[];
 	fusion_type: "problem_fusion" | "assumption_fusion" | "innovation_fusion";
 	explanation: string;
+	pattern_id?: string;
+	pattern_name?: string;
 }
 
 export interface PatternBasedExploreRequest {
@@ -2086,10 +2089,18 @@ export async function generateStory(
 	problemId: string,
 	payload: StoryGenerationRequest
 ): Promise<StoryGenerationResponse> {
-	return apiFetch(`/workspaces/${problemId}/generate-story`, {
+	const response = await apiFetch<{
+		story_id?: string;
+		story: Record<string, unknown>;
+		review?: Record<string, unknown>;
+		novelty?: Record<string, unknown>;
+	}>(`/workspaces/${problemId}/contents/generate-story`, {
 		method: "POST",
 		body: JSON.stringify(payload),
 	});
+	return {
+		story: normalizeStoryFromApi(response, problemId),
+	};
 }
 
 /**
@@ -2100,24 +2111,186 @@ export async function refineStory(
 	storyId: string,
 	payload: { feedback: string }
 ): Promise<StoryGenerationResponse> {
-	return apiFetch(`/workspaces/${problemId}/stories/${storyId}/refine`, {
+	const response = await apiFetch<{
+		story_id?: string;
+		story: Record<string, unknown>;
+		review?: Record<string, unknown>;
+		novelty?: Record<string, unknown>;
+	}>(`/workspaces/${problemId}/contents/stories/${storyId}/refine`, {
 		method: "POST",
-		body: JSON.stringify(payload),
+		body: JSON.stringify({ review_feedback: payload.feedback }),
 	});
+	return {
+		story: normalizeStoryFromApi(response, problemId),
+	};
 }
 
 /**
  * Get all stories for a problem
  */
 export async function getStories(problemId: string): Promise<StoryListResponse> {
-	return apiFetch(`/workspaces/${problemId}/stories`);
+	const response = await apiFetch<{
+		stories: Array<Record<string, unknown>>;
+		total: number;
+	}>(`/workspaces/${problemId}/contents/stories`);
+	return {
+		stories: response.stories.map((story) => normalizeStoryFromApi({ story }, problemId)),
+		total: response.total,
+	};
 }
 
 /**
  * Get a specific story
  */
 export async function getStory(problemId: string, storyId: string): Promise<Story> {
-	return apiFetch(`/workspaces/${problemId}/stories/${storyId}`);
+	const response = await apiFetch<Record<string, unknown>>(`/workspaces/${problemId}/contents/stories/${storyId}`);
+	return normalizeStoryFromApi({ story: response }, problemId);
+}
+
+type StoryApiPayload = {
+	story?: Record<string, unknown>;
+	story_id?: string;
+	review?: Record<string, unknown>;
+	novelty?: Record<string, unknown>;
+};
+
+type NoveltyRiskLevel = "low" | "medium" | "high";
+
+function normalizeStoryFromApi(payload: StoryApiPayload, problemId: string): Story {
+	const rawStory = (payload.story || {}) as Record<string, unknown>;
+
+	const getString = (value: unknown, fallback?: string) =>
+		typeof value === "string" ? value : fallback ?? "";
+
+	const normalizeInnovationClaims = (value: unknown) => {
+		if (Array.isArray(value)) {
+			return value.map((item) => String(item)).join(" • ");
+		}
+		return getString(value);
+	};
+
+	const toNumber = (value: unknown) =>
+		typeof value === "number" && Number.isFinite(value) ? value : undefined;
+
+	const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
+
+	const computeQuantile = (values: number[], quantile: number) => {
+		if (values.length === 0) return 0;
+		const sorted = [...values].sort((a, b) => a - b);
+		const pos = (sorted.length - 1) * quantile;
+		const base = Math.floor(pos);
+		const rest = pos - base;
+		if (sorted[base + 1] === undefined) {
+			return sorted[base];
+		}
+		return sorted[base] + rest * (sorted[base + 1] - sorted[base]);
+	};
+
+	const review = (payload.review || rawStory.review_result || rawStory.review_scores) as
+		| Record<string, unknown>
+		| undefined;
+	const reviews = Array.isArray(review?.reviews) ? (review?.reviews as Array<Record<string, unknown>>) : [];
+	const reviewScoresRaw = reviews
+		.map((item) => toNumber(item?.score))
+		.filter((score): score is number => score !== undefined);
+	const avgScoreRaw =
+		toNumber(review?.avg_score) ??
+		toNumber(rawStory.avg_score) ??
+		(reviewScoresRaw.length > 0 ? reviewScoresRaw.reduce((sum, value) => sum + value, 0) / reviewScoresRaw.length : 0);
+	const avgScoreNormalized = clamp01((avgScoreRaw || 0) / 10);
+	const normalizedScores = reviewScoresRaw.map((score) => clamp01(score / 10));
+	const q25 = computeQuantile(normalizedScores, 0.25);
+	const q50 = computeQuantile(normalizedScores, 0.5);
+	const q75 = computeQuantile(normalizedScores, 0.75);
+	const passed =
+		typeof review?.pass === "boolean"
+			? review.pass
+			: typeof rawStory.passed_review === "boolean"
+				? (rawStory.passed_review as boolean)
+				: avgScoreRaw >= 6.5;
+
+	const novelty = (payload.novelty || rawStory.novelty_result || rawStory.novelty_report) as
+		| Record<string, unknown>
+		| undefined;
+	const noveltyCandidates = Array.isArray(novelty?.candidates)
+		? (novelty?.candidates as Array<Record<string, unknown>>)
+		: [];
+	const maxSimilarity =
+		toNumber(novelty?.max_similarity) ??
+		toNumber(rawStory.max_similarity) ??
+		toNumber(novelty?.similarity_score) ??
+		0;
+	const riskLevelRaw = (novelty?.risk_level || rawStory.risk_level || "") as string;
+	const inferredRiskLevel: NoveltyRiskLevel =
+		maxSimilarity >= 0.85 ? "high" : maxSimilarity >= 0.75 ? "medium" : "low";
+	const riskLevel: NoveltyRiskLevel =
+		riskLevelRaw === "low" || riskLevelRaw === "medium" || riskLevelRaw === "high"
+			? (riskLevelRaw as NoveltyRiskLevel)
+			: inferredRiskLevel;
+	const isNovel =
+		typeof novelty?.is_novel === "boolean"
+			? (novelty.is_novel as boolean)
+			: riskLevel === "low";
+	const mostSimilar = noveltyCandidates.length > 0
+		? {
+				title: getString(noveltyCandidates[0]?.title),
+				similarity: toNumber(noveltyCandidates[0]?.similarity) ?? 0,
+			}
+		: undefined;
+
+	const sections = {
+		title: getString(rawStory.title),
+		abstract: getString(rawStory.abstract),
+		problem_framing: getString(rawStory.problem_framing),
+		gap_identification: getString(rawStory.gap_pattern),
+		solution_approach: getString(rawStory.solution),
+		method_skeleton: getString(rawStory.method_skeleton),
+		innovation_claims: normalizeInnovationClaims(rawStory.innovation_claims),
+		experiments_plan: getString(rawStory.experiments_plan),
+	};
+
+	return {
+		id: getString(rawStory.id, payload.story_id || ""),
+		problem_id: getString(rawStory.problem_id, problemId),
+		user_idea: getString(rawStory.user_idea),
+		pattern_id: typeof rawStory.pattern_id === "string" ? rawStory.pattern_id : undefined,
+		sections,
+		metadata: {
+			pattern_name: typeof rawStory.pattern_name === "string" ? rawStory.pattern_name : undefined,
+		},
+		review_result: review
+			? {
+					passed,
+					scores: {
+						reviewer_1: normalizedScores[0],
+						reviewer_2: normalizedScores[1],
+						reviewer_3: normalizedScores[2],
+						average: avgScoreNormalized,
+						q25,
+						q50,
+						q75,
+					},
+					individual_reviews: reviews.map((item) => ({
+						anchor_title: getString(item?.role || item?.reviewer || "Reviewer"),
+						score: clamp01((toNumber(item?.score) ?? 0) / 10),
+						justification: getString(item?.feedback),
+					})),
+					pass_criteria: getString(review?.pass_criteria, "avg_score >= 6.5"),
+				}
+			: undefined,
+		novelty_result: novelty
+			? {
+					is_novel: isNovel,
+					similarity_score: maxSimilarity,
+					risk_level: riskLevel,
+					most_similar: mostSimilar,
+				}
+			: undefined,
+		parent_story_id: typeof rawStory.parent_story_id === "string" ? rawStory.parent_story_id : undefined,
+		version: toNumber(rawStory.version) ?? 1,
+		created_at: getString(rawStory.created_at, new Date().toISOString()),
+		updated_at: getString(rawStory.updated_at, new Date().toISOString()),
+	};
 }
 
 /**
@@ -2145,7 +2318,7 @@ export async function fuseIdeas(
 	problemId: string,
 	payload: IdeaFusionRequest
 ): Promise<IdeaFusionResponse> {
-	return apiFetch(`/workspaces/${problemId}/fuse-ideas`, {
+	return apiFetch(`/workspaces/${problemId}/contents/fuse-ideas`, {
 		method: "POST",
 		body: JSON.stringify(payload),
 	});

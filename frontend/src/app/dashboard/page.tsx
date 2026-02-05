@@ -141,7 +141,7 @@ export default function DashboardPage() {
       await followUser(userId);
       setSuggestions((prev) => prev.filter((u) => u.id !== userId));
       setFollowingCount((prev) => prev + 1);
-      // Recargar el feed si estamos en la pestaña "following"
+      // Reload feed if we are on the "following" tab
       if (feedTab === "following") {
         const feedData = await getSocialFeed({ scope: "network", limit: 20 });
         setFeedItems(feedData.items);
@@ -163,7 +163,7 @@ export default function DashboardPage() {
         };
       });
       setFollowingCount((prev) => prev - 1);
-      // Recargar el feed si estamos en la pestaña "following"
+      // Reload feed if we are on the "following" tab
       if (feedTab === "following") {
         const feedData = await getSocialFeed({ scope: "network", limit: 20 });
         setFeedItems(feedData.items);

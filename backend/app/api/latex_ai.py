@@ -41,13 +41,13 @@ async def latex_chat(
     ])
 
     prompt = (
-        "Responde al usuario como asistente de LaTeX. "
-        "Si incluyes LaTeX, envuélvelo en un bloque ```latex```.\n\n"
-        f"Archivo: {payload.file_path or 'N/A'}\n"
-        f"Selección: {payload.selection or ''}\n\n"
-        f"Contexto:\n{payload.context or ''}\n\n"
-        f"Historial:\n{history}\n\n"
-        f"Mensaje del usuario:\n{payload.message}\n"
+        "Respond to the user as a LaTeX assistant. "
+        "If you include LaTeX, wrap it in a ```latex``` block.\n\n"
+        f"File: {payload.file_path or 'N/A'}\n"
+        f"Selection: {payload.selection or ''}\n\n"
+        f"Context:\n{payload.context or ''}\n\n"
+        f"History:\n{history}\n\n"
+        f"User message:\n{payload.message}\n"
     )
 
     result = await orchestrator.latex_assist(prompt, context={"problem_id": str(problem_id)})
@@ -71,11 +71,11 @@ async def latex_autocomplete(
         raise HTTPException(status_code=503, detail="AI service not available")
 
     prompt = (
-        "Devuelve SOLO JSON válido con el formato: {\"suggestions\":[{\"label\":...,\"insert_text\":...}]}\n"
-        "Tarea: autocompletar el siguiente texto LaTeX. Mantén las sugerencias cortas y útiles.\n"
-        f"Archivo: {payload.file_path or 'N/A'}\n"
-        f"Texto antes del cursor:\n{payload.before}\n\n"
-        f"Texto después del cursor:\n{payload.after}\n"
+        "Return ONLY valid JSON with format: {\"suggestions\":[{\"label\":...,\"insert_text\":...}]}\n"
+        "Task: autocomplete the following LaTeX text. Keep suggestions short and useful.\n"
+        f"File: {payload.file_path or 'N/A'}\n"
+        f"Text before cursor:\n{payload.before}\n\n"
+        f"Text after cursor:\n{payload.after}\n"
     )
 
     result = await orchestrator.latex_assist(prompt, context={"problem_id": str(problem_id)})
