@@ -229,9 +229,17 @@ export default function NotificationsPage() {
               >
                 <div className="flex-shrink-0">
                   {notification.actor ? (
-                    <div className="w-10 h-10 rounded-full bg-neutral-100 border border-neutral-200 flex items-center justify-center text-xs font-bold text-neutral-600">
-                      {getInitials(notification.actor.username)}
-                    </div>
+                    notification.actor.avatar_url ? (
+                      <img
+                        src={notification.actor.avatar_url}
+                        alt={`${notification.actor.username} avatar`}
+                        className="w-10 h-10 rounded-full object-cover border border-neutral-200"
+                      />
+                    ) : (
+                      <div className="w-10 h-10 rounded-full bg-neutral-100 border border-neutral-200 flex items-center justify-center text-xs font-bold text-neutral-600">
+                        {getInitials(notification.actor.username)}
+                      </div>
+                    )
                   ) : (
                     <div className="w-10 h-10 rounded-full bg-neutral-100 flex items-center justify-center">
                       {NOTIFICATION_ICONS[notification.type] || (

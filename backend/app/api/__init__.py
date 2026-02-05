@@ -7,6 +7,7 @@ from app.api.realtime import router as realtime_router
 from app.api.latex import router as latex_router
 from app.api.latex_ai import router as latex_ai_router
 from app.api.latex_ai_store import router as latex_ai_store_router
+from app.api.avatars import router as avatars_router
 
 __all__ = [
     "problems_router",
@@ -18,4 +19,5 @@ __all__ = [
     "latex_router",
     "latex_ai_router",
     "latex_ai_store_router",
+    "avatars_router",
 ]

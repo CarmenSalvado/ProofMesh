@@ -109,9 +109,17 @@ export function Header() {
 								onClick={() => setDropdownOpen(!dropdownOpen)}
 								className="flex items-center gap-2 p-1.5 hover:bg-neutral-50 rounded-md transition-colors group"
 							>
-								<div className="w-7 h-7 rounded-full bg-indigo-100 border border-neutral-200 group-hover:border-indigo-400 flex items-center justify-center text-[11px] font-bold text-indigo-700 transition-colors">
-									{getInitials(user.username)}
-								</div>
+								{user.avatar_url ? (
+									<img
+										src={user.avatar_url}
+										alt={`${user.username} avatar`}
+										className="w-7 h-7 rounded-full object-cover border border-neutral-200 group-hover:border-indigo-400 transition-colors"
+									/>
+								) : (
+									<div className="w-7 h-7 rounded-full bg-indigo-100 border border-neutral-200 group-hover:border-indigo-400 flex items-center justify-center text-[11px] font-bold text-indigo-700 transition-colors">
+										{getInitials(user.username)}
+									</div>
+								)}
 								<span className="text-sm font-medium text-neutral-700 hidden sm:block">{user.username}</span>
 								<ChevronDown className={`w-3.5 h-3.5 text-neutral-400 transition-transform ${dropdownOpen ? "rotate-180" : ""}`} />
 							</button>

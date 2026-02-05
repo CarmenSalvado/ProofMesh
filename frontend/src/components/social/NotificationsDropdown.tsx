@@ -207,9 +207,17 @@ export function NotificationsDropdown() {
                   >
                     <div className="flex-shrink-0 mt-0.5">
                       {notification.actor ? (
-                        <div className="w-8 h-8 rounded-full bg-neutral-100 border border-neutral-200 flex items-center justify-center text-[10px] font-bold text-neutral-600">
-                          {getInitials(notification.actor.username)}
-                        </div>
+                        notification.actor.avatar_url ? (
+                          <img
+                            src={notification.actor.avatar_url}
+                            alt={`${notification.actor.username} avatar`}
+                            className="w-8 h-8 rounded-full object-cover border border-neutral-200"
+                          />
+                        ) : (
+                          <div className="w-8 h-8 rounded-full bg-neutral-100 border border-neutral-200 flex items-center justify-center text-[10px] font-bold text-neutral-600">
+                            {getInitials(notification.actor.username)}
+                          </div>
+                        )
                       ) : (
                         <div className="w-8 h-8 rounded-full bg-neutral-100 flex items-center justify-center">
                           {NOTIFICATION_ICONS[notification.type] || (

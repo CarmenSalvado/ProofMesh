@@ -487,18 +487,28 @@ function encodePath(path: string): string {
 		.join("/");
 }
 
+type ApiFetchOptions = RequestInit & {
+	suppressErrorLog?: boolean;
+};
+
 // Generic fetch wrapper
 async function apiFetch<T>(
 	endpoint: string,
-	options: RequestInit = {}
+	options: ApiFetchOptions = {}
 ): Promise<T> {
 	const url = `${API_BASE_URL}/api${endpoint}`;
+	const { suppressErrorLog, ...requestOptions } = options;
 	const authHeaders = getAuthHeaders();
 
+	const isFormData =
+		typeof FormData !== "undefined" && requestOptions.body instanceof FormData;
+
 	// Build headers properly
-	const headers: HeadersInit = {
-		"Content-Type": "application/json",
-	};
+	const headers: HeadersInit = isFormData
+		? {}
+		: {
+				"Content-Type": "application/json",
+			};
 
 	// Add auth headers if present
 	if (authHeaders && typeof authHeaders === 'object' && 'Authorization' in authHeaders) {
@@ -506,9 +516,9 @@ async function apiFetch<T>(
 	}
 
 	// Add additional headers from options
-	if (options.headers) {
-		if (typeof options.headers === 'object' && !Array.isArray(options.headers)) {
-			Object.assign(headers, options.headers);
+	if (requestOptions.headers) {
+		if (typeof requestOptions.headers === 'object' && !Array.isArray(requestOptions.headers)) {
+			Object.assign(headers, requestOptions.headers);
 		}
 	}
 
@@ -517,7 +527,7 @@ async function apiFetch<T>(
 
 	try {
 		const response = await fetch(url, {
-			...options,
+			...requestOptions,
 			headers,
 		});
 
@@ -562,19 +572,21 @@ async function apiFetch<T>(
 				errorDetail = response.statusText || `API Error: ${response.status}`;
 			}
 
-			const method = options.method || "GET";
+			const method = requestOptions.method || "GET";
 
 			// Enhanced error logging (string first for consoles that hide objects)
-			console.error(`API Request Failed: ${method} ${url} (${response.status})`);
-			console.error("API Request Failed (details):", {
-				url,
-				method,
-				status: response.status,
-				statusText: response.statusText,
-				error: errorData,
-				errorDetail,
-				hasAuth,
-			});
+			if (!suppressErrorLog) {
+				console.error(`API Request Failed: ${method} ${url} (${response.status})`);
+				console.error("API Request Failed (details):", {
+					url,
+					method,
+					status: response.status,
+					statusText: response.statusText,
+					error: errorData,
+					errorDetail,
+					hasAuth,
+				});
+			}
 
 			// Check for authentication errors
 			if (response.status === 401 || response.status === 403) {
@@ -597,12 +609,12 @@ async function apiFetch<T>(
 	} catch (error) {
 		// Log network errors
 		if (error instanceof TypeError && error.message === "Failed to fetch") {
-			console.error("Network Error - Failed to fetch:", {
-				url,
-				method: options.method || "GET",
-				hasAuth,
-				message: "Unable to connect to the server. Please check if the backend is running.",
-			});
+				console.error("Network Error - Failed to fetch:", {
+					url,
+					method: requestOptions.method || "GET",
+					hasAuth,
+					message: "Unable to connect to the server. Please check if the backend is running.",
+				});
 			throw new Error("Network error: Unable to connect to the server. Please check if the backend is running.");
 		}
 		throw error;
@@ -643,6 +655,36 @@ async function apiFetchText(endpoint: string): Promise<string> {
 		throw new Error(text || `Failed to fetch text: ${response.status}`);
 	}
 	return response.text();
+}
+
+// ============ User API ============
+
+export interface UserProfile {
+	id: string;
+	email: string;
+	username: string;
+	avatar_url: string | null;
+	bio: string | null;
+	created_at: string;
+}
+
+export async function uploadAvatar(file: File): Promise<UserProfile> {
+	const formData = new FormData();
+	formData.append("file", file);
+	return apiFetch<UserProfile>("/auth/me/avatar", {
+		method: "POST",
+		body: formData,
+	});
+}
+
+export async function updateMe(data: {
+	avatar_url?: string | null;
+	bio?: string | null;
+}): Promise<UserProfile> {
+	return apiFetch<UserProfile>("/auth/me", {
+		method: "PATCH",
+		body: JSON.stringify(data),
+	});
 }
 
 // ============ Problems API ============
@@ -976,6 +1018,7 @@ export async function mapLatexPdfToSource(
 	return apiFetch(`/latex/${problemId}/synctex`, {
 		method: "POST",
 		body: JSON.stringify({ page, x, y }),
+		suppressErrorLog: true,
 	});
 }
 

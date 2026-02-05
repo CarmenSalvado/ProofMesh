@@ -219,9 +219,17 @@ export default function DiscussionsPage() {
                 className="block bg-white rounded-xl border border-neutral-200 p-5 hover:border-indigo-300 hover:shadow-md transition-all group"
               >
                 <div className="flex items-start gap-4">
-                  <div className="w-10 h-10 rounded-full bg-neutral-100 flex items-center justify-center text-xs font-bold text-neutral-600 flex-shrink-0">
-                    {getInitials(discussion.author.username)}
-                  </div>
+                  {discussion.author.avatar_url ? (
+                    <img
+                      src={discussion.author.avatar_url}
+                      alt={`${discussion.author.username} avatar`}
+                      className="w-10 h-10 rounded-full object-cover flex-shrink-0 border border-neutral-200"
+                    />
+                  ) : (
+                    <div className="w-10 h-10 rounded-full bg-neutral-100 flex items-center justify-center text-xs font-bold text-neutral-600 flex-shrink-0">
+                      {getInitials(discussion.author.username)}
+                    </div>
+                  )}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between gap-4 mb-1">
                       <h3 className="text-base font-semibold text-neutral-900 group-hover:text-indigo-600 line-clamp-1">

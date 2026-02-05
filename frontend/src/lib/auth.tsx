@@ -25,6 +25,7 @@ interface AuthContextType {
 	register: (email: string, username: string, password: string) => Promise<void>;
 	logout: () => void;
 	getToken: () => string | null;
+	refreshUser: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -135,9 +136,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 		return null;
 	};
 
+	const refreshUser = async () => {
+		if (typeof window === "undefined") return;
+		const token = localStorage.getItem("access_token");
+		if (!token) {
+			setUser(null);
+			return;
+		}
+		await fetchUser(token);
+	};
+
 	return (
 		<AuthContext.Provider
-			value={{ user, isLoading, login, demo, register, logout, getToken }}
+			value={{
+				user,
+				isLoading,
+				login,
+				demo,
+				register,
+				logout,
+				getToken,
+				refreshUser,
+			}}
 		>
 			{children}
 		</AuthContext.Provider>

@@ -12,6 +12,7 @@ interface CanvasNodeItemProps {
   isMultiSelected?: boolean;
   isDragging?: boolean;
   isConnecting?: boolean;
+  isNew?: boolean;
   problemId?: string;
   anchorStatus?: { hasAnchors: boolean; isStale: boolean; count: number };
   onMouseDown: (e: React.MouseEvent) => void;
@@ -29,6 +30,7 @@ export function CanvasNodeItem({
   isMultiSelected = false,
   isDragging = false,
   isConnecting = false,
+  isNew = false,
   problemId,
   anchorStatus,
   onMouseDown,
@@ -143,6 +145,7 @@ export function CanvasNodeItem({
       onContextMenu={onContextMenu}
       draggable={false}
     >
+      <div className={`relative w-full h-full ${isNew ? "pm-node-enter" : ""}`}>
       {/* Document Anchor Badge */}
       {anchorStatus?.hasAnchors && (
         <div
@@ -341,6 +344,7 @@ export function CanvasNodeItem({
         title="Connect from here"
         onMouseDown={handleConnectionHandleMouseDown}
       />
+      </div>
     </div>
   );
 }

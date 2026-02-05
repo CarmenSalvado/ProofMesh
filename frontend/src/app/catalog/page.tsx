@@ -140,9 +140,17 @@ export default function CatalogPage() {
           {/* User Context */}
           <div className="bg-white rounded-lg border border-neutral-200 p-4 shadow-sm">
             <div className="flex items-center gap-3 mb-4">
-              <div className="w-10 h-10 rounded-full bg-indigo-100 border border-neutral-100 flex items-center justify-center text-sm font-bold text-indigo-700">
-                {getInitials(user.username)}
-              </div>
+              {user.avatar_url ? (
+                <img
+                  src={user.avatar_url}
+                  alt={`${user.username} avatar`}
+                  className="w-10 h-10 rounded-full object-cover border border-neutral-100"
+                />
+              ) : (
+                <div className="w-10 h-10 rounded-full bg-indigo-100 border border-neutral-100 flex items-center justify-center text-sm font-bold text-indigo-700">
+                  {getInitials(user.username)}
+                </div>
+              )}
               <div>
                 <div className="text-sm font-semibold text-neutral-900">{user.username}</div>
                 <div className="text-xs text-neutral-500">@{user.username.toLowerCase()}</div>
@@ -350,9 +358,17 @@ export default function CatalogPage() {
 
                   <div className="flex items-center gap-3 text-xs text-neutral-500 mb-3">
                     <span className="flex items-center gap-1">
-                      <div className="w-5 h-5 rounded-full bg-neutral-100 border border-neutral-200 flex items-center justify-center text-[9px] font-medium text-neutral-600">
-                        {getInitials(problem.author.username)}
-                      </div>
+                      {problem.author.avatar_url ? (
+                        <img
+                          src={problem.author.avatar_url}
+                          alt={`${problem.author.username} avatar`}
+                          className="w-5 h-5 rounded-full object-cover border border-neutral-200"
+                        />
+                      ) : (
+                        <div className="w-5 h-5 rounded-full bg-neutral-100 border border-neutral-200 flex items-center justify-center text-[9px] font-medium text-neutral-600">
+                          {getInitials(problem.author.username)}
+                        </div>
+                      )}
                       {problem.author.username}
                     </span>
                     <span>·</span>
@@ -414,9 +430,17 @@ export default function CatalogPage() {
                       )}
                       <div className="flex items-center gap-3 text-xs text-neutral-500">
                         <span className="flex items-center gap-1">
-                          <div className="w-4 h-4 rounded-full bg-neutral-100 border border-neutral-200 flex items-center justify-center text-[8px] font-medium text-neutral-600">
-                            {getInitials(problem.author.username)}
-                          </div>
+                          {problem.author.avatar_url ? (
+                            <img
+                              src={problem.author.avatar_url}
+                              alt={`${problem.author.username} avatar`}
+                              className="w-4 h-4 rounded-full object-cover border border-neutral-200"
+                            />
+                          ) : (
+                            <div className="w-4 h-4 rounded-full bg-neutral-100 border border-neutral-200 flex items-center justify-center text-[8px] font-medium text-neutral-600">
+                              {getInitials(problem.author.username)}
+                            </div>
+                          )}
                           {problem.author.username}
                         </span>
                         <span>·</span>

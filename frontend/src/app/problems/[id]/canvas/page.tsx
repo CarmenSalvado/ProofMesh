@@ -26,7 +26,6 @@ import {
   Share2,
   Wifi,
   WifiOff,
-  Settings,
   RefreshCw,
 } from "lucide-react";
 import {
@@ -1227,10 +1226,6 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
             {shareStatus === "copied" ? "Copied!" : "Share"}
           </button>
 
-          {/* Settings */}
-          <button className="p-2 text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100 rounded-lg transition-colors">
-            <Settings className="w-4 h-4" />
-          </button>
         </div>
       </header>
 

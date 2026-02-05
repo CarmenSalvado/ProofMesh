@@ -4,7 +4,6 @@ import { useRef, useState, useCallback, useMemo, useEffect, forwardRef, useImper
 import {
   ZoomIn,
   ZoomOut,
-  Maximize2,
   Plus,
   Undo2,
   Redo2,
@@ -291,6 +290,7 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [dragDelta, setDragDelta] = useState<{ x: number; y: number } | null>(null);
   const [multiDraggingIds, setMultiDraggingIds] = useState<string[] | null>(null);
+  const [newNodeIds, setNewNodeIds] = useState<Set<string>>(new Set());
   
   // Canvas interaction mode: cursor (selection) or hand (pan)
   const [canvasMode, setCanvasMode] = useState<CanvasMode>("cursor");
@@ -338,6 +338,9 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
   const draggedNodeIdRef = useRef<string | null>(null);
   const groupDraggingRef = useRef(false);
   const groupDragStartRef = useRef<{ x: number; y: number } | null>(null);
+  const prevNodeIdsRef = useRef<Set<string>>(new Set());
+  const hasInitializedNodesRef = useRef(false);
+  const newNodeTimeoutsRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
   const lastMousePosRef = useRef<{ x: number; y: number } | null>(null);
   const rafRef = useRef<number | null>(null);
   const panStartRef = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
@@ -426,6 +429,46 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [groupDraft, groupName, onCreateBlock]);
+
+  useEffect(() => {
+    const currentIds = new Set(nodes.map((node) => node.id));
+    if (!hasInitializedNodesRef.current) {
+      hasInitializedNodesRef.current = true;
+      prevNodeIdsRef.current = currentIds;
+      return;
+    }
+
+    const prevIds = prevNodeIdsRef.current;
+    const added = nodes.filter((node) => !prevIds.has(node.id));
+    if (added.length > 0) {
+      setNewNodeIds((prev) => {
+        const next = new Set(prev);
+        added.forEach((node) => next.add(node.id));
+        return next;
+      });
+      added.forEach((node) => {
+        const existing = newNodeTimeoutsRef.current.get(node.id);
+        if (existing) clearTimeout(existing);
+        const timeout = setTimeout(() => {
+          setNewNodeIds((prev) => {
+            const next = new Set(prev);
+            next.delete(node.id);
+            return next;
+          });
+          newNodeTimeoutsRef.current.delete(node.id);
+        }, 700);
+        newNodeTimeoutsRef.current.set(node.id, timeout);
+      });
+    }
+    prevNodeIdsRef.current = currentIds;
+  }, [nodes]);
+
+  useEffect(() => {
+    return () => {
+      newNodeTimeoutsRef.current.forEach((timeout) => clearTimeout(timeout));
+      newNodeTimeoutsRef.current.clear();
+    };
+  }, []);
   
   // Memoize minimap viewport
   const minimapViewport = useMemo(() => {
@@ -1658,13 +1701,7 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
           >
             <ZoomIn className="w-3.5 h-3.5" />
           </button>
-          <button
-            onClick={handleFit}
-            className="p-1.5 rounded-full text-neutral-500 hover:text-neutral-700 transition-colors"
-            title="Fit to View (F)"
-          >
-            <Maximize2 className="w-3.5 h-3.5" />
-          </button>
+          
         </div>
       )}
 
@@ -1939,6 +1976,7 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
             isMultiSelected={false}
             isDragging={draggedNode === node.id}
             isConnecting={connectingFrom === node.id}
+            isNew={newNodeIds.has(node.id)}
             anchorStatus={nodeAnchorStatus?.get(node.id)}
             onMouseDown={(e: React.MouseEvent) => handleNodeMouseDown(e, node)}
             onMouseUp={(e: React.MouseEvent) => handleNodeMouseUp(e, node)}

@@ -63,9 +63,23 @@ const FEED_META: Record<string, { label: string; color: string }> = {
   TEAM_JOIN: { label: "joined team", color: "text-blue-700" },
 };
 
+function parseTimestamp(iso?: string | null) {
+  if (!iso) return null;
+  let normalized = iso;
+  if (normalized.includes(" ") && !normalized.includes("T")) {
+    normalized = normalized.replace(" ", "T");
+  }
+  const hasTimezone = /[zZ]|[+-]\d{2}:\d{2}$/.test(normalized);
+  if (!hasTimezone) {
+    normalized = `${normalized}Z`;
+  }
+  const time = Date.parse(normalized);
+  return Number.isNaN(time) ? null : time;
+}
+
 function formatRelativeTime(iso?: string | null) {
-  if (!iso) return "just now";
-  const then = new Date(iso).getTime();
+  const then = parseTimestamp(iso);
+  if (!then) return "just now";
   const now = Date.now();
   const diff = Math.max(0, now - then);
   const minutes = Math.floor(diff / 60000);
@@ -530,9 +544,17 @@ export default function DashboardPage() {
           {/* User Context */}
           <div className="bg-white rounded-lg border border-neutral-200 p-4 shadow-sm">
             <div className="flex items-center gap-3 mb-4">
-              <div className="w-10 h-10 rounded-full bg-indigo-100 border border-neutral-100 flex items-center justify-center text-sm font-bold text-indigo-700">
-                {getInitials(user.username)}
-              </div>
+              {user.avatar_url ? (
+                <img
+                  src={user.avatar_url}
+                  alt={`${user.username} avatar`}
+                  className="w-10 h-10 rounded-full object-cover border border-neutral-100"
+                />
+              ) : (
+                <div className="w-10 h-10 rounded-full bg-indigo-100 border border-neutral-100 flex items-center justify-center text-sm font-bold text-indigo-700">
+                  {getInitials(user.username)}
+                </div>
+              )}
               <div>
                 <div className="text-sm font-semibold text-neutral-900">{user.username}</div>
                 <div className="text-xs text-neutral-500">@{user.username.toLowerCase()}</div>
@@ -628,9 +650,17 @@ export default function DashboardPage() {
           {/* Feed Input */}
           <div className={`relative bg-white rounded-lg border border-neutral-200 p-4 shadow-sm mb-6 ${composerPulse ? "pm-post-composer" : ""}`}>
             <div className="flex gap-3">
-              <div className="w-8 h-8 rounded-full bg-indigo-100 border border-neutral-100 flex items-center justify-center text-[10px] font-bold text-indigo-700">
-                {getInitials(user.username)}
-              </div>
+              {user.avatar_url ? (
+                <img
+                  src={user.avatar_url}
+                  alt={`${user.username} avatar`}
+                  className="w-8 h-8 rounded-full object-cover border border-neutral-100"
+                />
+              ) : (
+                <div className="w-8 h-8 rounded-full bg-indigo-100 border border-neutral-100 flex items-center justify-center text-[10px] font-bold text-indigo-700">
+                  {getInitials(user.username)}
+                </div>
+              )}
               <div className="flex-1">
                 <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-3 mb-3">
                   <textarea
@@ -789,9 +819,17 @@ export default function DashboardPage() {
                     className={`relative bg-white rounded-lg border border-neutral-200 p-5 shadow-sm ${isRecentPost ? "pm-post-card-enter border-indigo-200/60 shadow-md" : ""}`}
                   >
                     <div className="flex items-start gap-3">
-                      <div className="w-8 h-8 rounded-full bg-neutral-100 border border-neutral-100 flex items-center justify-center text-[10px] font-bold text-neutral-600">
-                        {getInitials(item.actor.username)}
-                      </div>
+                      {item.actor.avatar_url ? (
+                        <img
+                          src={item.actor.avatar_url}
+                          alt={`${item.actor.username} avatar`}
+                          className="w-8 h-8 rounded-full object-cover border border-neutral-100"
+                        />
+                      ) : (
+                        <div className="w-8 h-8 rounded-full bg-neutral-100 border border-neutral-100 flex items-center justify-center text-[10px] font-bold text-neutral-600">
+                          {getInitials(item.actor.username)}
+                        </div>
+                      )}
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between">
                           <p className="text-sm text-neutral-900">
@@ -936,9 +974,17 @@ export default function DashboardPage() {
             <div className="space-y-3">
               {suggestions.slice(0, 3).map((suggested) => (
                 <div key={suggested.id} className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-full bg-neutral-100 border border-neutral-100 flex items-center justify-center text-[10px] font-bold text-neutral-600">
-                    {getInitials(suggested.username)}
-                  </div>
+                  {suggested.avatar_url ? (
+                    <img
+                      src={suggested.avatar_url}
+                      alt={`${suggested.username} avatar`}
+                      className="w-8 h-8 rounded-full object-cover border border-neutral-100"
+                    />
+                  ) : (
+                    <div className="w-8 h-8 rounded-full bg-neutral-100 border border-neutral-100 flex items-center justify-center text-[10px] font-bold text-neutral-600">
+                      {getInitials(suggested.username)}
+                    </div>
+                  )}
                   <div className="flex-1 min-w-0">
                     <div className="text-sm font-medium text-neutral-900 truncate">
                       {suggested.username}
@@ -1292,9 +1338,17 @@ export default function DashboardPage() {
                 <div className="space-y-3">
                   {connections?.following.map((followedUser) => (
                     <div key={followedUser.id} className="flex items-center gap-3 p-2 hover:bg-neutral-50 rounded-lg transition-colors">
-                      <div className="w-10 h-10 rounded-full bg-neutral-100 border border-neutral-200 flex items-center justify-center text-sm font-bold text-neutral-600">
-                        {getInitials(followedUser.username)}
-                      </div>
+                      {followedUser.avatar_url ? (
+                        <img
+                          src={followedUser.avatar_url}
+                          alt={`${followedUser.username} avatar`}
+                          className="w-10 h-10 rounded-full object-cover border border-neutral-200"
+                        />
+                      ) : (
+                        <div className="w-10 h-10 rounded-full bg-neutral-100 border border-neutral-200 flex items-center justify-center text-sm font-bold text-neutral-600">
+                          {getInitials(followedUser.username)}
+                        </div>
+                      )}
                       <div className="flex-1 min-w-0">
                         <Link
                           href={`/users/${followedUser.username}`}

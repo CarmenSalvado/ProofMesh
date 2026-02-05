@@ -646,9 +646,17 @@ export default function SocialPage() {
                               : contributions.slice(0, 3).flatMap((entry) => entry.contributors.slice(0, 1))
                             ).map((contrib) => (
                               <div key={contrib.id} className="flex items-center gap-2 text-xs text-neutral-500">
-                                <div className="w-5 h-5 rounded-full bg-neutral-100 border border-neutral-200 flex items-center justify-center text-[9px] font-semibold">
-                                  {getInitials(contrib.username)}
-                                </div>
+                                {contrib.avatar_url ? (
+                                  <img
+                                    src={contrib.avatar_url}
+                                    alt={`${contrib.username} avatar`}
+                                    className="w-5 h-5 rounded-full object-cover border border-neutral-200"
+                                  />
+                                ) : (
+                                  <div className="w-5 h-5 rounded-full bg-neutral-100 border border-neutral-200 flex items-center justify-center text-[9px] font-semibold">
+                                    {getInitials(contrib.username)}
+                                  </div>
+                                )}
                                 <span>{contrib.username}</span>
                                 <span className="text-[10px] text-neutral-400">{contrib.contributions} items</span>
                               </div>

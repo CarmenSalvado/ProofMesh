@@ -35,6 +35,11 @@ class UserPublic(BaseModel):
     bio: str | None
 
 
+class UserUpdate(BaseModel):
+    avatar_url: str | None = None
+    bio: str | None = None
+
+
 class TokenResponse(BaseModel):
     access_token: str
     refresh_token: str

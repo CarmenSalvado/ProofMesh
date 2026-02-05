@@ -83,9 +83,17 @@ export default function ProfilePage() {
           <div className="max-w-4xl mx-auto px-8 py-8">
             <div className="flex items-start gap-6">
               {/* Avatar */}
-              <div className="w-24 h-24 rounded-full bg-indigo-100 border-4 border-white shadow-lg flex items-center justify-center text-2xl font-bold text-indigo-700">
-                {getInitials(user.username)}
-              </div>
+              {user.avatar_url ? (
+                <img
+                  src={user.avatar_url}
+                  alt={`${user.username} avatar`}
+                  className="w-24 h-24 rounded-full border-4 border-white shadow-lg object-cover"
+                />
+              ) : (
+                <div className="w-24 h-24 rounded-full bg-indigo-100 border-4 border-white shadow-lg flex items-center justify-center text-2xl font-bold text-indigo-700">
+                  {getInitials(user.username)}
+                </div>
+              )}
 
               {/* Info */}
               <div className="flex-1">

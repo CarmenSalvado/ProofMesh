@@ -1,5 +1,5 @@
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,6 +9,7 @@ from app.schemas.user import (
     UserCreate,
     UserLogin,
     UserResponse,
+    UserUpdate,
     TokenResponse,
     RefreshRequest,
 )
@@ -19,6 +20,7 @@ from app.services.auth import (
     decode_token,
 )
 from app.api.deps import get_current_user
+from app.services.storage import put_object, delete_object
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -132,4 +134,53 @@ async def refresh_token(data: RefreshRequest, db: AsyncSession = Depends(get_db)
 @router.get("/me", response_model=UserResponse)
 async def get_me(current_user: User = Depends(get_current_user)):
     """Get current authenticated user"""
+    return current_user
+
+
+@router.patch("/me", response_model=UserResponse)
+async def update_me(
+    data: UserUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Update current user profile fields"""
+    updates = data.model_dump(exclude_unset=True)
+    if "avatar_url" in updates:
+        avatar_url = updates.get("avatar_url")
+        if avatar_url is None:
+            await delete_object(f"avatars/{current_user.id}")
+        current_user.avatar_url = avatar_url
+    if "bio" in updates:
+        current_user.bio = updates.get("bio")
+
+    await db.commit()
+    await db.refresh(current_user)
+    return current_user
+
+
+@router.post("/me/avatar", response_model=UserResponse)
+async def upload_avatar(
+    request: Request,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Upload a new avatar image for the current user"""
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Avatar must be an image file")
+
+    data = await file.read()
+    if len(data) == 0:
+        raise HTTPException(status_code=400, detail="Empty avatar file")
+    if len(data) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Avatar file too large (max 5MB)")
+
+    key = f"avatars/{current_user.id}"
+    await put_object(key, data, file.content_type)
+
+    base_url = str(request.base_url).rstrip("/")
+    current_user.avatar_url = f"{base_url}/api/avatars/{current_user.id}"
+
+    await db.commit()
+    await db.refresh(current_user)
     return current_user

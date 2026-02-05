@@ -773,7 +773,7 @@ function LatexSection() {
           {/* Section header */}
           <div className="text-center mb-6">
             <h2 className="text-3xl md:text-4xl font-bold text-white mb-3">AI-Powered LaTeX Lab</h2>
-            <p className="text-lg text-neutral-400">Write, compile, and refine your proofs with AI assistance</p>
+            <p className="text-lg text-neutral-200">Write, compile, and refine your proofs with AI assistance</p>
           </div>
 
           {/* Main layout: Sidebar + Editor + PDF Preview */}
@@ -1093,7 +1093,10 @@ function LatexSection() {
               { icon: FileText, label: "Live PDF preview", color: "text-emerald-400" },
               { icon: Zap, label: "Auto-recompile", color: "text-indigo-400" },
             ].map((item) => (
-              <div key={item.label} className="flex items-center gap-2 text-neutral-400">
+              <div
+                key={item.label}
+                className="flex items-center gap-2 text-neutral-200 px-3 py-1.5 rounded-full bg-neutral-900/40 border border-neutral-700/70 backdrop-blur-sm"
+              >
                 <item.icon className={`w-4 h-4 ${item.color}`} />
                 <span className="text-sm">{item.label}</span>
               </div>

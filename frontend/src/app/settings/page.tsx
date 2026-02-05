@@ -1,15 +1,19 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, type ChangeEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
 import { DashboardNavbar } from "@/components/layout/DashboardNavbar";
+import { uploadAvatar, updateMe } from "@/lib/api";
 
 export default function SettingsPage() {
-  const { user, isLoading, logout } = useAuth();
+  const { user, isLoading, logout, refreshUser } = useAuth();
   const router = useRouter();
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
+  const [avatarUploading, setAvatarUploading] = useState(false);
+  const [avatarError, setAvatarError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!isLoading && !user) {
@@ -31,6 +35,43 @@ export default function SettingsPage() {
 
   if (!user) return null;
 
+  const handleAvatarPick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleAvatarChange = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setAvatarError(null);
+    setAvatarUploading(true);
+    try {
+      await uploadAvatar(file);
+      await refreshUser();
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to upload avatar";
+      setAvatarError(message);
+    } finally {
+      setAvatarUploading(false);
+      event.target.value = "";
+    }
+  };
+
+  const handleAvatarRemove = async () => {
+    setAvatarError(null);
+    setAvatarUploading(true);
+    try {
+      await updateMe({ avatar_url: null });
+      await refreshUser();
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to remove avatar";
+      setAvatarError(message);
+    } finally {
+      setAvatarUploading(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-neutral-50 text-neutral-900 flex flex-col">
       <DashboardNavbar />
@@ -51,6 +92,58 @@ export default function SettingsPage() {
             <h2 className="text-sm font-medium text-neutral-900 mb-4">Profile</h2>
 
             <div className="space-y-4">
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex items-center gap-4">
+                  <div className="h-12 w-12 rounded-full bg-neutral-100 border border-neutral-200 flex items-center justify-center overflow-hidden">
+                    {user.avatar_url ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={user.avatar_url}
+                        alt={`${user.username} avatar`}
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      <span className="text-xs font-semibold text-neutral-500">
+                        {user.username.slice(0, 2).toUpperCase()}
+                      </span>
+                    )}
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-neutral-800">Profile photo</p>
+                    <p className="text-[11px] text-neutral-400">
+                      PNG or JPG up to 5MB
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleAvatarPick}
+                    disabled={avatarUploading}
+                    className="px-3 py-2 bg-neutral-900 text-white text-xs font-medium rounded-lg hover:bg-neutral-800 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                  >
+                    {avatarUploading ? "Uploading..." : "Change photo"}
+                  </button>
+                  {user.avatar_url ? (
+                    <button
+                      onClick={handleAvatarRemove}
+                      disabled={avatarUploading}
+                      className="px-3 py-2 bg-neutral-100 text-neutral-700 text-xs font-medium rounded-lg hover:bg-neutral-200 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                    >
+                      Remove
+                    </button>
+                  ) : null}
+                </div>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handleAvatarChange}
+                />
+              </div>
+              {avatarError ? (
+                <p className="text-xs text-red-500">{avatarError}</p>
+              ) : null}
               <div>
                 <label className="block text-xs font-medium text-neutral-600 mb-2">
                   Username
