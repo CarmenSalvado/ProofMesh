@@ -21,7 +21,9 @@ import {
   markAllNotificationsRead,
   Notification,
   NotificationType,
+  isAuthenticated,
 } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
 
 const NOTIFICATION_ICONS: Record<NotificationType, React.ReactNode> = {
   follow: <UserPlus className="w-4 h-4 text-amber-600" />,
@@ -61,6 +63,7 @@ function getInitials(name: string) {
 }
 
 export function NotificationsDropdown() {
+  const { user, isLoading: authLoading } = useAuth();
   const [open, setOpen] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -68,6 +71,12 @@ export function NotificationsDropdown() {
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   const loadNotifications = useCallback(async () => {
+    if (authLoading || !isAuthenticated()) {
+      setNotifications([]);
+      setUnreadCount(0);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
       const data = await getNotifications({ limit: 20 });
@@ -78,14 +87,22 @@ export function NotificationsDropdown() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [authLoading]);
 
   useEffect(() => {
+    if (authLoading || !user || !isAuthenticated()) return;
     loadNotifications();
     // Poll every 30 seconds
     const interval = setInterval(loadNotifications, 30000);
     return () => clearInterval(interval);
-  }, [loadNotifications]);
+  }, [authLoading, user, loadNotifications]);
+
+  useEffect(() => {
+    if (!authLoading && !user) {
+      setNotifications([]);
+      setUnreadCount(0);
+    }
+  }, [authLoading, user]);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {

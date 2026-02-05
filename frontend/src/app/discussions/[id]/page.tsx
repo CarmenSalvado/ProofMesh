@@ -13,7 +13,9 @@ import {
   Discussion,
   Comment,
 } from "@/lib/api";
+import { extractPostAttachments } from "@/lib/postAttachments";
 import { DashboardNavbar } from "@/components/layout/DashboardNavbar";
+import { PostAttachmentCard } from "@/components/social";
 import {
   ChevronDown,
   MessageSquare,
@@ -177,6 +179,10 @@ export default function DiscussionDetailPage() {
 
   if (!user) return null;
 
+  const { cleanContent: discussionContent, attachments: discussionAttachments } = extractPostAttachments(
+    discussion.content
+  );
+
   const renderComment = (comment: Comment, depth: number = 0) => {
     const children = getChildren(comment.id);
     const isReplying = replyTo === comment.id;
@@ -325,8 +331,19 @@ export default function DiscussionDetailPage() {
             </div>
 
             {/* Content */}
-            <div className="prose prose-sm max-w-none text-neutral-700">
-              <p className="whitespace-pre-wrap">{discussion.content}</p>
+            <div className="prose prose-sm max-w-none text-neutral-700 space-y-3">
+              {discussionContent && <p className="whitespace-pre-wrap">{discussionContent}</p>}
+              {discussionAttachments.length > 0 && (
+                <div className="space-y-2">
+                  {discussionAttachments.map((attachment, index) => (
+                    <PostAttachmentCard
+                      key={`${attachment.kind}-${index}`}
+                      attachment={attachment}
+                      allowPrivate={discussion.author.id === user.id}
+                    />
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </article>

@@ -1,12 +1,19 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth";
 import {
   getProblems,
   Problem,
+  getLibraryItems,
+  LibraryItem,
+  getCanvasBlocks,
+  CanvasBlock,
+  listLatexFiles,
+  LatexFileInfo,
+  getLatexFile,
   getSocialFeed,
   getSocialConnections,
   getSocialUsers,
@@ -15,10 +22,6 @@ import {
   SocialFeedItem,
   SocialUser,
   SocialConnectionsResponse,
-  getDiscussions,
-  Discussion,
-  getTeams,
-  Team,
   createDiscussion,
   getTrendingProblems,
   TrendingProblem,
@@ -26,10 +29,11 @@ import {
   PlatformStats,
 } from "@/lib/api";
 import {
-  NotificationsDropdown,
   TeamsSidebar,
   DiscussionsSidebar,
+  PostAttachmentCard,
 } from "@/components/social";
+import { extractPostAttachments, serializePostContent, PostAttachment } from "@/lib/postAttachments";
 import { DashboardNavbar } from "@/components/layout/DashboardNavbar";
 import {
   Plus,
@@ -82,6 +86,27 @@ function getInitials(name: string) {
     .join("");
 }
 
+function formatAttachmentLabel(attachment: PostAttachment) {
+  if (attachment.kind === "latex_fragment") {
+    const range =
+      attachment.line_start && attachment.line_end
+        ? ` (${attachment.line_start}-${attachment.line_end})`
+        : "";
+    return `LaTeX: ${attachment.file_path}${range}`;
+  }
+  if (attachment.kind === "canvas_block") {
+    return `Canvas block: ${attachment.block_name || "Untitled block"}`;
+  }
+  const count = attachment.node_ids?.length || attachment.node_titles?.length || 0;
+  return `Canvas nodes: ${count || "multiple"} selected`;
+}
+
+function getNodeSnippet(node: LibraryItem) {
+  const raw = (node.content || "").replace(/\s+/g, " ").trim();
+  if (!raw) return "No preview available.";
+  return raw.length > 160 ? `${raw.slice(0, 160)}…` : raw;
+}
+
 export default function DashboardPage() {
   const { user, isLoading: authLoading } = useAuth();
   const router = useRouter();
@@ -98,6 +123,26 @@ export default function DashboardPage() {
   const [repoFilter, setRepoFilter] = useState("");
   const [postContent, setPostContent] = useState("");
   const [posting, setPosting] = useState(false);
+  const [composerPulse, setComposerPulse] = useState(false);
+  const [recentPostId, setRecentPostId] = useState<string | null>(null);
+  const [postAttachments, setPostAttachments] = useState<PostAttachment[]>([]);
+  const [canvasModalOpen, setCanvasModalOpen] = useState(false);
+  const [latexModalOpen, setLatexModalOpen] = useState(false);
+  const [canvasProblemId, setCanvasProblemId] = useState("");
+  const [canvasMode, setCanvasMode] = useState<"block" | "nodes">("block");
+  const [canvasBlocks, setCanvasBlocks] = useState<CanvasBlock[]>([]);
+  const [canvasNodes, setCanvasNodes] = useState<LibraryItem[]>([]);
+  const [canvasLoading, setCanvasLoading] = useState(false);
+  const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
+  const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
+  const [canvasFilter, setCanvasFilter] = useState("");
+  const [latexProblemId, setLatexProblemId] = useState("");
+  const [latexFiles, setLatexFiles] = useState<LatexFileInfo[]>([]);
+  const [latexFilePath, setLatexFilePath] = useState("");
+  const [latexContent, setLatexContent] = useState("");
+  const [latexLoading, setLatexLoading] = useState(false);
+  const [latexLineStart, setLatexLineStart] = useState(1);
+  const [latexLineEnd, setLatexLineEnd] = useState(8);
   const [searchQuery, setSearchQuery] = useState("");
 
   useEffect(() => {
@@ -136,6 +181,111 @@ export default function DashboardPage() {
     loadData();
   }, [loadData]);
 
+  useEffect(() => {
+    if (!composerPulse) return;
+    const timeout = setTimeout(() => setComposerPulse(false), 900);
+    return () => clearTimeout(timeout);
+  }, [composerPulse]);
+
+  useEffect(() => {
+    if (!recentPostId) return;
+    const timeout = setTimeout(() => setRecentPostId(null), 5000);
+    return () => clearTimeout(timeout);
+  }, [recentPostId]);
+
+  useEffect(() => {
+    if (!canvasModalOpen) return;
+    if (!canvasProblemId && problems.length > 0) {
+      setCanvasProblemId(problems[0].id);
+    }
+  }, [canvasModalOpen, canvasProblemId, problems]);
+
+  useEffect(() => {
+    if (!canvasModalOpen || !canvasProblemId) return;
+    let cancelled = false;
+    setCanvasLoading(true);
+    Promise.all([getCanvasBlocks(canvasProblemId).catch(() => []), getLibraryItems(canvasProblemId)])
+      .then(([blocks, nodesResp]) => {
+        if (cancelled) return;
+        setCanvasBlocks(blocks);
+        setCanvasNodes(nodesResp.items);
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          console.error("Failed to load canvas data", error);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setCanvasLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [canvasModalOpen, canvasProblemId]);
+
+  useEffect(() => {
+    if (!latexModalOpen) return;
+    if (!latexProblemId && problems.length > 0) {
+      setLatexProblemId(problems[0].id);
+    }
+  }, [latexModalOpen, latexProblemId, problems]);
+
+  useEffect(() => {
+    if (!latexModalOpen || !latexProblemId) return;
+    let cancelled = false;
+    setLatexLoading(true);
+    listLatexFiles(latexProblemId)
+      .then((listing) => {
+        if (cancelled) return;
+        const filtered = listing.files.filter((file) =>
+          file.path.endsWith(".tex") || file.path.endsWith(".ltx")
+        );
+        setLatexFiles(filtered);
+        if (!latexFilePath && filtered.length > 0) {
+          setLatexFilePath(filtered[0].path);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          console.error("Failed to load LaTeX files", error);
+          setLatexFiles([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLatexLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [latexModalOpen, latexProblemId]);
+
+  useEffect(() => {
+    if (!latexModalOpen || !latexProblemId || !latexFilePath) return;
+    let cancelled = false;
+    setLatexLoading(true);
+    getLatexFile(latexProblemId, latexFilePath)
+      .then((file) => {
+        if (cancelled) return;
+        if (!file.is_binary) {
+          setLatexContent(file.content || "");
+        } else {
+          setLatexContent("");
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          console.error("Failed to load LaTeX file", error);
+          setLatexContent("");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLatexLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [latexModalOpen, latexProblemId, latexFilePath]);
+
   const handleFollow = async (userId: string) => {
     try {
       await followUser(userId);
@@ -173,20 +323,131 @@ export default function DashboardPage() {
     }
   };
 
+  const removeAttachment = (index: number) => {
+    setPostAttachments((prev) => prev.filter((_, idx) => idx !== index));
+  };
+
+  const resetCanvasModal = () => {
+    setCanvasModalOpen(false);
+    setCanvasMode("block");
+    setCanvasFilter("");
+    setSelectedBlockId(null);
+    setSelectedNodeIds(new Set());
+  };
+
+  const resetLatexModal = () => {
+    setLatexModalOpen(false);
+    setLatexFilePath("");
+    setLatexContent("");
+    setLatexLineStart(1);
+    setLatexLineEnd(8);
+  };
+
+  const handleCanvasAttach = () => {
+    const problem = problems.find((p) => p.id === canvasProblemId);
+    if (!problem) return;
+    if (canvasMode === "block") {
+      const block = canvasBlocks.find((b) => b.id === selectedBlockId);
+      if (!block) return;
+      const attachment: PostAttachment = {
+        kind: "canvas_block",
+        problem_id: problem.id,
+        problem_title: problem.title,
+        visibility: problem.visibility,
+        block_id: block.id,
+        block_name: block.name,
+        node_ids: block.node_ids,
+      };
+      setPostAttachments((prev) => [...prev, attachment]);
+      resetCanvasModal();
+      return;
+    }
+    const ids = Array.from(selectedNodeIds);
+    if (ids.length === 0) return;
+    const nodeTitles = canvasNodes.filter((n) => ids.includes(n.id)).map((n) => n.title);
+    const attachment: PostAttachment = {
+      kind: "canvas_nodes",
+      problem_id: problem.id,
+      problem_title: problem.title,
+      visibility: problem.visibility,
+      node_ids: ids,
+      node_titles: nodeTitles,
+    };
+    setPostAttachments((prev) => [...prev, attachment]);
+    resetCanvasModal();
+  };
+
+  const handleLatexAttach = () => {
+    const problem = problems.find((p) => p.id === latexProblemId);
+    if (!problem || !latexFilePath) return;
+    const snippet = latexRange.snippet.trim();
+    if (!snippet) return;
+    const attachment: PostAttachment = {
+      kind: "latex_fragment",
+      problem_id: problem.id,
+      problem_title: problem.title,
+      visibility: problem.visibility,
+      file_path: latexFilePath,
+      line_start: latexRange.start,
+      line_end: latexRange.end,
+      snippet: snippet,
+    };
+    setPostAttachments((prev) => [...prev, attachment]);
+    resetLatexModal();
+  };
+
   const handlePost = async () => {
-    if (!postContent.trim() || posting) return;
-    
+    const hasBody = postContent.trim().length > 0 || postAttachments.length > 0;
+    if (!hasBody || posting) return;
+
     setPosting(true);
     try {
+      const composedContent = serializePostContent(postContent, postAttachments);
+      const defaultTitle = postAttachments.length > 0
+        ? postAttachments[0].kind === "latex_fragment"
+          ? "Shared LaTeX fragment"
+          : "Shared canvas snapshot"
+        : "Update";
       // Create a discussion as the post
-      const title = postContent.slice(0, 100).split("\n")[0] || "Update";
-      await createDiscussion({
+      const title = postContent.slice(0, 100).split("\n")[0] || defaultTitle;
+      const created = await createDiscussion({
         title: title,
-        content: postContent,
+        content: composedContent,
+      });
+      const optimisticItem: SocialFeedItem = {
+        id: `local-${created.id}`,
+        type: "DISCUSSION_POST",
+        actor: {
+          id: created.author?.id || user.id,
+          username: created.author?.username || user.username,
+          avatar_url: created.author?.avatar_url ?? user.avatar_url,
+        },
+        problem: null,
+        target_id: created.id,
+        item_status: null,
+        item_kind: null,
+        verification_status: null,
+        verification_method: null,
+        has_lean_code: null,
+        extra_data: {
+          discussion_id: created.id,
+          discussion_title: created.title,
+          discussion_content: composedContent,
+        },
+        created_at: created.created_at || new Date().toISOString(),
+      };
+      setFeedItems((prev) => {
+        const withoutDuplicate = prev.filter((item) => {
+          const discussionId = item.extra_data?.discussion_id as string | undefined;
+          return item.target_id !== created.id && discussionId !== created.id;
+        });
+        return [optimisticItem, ...withoutDuplicate];
       });
       setPostContent("");
-      // Refresh feed
-      await loadData();
+      setPostAttachments([]);
+      setRecentPostId(created.id);
+      setComposerPulse(false);
+      requestAnimationFrame(() => setComposerPulse(true));
     } catch (err) {
       console.error("Post failed", err);
     } finally {
@@ -197,6 +458,31 @@ export default function DashboardPage() {
   const filteredProblems = problems.filter((p) =>
     p.title.toLowerCase().includes(repoFilter.toLowerCase())
   );
+
+  const filteredCanvasNodes = useMemo(() => {
+    const query = canvasFilter.trim().toLowerCase();
+    if (!query) return canvasNodes;
+    return canvasNodes.filter((node) => node.title.toLowerCase().includes(query));
+  }, [canvasFilter, canvasNodes]);
+
+  const latexLines = useMemo(() => (latexContent ? latexContent.split("\n") : [""]), [latexContent]);
+  const latexLineMax = Math.max(latexLines.length, 1);
+  const latexRange = useMemo(() => {
+    const start = Math.min(Math.max(1, latexLineStart), latexLineMax);
+    const end = Math.min(Math.max(start, latexLineEnd), latexLineMax);
+    return {
+      start,
+      end,
+      snippet: latexLines.slice(start - 1, end).join("\n"),
+    };
+  }, [latexLines, latexLineStart, latexLineEnd, latexLineMax]);
+
+  useEffect(() => {
+    if (latexLineStart < 1) setLatexLineStart(1);
+    if (latexLineEnd < 1) setLatexLineEnd(1);
+    if (latexLineStart > latexLineMax) setLatexLineStart(latexLineMax);
+    if (latexLineEnd > latexLineMax) setLatexLineEnd(latexLineMax);
+  }, [latexLineMax, latexLineStart, latexLineEnd]);
 
   const filteredFeedItems = feedItems.filter((item) => {
     const query = searchQuery.trim().toLowerCase();
@@ -220,6 +506,8 @@ export default function DashboardPage() {
       .filter(Boolean);
     return values.some((value) => value.includes(query));
   });
+
+  const canPost = postContent.trim().length > 0 || postAttachments.length > 0;
 
   if (authLoading) {
     return (
@@ -338,7 +626,7 @@ export default function DashboardPage() {
           </div>
 
           {/* Feed Input */}
-          <div className="bg-white rounded-lg border border-neutral-200 p-4 shadow-sm mb-6">
+          <div className={`relative bg-white rounded-lg border border-neutral-200 p-4 shadow-sm mb-6 ${composerPulse ? "pm-post-composer" : ""}`}>
             <div className="flex gap-3">
               <div className="w-8 h-8 rounded-full bg-indigo-100 border border-neutral-100 flex items-center justify-center text-[10px] font-bold text-indigo-700">
                 {getInitials(user.username)}
@@ -354,15 +642,36 @@ export default function DashboardPage() {
                     disabled={posting}
                   />
                 </div>
+                {postAttachments.length > 0 && (
+                  <div className="mb-3 space-y-2">
+                    {postAttachments.map((attachment, index) => (
+                      <div
+                        key={`${attachment.kind}-${index}`}
+                        className="flex items-center justify-between gap-3 rounded-md border border-neutral-200 bg-white px-3 py-2 text-xs text-neutral-600"
+                      >
+                        <span className="truncate">{formatAttachmentLabel(attachment)}</span>
+                        <button
+                          type="button"
+                          onClick={() => removeAttachment(index)}
+                          className="text-[11px] font-medium text-neutral-400 hover:text-neutral-600"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 <div className="flex items-center justify-between">
                   <div className="flex gap-2">
                     <button
+                      onClick={() => setCanvasModalOpen(true)}
                       className="p-1.5 text-neutral-400 hover:text-neutral-600 rounded hover:bg-neutral-100 transition-colors"
                       title="Attach Logic Graph"
                     >
                       <GitFork className="w-4 h-4" />
                     </button>
                     <button
+                      onClick={() => setLatexModalOpen(true)}
                       className="p-1.5 text-neutral-400 hover:text-neutral-600 rounded hover:bg-neutral-100 transition-colors"
                       title="LaTeX Equation"
                     >
@@ -371,10 +680,17 @@ export default function DashboardPage() {
                   </div>
                   <button
                     onClick={handlePost}
-                    disabled={!postContent.trim() || posting}
+                    disabled={!canPost || posting}
                     className="bg-neutral-900 text-white text-xs font-medium px-4 py-2 rounded-md hover:bg-neutral-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {posting ? "Posting..." : "Post Update"}
+                    {posting ? (
+                      <span className="flex items-center gap-2">
+                        <span className="w-3 h-3 rounded-full border-2 border-white/70 border-t-transparent animate-spin" />
+                        Posting...
+                      </span>
+                    ) : (
+                      "Post Update"
+                    )}
                   </button>
                 </div>
               </div>
@@ -430,6 +746,11 @@ export default function DashboardPage() {
                 const isDiscussionPost = Boolean(
                   item.extra_data?.discussion_content || item.extra_data?.discussion_title
                 );
+                const isRecentPost = Boolean(
+                  recentPostId &&
+                  (item.target_id === recentPostId ||
+                    item.extra_data?.discussion_id === recentPostId)
+                );
                 const meta = isDiscussionPost
                   ? { label: "posted", color: "text-indigo-600" }
                   : FEED_META[item.type] || { label: "updated", color: "text-neutral-600" };
@@ -440,6 +761,9 @@ export default function DashboardPage() {
                 const kind = (item.item_kind as string | undefined)?.toLowerCase();
                 const discussionTitle = item.extra_data?.discussion_title as string | undefined;
                 const discussionContent = item.extra_data?.discussion_content as string | undefined;
+                const discussionPayload = extractPostAttachments(discussionContent || "");
+                const discussionCleanContent = discussionPayload.cleanContent;
+                const discussionAttachments = discussionPayload.attachments;
                 const discussionHref = item.target_id ? `/discussions/${item.target_id}` : "#";
                 const problemTitle =
                   item.problem?.title ||
@@ -462,7 +786,7 @@ export default function DashboardPage() {
                 return (
                   <div
                     key={item.id}
-                    className="relative bg-white rounded-lg border border-neutral-200 p-5 shadow-sm"
+                    className={`relative bg-white rounded-lg border border-neutral-200 p-5 shadow-sm ${isRecentPost ? "pm-post-card-enter border-indigo-200/60 shadow-md" : ""}`}
                   >
                     <div className="flex items-start gap-3">
                       <div className="w-8 h-8 rounded-full bg-neutral-100 border border-neutral-100 flex items-center justify-center text-[10px] font-bold text-neutral-600">
@@ -520,11 +844,24 @@ export default function DashboardPage() {
                           </div>
                         )}
 
-                        {isDiscussionPost && discussionContent && (
+                        {isDiscussionPost && discussionCleanContent && (
                           <div className="mt-3 rounded-md border border-indigo-100 bg-indigo-50/60 p-3">
                             <p className="text-sm text-neutral-700 whitespace-pre-wrap">
-                              {discussionContent}
+                              {discussionCleanContent}
                             </p>
+                          </div>
+                        )}
+
+                        {isDiscussionPost && discussionAttachments.length > 0 && (
+                          <div className="mt-3 space-y-2">
+                            {discussionAttachments.map((attachment, idx) => (
+                              <PostAttachmentCard
+                                key={`${attachment.kind}-${idx}`}
+                                attachment={attachment}
+                                compact
+                                allowPrivate={item.actor.id === user.id}
+                              />
+                            ))}
                           </div>
                         )}
                       </div>
@@ -648,6 +985,286 @@ export default function DashboardPage() {
           </div>
         </aside>
       </div>
+
+      {canvasModalOpen && (
+        <div
+          className="fixed inset-0 z-50"
+        >
+          <div className="absolute inset-0 bg-black/40" onClick={resetCanvasModal} />
+          <div className="absolute right-0 top-0 h-full w-full max-w-md bg-white shadow-xl flex flex-col">
+            <div className="flex items-center justify-between p-4 border-b border-neutral-200">
+              <h2 className="text-sm font-semibold text-neutral-900">Attach Canvas Snapshot</h2>
+              <button
+                onClick={resetCanvasModal}
+                className="text-neutral-400 hover:text-neutral-600 transition-colors"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+              <div>
+                <label className="text-[11px] font-medium text-neutral-500">Problem</label>
+                <select
+                  value={canvasProblemId}
+                  onChange={(e) => {
+                    setCanvasProblemId(e.target.value);
+                    setSelectedBlockId(null);
+                    setSelectedNodeIds(new Set());
+                  }}
+                  className="mt-1 w-full rounded-md border border-neutral-200 bg-white px-2 py-1.5 text-sm text-neutral-800"
+                >
+                  {problems.map((problem) => (
+                    <option key={problem.id} value={problem.id}>
+                      {problem.title} · {problem.visibility}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setCanvasMode("block")}
+                  className={`px-3 py-1.5 text-xs font-medium rounded-md border ${
+                    canvasMode === "block"
+                      ? "border-indigo-200 bg-indigo-50 text-indigo-700"
+                      : "border-neutral-200 text-neutral-500 hover:text-neutral-700"
+                  }`}
+                >
+                  Blocks
+                </button>
+                <button
+                  onClick={() => setCanvasMode("nodes")}
+                  className={`px-3 py-1.5 text-xs font-medium rounded-md border ${
+                    canvasMode === "nodes"
+                      ? "border-indigo-200 bg-indigo-50 text-indigo-700"
+                      : "border-neutral-200 text-neutral-500 hover:text-neutral-700"
+                  }`}
+                >
+                  Nodes
+                </button>
+              </div>
+              {canvasLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <div className="animate-spin rounded-full h-5 w-5 border-2 border-neutral-900 border-t-transparent" />
+                </div>
+              ) : canvasMode === "block" ? (
+                <div className="space-y-2">
+                  {canvasBlocks.length === 0 ? (
+                    <p className="text-xs text-neutral-400">No blocks yet for this canvas.</p>
+                  ) : (
+                    canvasBlocks.map((block) => (
+                      <button
+                        key={block.id}
+                        onClick={() => setSelectedBlockId(block.id)}
+                        className={`w-full text-left px-3 py-2 rounded-md border text-sm ${
+                          selectedBlockId === block.id
+                            ? "border-indigo-200 bg-indigo-50 text-indigo-700"
+                            : "border-neutral-200 text-neutral-600 hover:bg-neutral-50"
+                        }`}
+                      >
+                        <div className="font-medium">{block.name || "Untitled block"}</div>
+                        <div className="text-[11px] text-neutral-500">{block.node_ids.length} nodes</div>
+                      </button>
+                    ))
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <input
+                    type="text"
+                    value={canvasFilter}
+                    onChange={(e) => setCanvasFilter(e.target.value)}
+                    placeholder="Filter nodes..."
+                    className="w-full rounded-md border border-neutral-200 px-2 py-1.5 text-xs"
+                  />
+                  <div className="max-h-64 overflow-y-auto space-y-2">
+                    {filteredCanvasNodes.length === 0 ? (
+                      <p className="text-xs text-neutral-400">No nodes found.</p>
+                    ) : (
+                      filteredCanvasNodes.map((node) => {
+                        const selected = selectedNodeIds.has(node.id);
+                        const snippet = getNodeSnippet(node);
+                        const meta = `${node.kind.toLowerCase()} • ${node.status.toLowerCase()}`;
+                        return (
+                          <button
+                            key={node.id}
+                            onClick={() => {
+                              setSelectedNodeIds((prev) => {
+                                const next = new Set(prev);
+                                if (next.has(node.id)) {
+                                  next.delete(node.id);
+                                } else {
+                                  next.add(node.id);
+                                }
+                                return next;
+                              });
+                            }}
+                            className={`w-full text-left rounded-md border px-3 py-2 text-xs transition ${
+                              selected
+                                ? "border-indigo-200 bg-indigo-50"
+                                : "border-neutral-200 hover:bg-neutral-50"
+                            }`}
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0 flex-1">
+                                <div className="text-sm font-medium text-neutral-800 truncate">
+                                  {node.title}
+                                </div>
+                                <div className="text-[11px] text-neutral-500">{meta}</div>
+                                <div className="mt-1 text-[11px] text-neutral-600 leading-snug max-h-10 overflow-hidden">
+                                  {snippet}
+                                </div>
+                              </div>
+                              <div
+                                className={`mt-1 h-4 w-4 rounded border flex items-center justify-center ${
+                                  selected ? "bg-indigo-600 border-indigo-600 text-white" : "border-neutral-300"
+                                }`}
+                              >
+                                {selected && (
+                                  <svg viewBox="0 0 20 20" className="h-3 w-3" fill="currentColor">
+                                    <path
+                                      fillRule="evenodd"
+                                      d="M16.7 5.3a1 1 0 0 1 0 1.4l-7.2 7.2a1 1 0 0 1-1.4 0L3.3 9.1a1 1 0 1 1 1.4-1.4l3 3 6.5-6.4a1 1 0 0 1 1.4 0Z"
+                                      clipRule="evenodd"
+                                    />
+                                  </svg>
+                                )}
+                              </div>
+                            </div>
+                          </button>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="flex items-center justify-end gap-2 p-4 border-t border-neutral-200">
+              <button
+                onClick={resetCanvasModal}
+                className="px-3 py-1.5 text-xs font-medium text-neutral-500 hover:text-neutral-700"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleCanvasAttach}
+                disabled={
+                  canvasMode === "block" ? !selectedBlockId : selectedNodeIds.size === 0
+                }
+                className="px-4 py-1.5 text-xs font-medium bg-neutral-900 text-white rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Attach
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {latexModalOpen && (
+        <div
+          className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4"
+          onClick={resetLatexModal}
+        >
+          <div
+            className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[80vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between p-4 border-b border-neutral-200">
+              <h2 className="text-sm font-semibold text-neutral-900">Attach LaTeX Fragment</h2>
+              <button
+                onClick={resetLatexModal}
+                className="text-neutral-400 hover:text-neutral-600 transition-colors"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+              <div>
+                <label className="text-[11px] font-medium text-neutral-500">Problem</label>
+                <select
+                  value={latexProblemId}
+                  onChange={(e) => {
+                    setLatexProblemId(e.target.value);
+                    setLatexFilePath("");
+                  }}
+                  className="mt-1 w-full rounded-md border border-neutral-200 bg-white px-2 py-1.5 text-sm text-neutral-800"
+                >
+                  {problems.map((problem) => (
+                    <option key={problem.id} value={problem.id}>
+                      {problem.title} · {problem.visibility}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-[11px] font-medium text-neutral-500">File</label>
+                <select
+                  value={latexFilePath}
+                  onChange={(e) => setLatexFilePath(e.target.value)}
+                  className="mt-1 w-full rounded-md border border-neutral-200 bg-white px-2 py-1.5 text-sm text-neutral-800"
+                >
+                  {latexFiles.map((file) => (
+                    <option key={file.path} value={file.path}>
+                      {file.path}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[11px] font-medium text-neutral-500">Start line</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={latexLineMax}
+                    value={latexLineStart}
+                    onChange={(e) => setLatexLineStart(Number(e.target.value))}
+                    className="mt-1 w-full rounded-md border border-neutral-200 px-2 py-1.5 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] font-medium text-neutral-500">End line</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={latexLineMax}
+                    value={latexLineEnd}
+                    onChange={(e) => setLatexLineEnd(Number(e.target.value))}
+                    className="mt-1 w-full rounded-md border border-neutral-200 px-2 py-1.5 text-sm"
+                  />
+                </div>
+              </div>
+              {latexLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <div className="animate-spin rounded-full h-5 w-5 border-2 border-neutral-900 border-t-transparent" />
+                </div>
+              ) : (
+                <pre className="rounded-md border border-neutral-200 bg-neutral-50 p-3 text-xs text-neutral-700 whitespace-pre-wrap font-mono">
+                  {latexRange.snippet || "No content available."}
+                </pre>
+              )}
+            </div>
+            <div className="flex items-center justify-end gap-2 p-4 border-t border-neutral-200">
+              <button
+                onClick={resetLatexModal}
+                className="px-3 py-1.5 text-xs font-medium text-neutral-500 hover:text-neutral-700"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleLatexAttach}
+                disabled={!latexFilePath || latexRange.snippet.trim().length === 0}
+                className="px-4 py-1.5 text-xs font-medium bg-neutral-900 text-white rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Attach
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Following Modal */}
       {showFollowingModal && (

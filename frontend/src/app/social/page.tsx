@@ -394,13 +394,16 @@ export default function SocialPage() {
                         <Sparkles size={14} className="text-neutral-500" />
                         Activity Stream
                       </div>
-                      <div className="flex items-center gap-2 px-2 py-1.5 rounded-md text-xs font-medium text-neutral-500">
+                      <Link
+                        href="/notifications"
+                        className="flex items-center gap-2 px-2 py-1.5 rounded-md text-xs font-medium text-neutral-500 hover:bg-white hover:text-neutral-900 transition-colors"
+                      >
                         <FileText size={14} className="text-neutral-400" />
                         Inbox
                         <span className="ml-auto bg-neutral-200 text-neutral-600 px-1.5 py-0.5 rounded text-[10px]">
                           {Math.max(followers.length, 1)}
                         </span>
-                      </div>
+                      </Link>
                       <div className="flex items-center gap-2 px-2 py-1.5 rounded-md text-xs font-medium text-neutral-500">
                         <BookOpen size={14} className="text-neutral-400" />
                         Saved Lemmas

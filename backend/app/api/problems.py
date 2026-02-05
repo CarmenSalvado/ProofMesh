@@ -1,3 +1,4 @@
+import uuid
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select, inspect
@@ -7,9 +8,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.problem import Problem, ProblemVisibility, ProblemDifficulty
 from app.models.activity import Activity, ActivityType
+from app.models.library_item import LibraryItem
+from app.models.canvas_block import CanvasBlock
 from app.models.workspace_file import WorkspaceFile, WorkspaceFileType
 from app.models.user import User
 from app.api.deps import get_current_user, get_current_user_optional
+from app.services.storage import list_objects, copy_object
 from app.schemas.problem import (
     ProblemCreate,
     ProblemUpdate,
@@ -144,6 +148,119 @@ async def create_problem(
     problem = result.scalar_one()
     
     return problem_to_response(problem)
+
+
+@router.post("/{problem_id}/fork", response_model=ProblemResponse, status_code=201)
+async def fork_problem(
+    problem_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Fork a public problem into the current user's workspace."""
+    result = await db.execute(
+        select(Problem)
+        .options(selectinload(Problem.author))
+        .where(Problem.id == problem_id)
+    )
+    problem = result.scalar_one_or_none()
+    if not problem:
+        raise HTTPException(status_code=404, detail="Problem not found")
+    if problem.visibility != ProblemVisibility.PUBLIC and problem.author_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to fork this problem")
+
+    forked = Problem(
+        title=f"{problem.title} (fork)",
+        description=problem.description,
+        author_id=current_user.id,
+        visibility=ProblemVisibility.PRIVATE,
+        difficulty=problem.difficulty,
+        tags=problem.tags or [],
+        fork_of=problem.id,
+    )
+    db.add(forked)
+    await db.flush()
+
+    workspace_doc = WorkspaceFile(
+        problem_id=forked.id,
+        path="workspace.md",
+        parent_path="",
+        type=WorkspaceFileType.FILE,
+        content=build_workspace_markdown(forked.title, forked.description),
+        format="markdown",
+        mimetype="text/markdown",
+    )
+    db.add(workspace_doc)
+
+    items_result = await db.execute(select(LibraryItem).where(LibraryItem.problem_id == problem.id))
+    items = items_result.scalars().all()
+    id_map = {item.id: uuid.uuid4() for item in items}
+
+    for item in items:
+        new_item = LibraryItem(
+            id=id_map[item.id],
+            problem_id=forked.id,
+            title=item.title,
+            kind=item.kind,
+            content=item.content,
+            formula=item.formula,
+            lean_code=item.lean_code,
+            status=item.status,
+            x=item.x,
+            y=item.y,
+            authors=item.authors,
+            source=item.source,
+            dependencies=[id_map[dep] for dep in item.dependencies if dep in id_map],
+            verification=item.verification,
+        )
+        db.add(new_item)
+
+    blocks_result = await db.execute(select(CanvasBlock).where(CanvasBlock.problem_id == problem.id))
+    blocks = blocks_result.scalars().all()
+    for block in blocks:
+        new_block = CanvasBlock(
+            problem_id=forked.id,
+            name=block.name,
+            node_ids=[id_map[node_id] for node_id in block.node_ids if node_id in id_map],
+        )
+        db.add(new_block)
+
+    # Copy LaTeX files (skip build outputs)
+    source_prefix = f"latex/{problem.id}/"
+    dest_prefix = f"latex/{forked.id}/"
+    try:
+        objects = await list_objects(source_prefix)
+        for obj in objects:
+            key = obj.get("Key") or ""
+            if not key or key.endswith("/"):
+                continue
+            if key.startswith(f"{source_prefix}.output/"):
+                continue
+            await copy_object(key, key.replace(source_prefix, dest_prefix, 1))
+    except Exception:
+        # Best-effort copy; do not fail fork
+        pass
+
+    db.add(
+        Activity(
+            user_id=current_user.id,
+            type=ActivityType.FORKED_PROBLEM,
+            target_id=forked.id,
+            extra_data={
+                "problem_id": str(problem.id),
+                "problem_title": problem.title,
+                "fork_id": str(forked.id),
+            },
+        )
+    )
+    await db.commit()
+
+    result = await db.execute(
+        select(Problem)
+        .options(selectinload(Problem.author))
+        .where(Problem.id == forked.id)
+    )
+    forked = result.scalar_one()
+    return problem_to_response(forked)
 
 
 @router.post("/seed", response_model=ProblemListResponse)

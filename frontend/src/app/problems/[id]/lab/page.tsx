@@ -2,6 +2,7 @@
 
 import { use, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import Editor, { type Monaco } from "@monaco-editor/react";
 import { GlobalWorkerOptions, getDocument, type PDFDocumentProxy } from "pdfjs-dist";
 import { useChat } from "@ai-sdk/react";
@@ -288,6 +289,7 @@ function buildTree(files: LatexFileInfo[]): FileNode {
 
 export default function LabPage({ params }: PageProps) {
   const { id: problemId } = use(params);
+  const searchParams = useSearchParams();
   const { user } = useAuth();
   const [problem, setProblem] = useState<Problem | null>(null);
   const [workspaceReady, setWorkspaceReady] = useState(false);
@@ -305,6 +307,8 @@ export default function LabPage({ params }: PageProps) {
   const [renameValue, setRenameValue] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [fileLoading, setFileLoading] = useState(false);
+  const [filesLoaded, setFilesLoaded] = useState(false);
+  const [fileParamApplied, setFileParamApplied] = useState(false);
   const [editorValue, setEditorValue] = useState<string>("");
   const [binaryPreview, setBinaryPreview] = useState<LatexFileResponse | null>(null);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
@@ -634,6 +638,7 @@ export default function LabPage({ params }: PageProps) {
 
   const refreshFiles = useCallback(async () => {
     if (!workspaceReady) return;
+    setFilesLoaded(false);
     try {
       const listing = await listLatexFiles(problemId);
       let nextFiles = listing.files;
@@ -662,6 +667,8 @@ export default function LabPage({ params }: PageProps) {
       });
     } catch (error) {
       console.error("Failed to load LaTeX files", error);
+    } finally {
+      setFilesLoaded(true);
     }
   }, [workspaceReady, problemId, canEdit, problem?.title, activePath]);
 
@@ -3082,6 +3089,10 @@ export default function LabPage({ params }: PageProps) {
   }, [loadProblem]);
 
   useEffect(() => {
+    setFilesLoaded(false);
+  }, [problemId]);
+
+  useEffect(() => {
     if (!workspaceReady) return;
     refreshFiles();
   }, [workspaceReady, refreshFiles]);
@@ -3111,9 +3122,39 @@ export default function LabPage({ params }: PageProps) {
   }, [problemId, canvasNodesLoaded]);
 
   useEffect(() => {
-    if (!workspaceReady || !activePath) return;
+    if (!workspaceReady || !activePath || !filesLoaded) return;
+    if (files.length === 0) {
+      setEditorValue("");
+      setBinaryPreview(null);
+      setFileLoading(false);
+      return;
+    }
+    if (!files.some((file) => file.path === activePath)) {
+      setActivePath(files[0].path);
+      return;
+    }
     loadFile(activePath);
-  }, [workspaceReady, activePath, loadFile]);
+  }, [workspaceReady, activePath, filesLoaded, files, loadFile]);
+
+  useEffect(() => {
+    if (fileParamApplied || !filesLoaded) return;
+    const rawParam = searchParams?.get("file");
+    if (!rawParam) {
+      setFileParamApplied(true);
+      return;
+    }
+    let decoded = rawParam;
+    try {
+      decoded = decodeURIComponent(rawParam);
+    } catch {
+      // Ignore decoding errors
+    }
+    if (files.some((file) => file.path === decoded)) {
+      setActivePath(decoded);
+      setOpenTabs((prev) => (prev.includes(decoded) ? prev : [...prev, decoded]));
+    }
+    setFileParamApplied(true);
+  }, [searchParams, filesLoaded, files, fileParamApplied]);
 
   useEffect(() => {
     if (!activePersistentChatId) return;

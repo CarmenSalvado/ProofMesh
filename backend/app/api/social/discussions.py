@@ -96,7 +96,10 @@ async def create_discussion(
     )
     db.add(discussion)
     
-    extra_data = {"discussion_title": data.title}
+    extra_data = {
+        "discussion_title": data.title,
+        "discussion_content": data.content,
+    }
     if data.problem_id:
         problem_result = await db.execute(select(Problem).where(Problem.id == data.problem_id))
         problem = problem_result.scalar_one_or_none()

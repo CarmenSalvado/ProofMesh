@@ -435,9 +435,12 @@ export function FloatingAIBar({
   const [isInputFocused, setIsInputFocused] = useState(false);
   const [activeRuns, setActiveRuns] = useState<CanvasAIRun[]>([]);
   const [showThinking, setShowThinking] = useState(true);
+  const [isMounted, setIsMounted] = useState(isVisible);
+  const [isClosing, setIsClosing] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const closeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Idea2Paper states
   const [storyModalOpen, setStoryModalOpen] = useState(false);
@@ -477,6 +480,27 @@ export function FloatingAIBar({
   }, [onCreateNode]);
 
   useEffect(() => {
+    if (closeTimeoutRef.current) {
+      clearTimeout(closeTimeoutRef.current);
+      closeTimeoutRef.current = null;
+    }
+
+    if (isVisible) {
+      setIsMounted(true);
+      setIsClosing(false);
+      return;
+    }
+
+    if (isMounted) {
+      setIsClosing(true);
+      closeTimeoutRef.current = setTimeout(() => {
+        setIsMounted(false);
+        setIsClosing(false);
+      }, 260);
+    }
+  }, [isVisible, isMounted]);
+
+  useEffect(() => {
     const { dependencyIds, baseX, baseY } = getStartContext();
     startContextRef.current = { dependencyIds, baseX, baseY };
   }, [getStartContext]);
@@ -495,6 +519,82 @@ export function FloatingAIBar({
     }).join("\n");
     return details;
   }, [contextNodes, selectedNode, selectedNodes]);
+
+  const createTypedNodesFromText = useCallback(async (text: string) => {
+    const createNode = onCreateNodeRef.current;
+    if (!createNode) return;
+    const trimmed = text.trim();
+    if (!trimmed) return;
+
+    const { dependencyIds, baseX, baseY } = startContextRef.current;
+    let sections = parseTypedSections(trimmed);
+    if (sections.length === 0) return;
+
+    if (sections.length === 1 && sections[0].type === "NOTE") {
+      const paragraphs = sections[0].content
+        .split(/\n{2,}/)
+        .map((para) => para.trim())
+        .filter(Boolean);
+      if (paragraphs.length >= 2) {
+        const cycle = ["IDEA", "CLAIM", "CONTENT", "NOTE"];
+        sections = paragraphs.map((para, idx) => {
+          let type = inferNodeTypeFromText(para);
+          if (type === "NOTE") {
+            type = cycle[idx % cycle.length];
+          }
+          return {
+            type,
+            title: deriveGroupTitle(para, `Insight ${idx + 1}`),
+            content: para,
+          };
+        });
+      }
+    }
+
+    let lastCreatedId: string | null = null;
+    const createdIds: string[] = [];
+
+    for (let index = 0; index < sections.length; index += 1) {
+      const section = sections[index];
+      const column = index % 2;
+      const row = Math.floor(index / 2);
+      const position = {
+        x: baseX + 220 + column * 260,
+        y: baseY + 180 + row * 200,
+      };
+      const deps = new Set(dependencyIds);
+      if (lastCreatedId) deps.add(lastCreatedId);
+
+      const created = await createNode({
+        type: section.type,
+        title: section.title,
+        content: section.content,
+        x: position.x,
+        y: position.y,
+        dependencies: Array.from(deps),
+        authors: [AI_AUTHOR],
+      });
+
+      if (created && typeof created === "object" && "id" in created && created.id) {
+        lastCreatedId = created.id;
+        createdIds.push(created.id);
+      }
+    }
+
+    if (createdIds.length > 0 && (sections.length > 1 || sections[0].type !== "NOTE")) {
+      await createNode({
+        type: "NOTE",
+        title: "Explanation",
+        content: trimmed,
+        x: baseX + 220,
+        y: baseY + 180 + Math.ceil(sections.length / 2) * 210,
+        dependencies: createdIds,
+        authors: [AI_AUTHOR],
+      });
+    }
+  }, []);
+
+  const isExploring = activeAction === "explore" || activeAction === "explore-patterns" || activeAction === "pipeline";
 
   // AI SDK useChat for streaming exploration
   const {
@@ -622,6 +722,7 @@ export function FloatingAIBar({
     }
   }, [selectedNode, contextNodes]);
 
+
   useEffect(() => {
     if (isAiLoading) return;
     const lastAssistant = [...aiMessages].reverse().find((msg) => msg.role === "assistant");
@@ -648,6 +749,14 @@ export function FloatingAIBar({
     return () => document.removeEventListener("mousedown", handleClick);
   }, [showMoreActions]);
 
+  useEffect(() => {
+    return () => {
+      if (closeTimeoutRef.current) {
+        clearTimeout(closeTimeoutRef.current);
+      }
+    };
+  }, []);
+
   // Keyboard shortcut
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -672,79 +781,6 @@ export function FloatingAIBar({
     setInsights((prev) => [newInsight, ...prev].slice(0, 5));
   }, []);
 
-  const createTypedNodesFromText = useCallback(async (text: string) => {
-    const createNode = onCreateNodeRef.current;
-    if (!createNode) return;
-    const trimmed = text.trim();
-    if (!trimmed) return;
-
-    const { dependencyIds, baseX, baseY } = startContextRef.current;
-    let sections = parseTypedSections(trimmed);
-    if (sections.length === 0) return;
-
-    if (sections.length === 1 && sections[0].type === "NOTE") {
-      const paragraphs = sections[0].content
-        .split(/\n{2,}/)
-        .map((para) => para.trim())
-        .filter(Boolean);
-      if (paragraphs.length >= 2) {
-        const cycle = ["IDEA", "CLAIM", "CONTENT", "NOTE"];
-        sections = paragraphs.map((para, idx) => {
-          let type = inferNodeTypeFromText(para);
-          if (type === "NOTE") {
-            type = cycle[idx % cycle.length];
-          }
-          return {
-            type,
-            title: deriveGroupTitle(para, `Insight ${idx + 1}`),
-            content: para,
-          };
-        });
-      }
-    }
-
-    let lastCreatedId: string | null = null;
-    const createdIds: string[] = [];
-
-    for (let index = 0; index < sections.length; index += 1) {
-      const section = sections[index];
-      const column = index % 2;
-      const row = Math.floor(index / 2);
-      const position = {
-        x: baseX + 220 + column * 260,
-        y: baseY + 180 + row * 200,
-      };
-      const deps = new Set(dependencyIds);
-      if (lastCreatedId) deps.add(lastCreatedId);
-
-      const created = await createNode({
-        type: section.type,
-        title: section.title,
-        content: section.content,
-        x: position.x,
-        y: position.y,
-        dependencies: Array.from(deps),
-        authors: [AI_AUTHOR],
-      });
-
-      if (created && typeof created === "object" && "id" in created && created.id) {
-        lastCreatedId = created.id;
-        createdIds.push(created.id);
-      }
-    }
-
-    if (createdIds.length > 0 && (sections.length > 1 || sections[0].type !== "NOTE")) {
-      await createNode({
-        type: "NOTE",
-        title: "Explanation",
-        content: trimmed,
-        x: baseX + 220,
-        y: baseY + 180 + Math.ceil(sections.length / 2) * 210,
-        dependencies: createdIds,
-        authors: [AI_AUTHOR],
-      });
-    }
-  }, []);
 
   const handleExplore = useCallback(async () => {
     console.log("[FloatingAIBar] handleExplore called:", {
@@ -1064,10 +1100,74 @@ export function FloatingAIBar({
     });
   }, [command, problemId, isAiLoading, appendAiMessage]);
 
-  const handleUseChatInExplore = useCallback((content: string) => {
-    setCommand(content);
+  const handleUseChatInExplore = useCallback(async (content: string) => {
+    const trimmed = content.trim();
+    if (!trimmed) return;
+    setCommand(trimmed);
+    setIsInputFocused(true);
     inputRef.current?.focus();
-  }, []);
+    if (!problemId || isLoading || isPipelineRunning) return;
+    setIsLoading(true);
+    setActiveAction("explore");
+    try {
+      const result = await exploreContext({
+        problem_id: problemId,
+        prompt: trimmed,
+        context_nodes: contextNodes.map((node) => node.id),
+      });
+      const explorationRunId = result?.run_id || undefined;
+      if (result?.proposals?.length) {
+        addInsight({
+          type: "insight",
+          title: "Exploration Draft",
+          content: `Generated ${result.proposals.length} proposals.`,
+        });
+        for (const proposal of result.proposals) {
+          if (!onCreateNode) continue;
+          try {
+            await Promise.resolve(
+              onCreateNode({
+                type: inferNodeTypeFromText(`${proposal.content}\n${proposal.reasoning || ""}`),
+                title: deriveGroupTitle(proposal.content, "Proposal"),
+                content: proposal.content,
+                x: (selectedNode?.x ?? 400) + 220,
+                y: (selectedNode?.y ?? 300) + 180,
+                dependencies: contextNodes.map((node) => node.id),
+                authors: [AI_AUTHOR],
+                source: buildAISource(explorationRunId),
+              })
+            );
+          } catch (err) {
+            console.error("Failed to create exploration node", err);
+          }
+        }
+      } else {
+        addInsight({
+          type: "insight",
+          title: "Exploration Complete",
+          content: "No proposals returned. Try a different prompt.",
+        });
+      }
+    } catch (err) {
+      console.error("Exploration failed", err);
+      addInsight({
+        type: "insight",
+        title: "Exploration Failed",
+        content: err instanceof Error ? err.message : "Exploration failed",
+      });
+    } finally {
+      setIsLoading(false);
+      setActiveAction(null);
+    }
+  }, [
+    addInsight,
+    contextNodes,
+    isLoading,
+    isPipelineRunning,
+    onCreateNode,
+    problemId,
+    selectedNode,
+  ]);
 
   const handleQuickInsight = useCallback(async () => {
     if (contextNodes.length === 0) return;
@@ -1641,7 +1741,7 @@ export function FloatingAIBar({
     })();
   }, [onCreateNode, selectedNode]);
 
-  if (!isVisible) {
+  if (!isVisible && !isMounted) {
     return (
       <>
         {/* Floating toggle button - minimal pill */}
@@ -1675,8 +1775,25 @@ export function FloatingAIBar({
         className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 w-full max-w-xl px-4 pointer-events-none"
         onDoubleClick={(e) => e.stopPropagation()}
       >
-        <div className="bg-white/90 backdrop-blur-xl rounded-2xl shadow-2xl shadow-black/10 overflow-visible pointer-events-auto animate-in fade-in slide-in-from-bottom-4 duration-300">
-          {(isInputFocused && (command.trim().length > 0 || aiMessages.length > 0)) || isAiLoading ? (
+        <div
+          className={`bg-white/90 backdrop-blur-xl rounded-2xl shadow-2xl shadow-black/10 overflow-visible pointer-events-auto ${
+            isClosing ? "pm-ai-panel-exit" : "pm-ai-panel-enter"
+          }`}
+        >
+          {isExploring && (
+            <div className="px-4 pt-3">
+              <div className="flex items-center justify-between text-[11px] text-neutral-500">
+                <span className="font-medium text-neutral-600">Exploring</span>
+                <span className="pm-thinking__dots">
+                  <span className="pm-thinking__dot" />
+                  <span className="pm-thinking__dot" />
+                  <span className="pm-thinking__dot" />
+                </span>
+              </div>
+              <div className="pm-ai-explore-bar mt-2" />
+            </div>
+          )}
+          {(aiMessages.length > 0 || isAiLoading || command.trim().length > 0) ? (
             <div className="border-b border-neutral-100">
               <div className="max-h-64 overflow-y-auto px-3 py-3 space-y-2">
                 {/* AI SDK Messages with streaming */}

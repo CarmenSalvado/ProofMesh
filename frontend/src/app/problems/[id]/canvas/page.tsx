@@ -201,8 +201,15 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
     try {
       setLoading(true);
       setError(null);
-      const [problemData, libraryData, blocksData] = await Promise.all([
-        getProblem(problemId),
+      let problemData: Problem;
+      try {
+        problemData = await getProblem(problemId);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Problem not found");
+        setLoading(false);
+        return;
+      }
+      const [libraryData, blocksData] = await Promise.all([
         getLibraryItems(problemId),
         getCanvasBlocks(problemId).catch(() => []), // Fallback to empty array if API fails
       ]);

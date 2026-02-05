@@ -700,6 +700,10 @@ export async function deleteProblem(problemId: string): Promise<void> {
 	return apiFetch(`/problems/${problemId}`, { method: "DELETE" });
 }
 
+export async function forkProblem(problemId: string): Promise<Problem> {
+	return apiFetch(`/problems/${problemId}/fork`, { method: "POST" });
+}
+
 // ============ Library API ============
 
 export async function getLibraryItems(

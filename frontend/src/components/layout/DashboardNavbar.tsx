@@ -135,7 +135,7 @@ export function DashboardNavbar({ showSearch = true }: DashboardNavbarProps) {
 
           <div className="hidden md:flex items-center gap-1">
             <Link
-              href="/dashboard"
+              href="/"
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-neutral-500 hover:text-neutral-900 hover:bg-neutral-50 rounded-md transition-colors"
             >
               <Home className="w-3.5 h-3.5" />
