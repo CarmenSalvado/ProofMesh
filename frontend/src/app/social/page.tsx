@@ -19,6 +19,7 @@ import {
   getSocialConnections,
   getSocialFeed,
   getSocialContributions,
+  getNotifications,
   followUser,
   unfollowUser,
   acceptTeamInvite,
@@ -203,6 +204,7 @@ export default function SocialPage() {
   const [error, setError] = useState<string | null>(null);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
   const [inviting, setInviting] = useState<"accept" | "decline" | null>(null);
+  const [inboxUnreadCount, setInboxUnreadCount] = useState(0);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -218,10 +220,12 @@ export default function SocialPage() {
         getSocialFeed({ scope: feedScope, limit: 60 }),
         getSocialContributions(),
       ]);
+      const notifications = await getNotifications({ limit: 1 }).catch(() => null);
       setFollowers(connections.followers);
       setFollowing(connections.following);
       setFeedItems(feed.items);
       setContributions(contribs.problems);
+      setInboxUnreadCount(notifications?.unread_count ?? 0);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load social data");
     } finally {
@@ -403,9 +407,11 @@ export default function SocialPage() {
                       >
                         <FileText size={14} className="text-neutral-400" />
                         Inbox
-                        <span className="ml-auto bg-neutral-200 text-neutral-600 px-1.5 py-0.5 rounded text-[10px]">
-                          {Math.max(followers.length, 1)}
-                        </span>
+                        {inboxUnreadCount > 0 && (
+                          <span className="ml-auto bg-neutral-200 text-neutral-600 px-1.5 py-0.5 rounded text-[10px]">
+                            {inboxUnreadCount > 99 ? "99+" : inboxUnreadCount}
+                          </span>
+                        )}
                       </Link>
                       <div className="flex items-center gap-2 px-2 py-1.5 rounded-md text-xs font-medium text-neutral-500">
                         <BookOpen size={14} className="text-neutral-400" />

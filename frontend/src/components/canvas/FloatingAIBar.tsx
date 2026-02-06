@@ -119,14 +119,14 @@ const SLASH_MODE_OPTIONS: Array<{
     id: "formalize",
     label: "/formalize",
     title: "Lean Formalizer",
-    description: "Turn math text into Lean and run verification",
+    description: "Generate Lean code from selected context",
     aliases: ["formaliza", "lean", "formalise"],
   },
   {
     id: "verify",
     label: "/verify",
     title: "Lean Verifier",
-    description: "Verify current Lean code or verify from a statement",
+    description: "Run Lean verification on selected Lean node",
     aliases: ["verifica", "check"],
   },
   {
@@ -277,11 +277,14 @@ const getSlashModeAccent = (mode: SlashMode | null) => {
   };
 };
 
-const FORMALIZE_DIRECTIVE_REGEX = /^(?:formaliza(?:\s+esto)?|formalize(?:\s+this)?|verifica(?:\s+esto)?|verify(?:\s+this)?|lean)\b[:\s-]*/i;
+const FORMALIZE_DIRECTIVE_REGEX = /^(?:formaliza(?:\s+esto)?|formalize(?:\s+this)?|lean)\b[:\s-]*/i;
+const VERIFY_DIRECTIVE_REGEX = /^(?:verifica(?:\s+esto)?|verify(?:\s+this)?)\b[:\s-]*/i;
 
 const isFormalizeDirectiveText = (value: string) => FORMALIZE_DIRECTIVE_REGEX.test((value || "").trim());
 
 const stripFormalizeDirectiveText = (value: string) => (value || "").trim().replace(FORMALIZE_DIRECTIVE_REGEX, "").trim();
+const isVerifyDirectiveText = (value: string) => VERIFY_DIRECTIVE_REGEX.test((value || "").trim());
+const stripVerifyDirectiveText = (value: string) => (value || "").trim().replace(VERIFY_DIRECTIVE_REGEX, "").trim();
 
 const isImageContent = (value?: string) => {
   if (!value) return false;
@@ -560,6 +563,33 @@ const ensurePythonComputation = (input: string): string | null => {
   const expressionLike = /^[a-zA-Z0-9_+\-*/().,\s]+$/.test(code) && /[+\-*/()]/.test(code);
   if (expressionLike) return code;
 
+  return null;
+};
+
+const LEAN_NODE_TYPES = new Set(["FORMAL_TEST", "LEMMA", "THEOREM", "CLAIM", "DEFINITION", "COUNTEREXAMPLE"]);
+
+const looksLikeLeanCode = (value: string): boolean => {
+  const text = (value || "").trim();
+  if (!text) return false;
+  if (/^\s*import\s+\w+/m.test(text)) return true;
+  if (/^\s*(theorem|lemma|example|def|inductive|structure|axiom|instance|#check|#eval|#print|namespace|open|variable)\b/m.test(text)) return true;
+  if (/\b:=\s*by\b/.test(text)) return true;
+  if (/^\s*by\b/m.test(text)) return true;
+  if (/[∀∃→↔ℕℤℚℝ]/.test(text)) return true;
+  return false;
+};
+
+const extractLeanCodeFromNode = (node?: CanvasNode | null): string | null => {
+  if (!node) return null;
+  const explicitLean = (node.leanCode || "").trim();
+  if (explicitLean) return explicitLean;
+
+  const fenced = extractCodeFence(node.content || "", "lean");
+  if (fenced) return fenced;
+
+  if (LEAN_NODE_TYPES.has((node.type || "").toUpperCase()) && looksLikeLeanCode(node.content || "")) {
+    return (node.content || "").trim();
+  }
   return null;
 };
 
@@ -893,22 +923,89 @@ export function FloatingAIBar({
     setCommand(value);
   }, []);
 
+  const resolveContextNodeRefs = useCallback((): ContextNode[] => {
+    if (contextNodes.length > 0) return contextNodes;
+    if (selectedNodes.length > 0) {
+      return selectedNodes.map((node) => ({
+        id: node.id,
+        title: node.title,
+        type: node.type,
+      }));
+    }
+    if (selectedNode) {
+      return [{ id: selectedNode.id, title: selectedNode.title, type: selectedNode.type }];
+    }
+    return [];
+  }, [contextNodes, selectedNodes, selectedNode]);
+
+  const resolveContextCanvasNodes = useCallback((): CanvasNode[] => {
+    const refs = resolveContextNodeRefs();
+    if (refs.length === 0) return [];
+
+    const byId = new Map<string, CanvasNode>();
+    allNodes.forEach((node) => byId.set(node.id, node));
+    selectedNodes.forEach((node) => byId.set(node.id, node));
+    if (selectedNode) {
+      byId.set(selectedNode.id, selectedNode);
+    }
+
+    const seen = new Set<string>();
+    const resolved: CanvasNode[] = [];
+    refs.forEach((ref) => {
+      const node = byId.get(ref.id);
+      if (!node || seen.has(node.id)) return;
+      seen.add(node.id);
+      resolved.push(node);
+    });
+    return resolved;
+  }, [resolveContextNodeRefs, allNodes, selectedNodes, selectedNode]);
+
+  const buildSelectedContextSummary = useCallback((maxContentChars = 900): string => {
+    const nodes = resolveContextCanvasNodes();
+    if (nodes.length === 0) return "";
+
+    return nodes.map((node, index) => {
+      const body = (node.content || "").trim();
+      const lean = extractLeanCodeFromNode(node);
+      const parts = [
+        `[Node ${index + 1}]`,
+        `Title: ${node.title}`,
+        `Type: ${node.type}`,
+      ];
+      if (body) {
+        parts.push(
+          isImageContent(body)
+            ? "Content: [image attached]"
+            : `Content:\n${body.slice(0, maxContentChars)}`
+        );
+      }
+      if (lean) {
+        parts.push(`Lean code:\n\`\`\`lean\n${lean}\n\`\`\``);
+      }
+      return parts.join("\n");
+    }).join("\n\n");
+  }, [resolveContextCanvasNodes]);
+
   const getStartContext = useCallback(() => {
-    const primaryNode = selectedNode || selectedNodes[0] || null;
-    const dependencyIds =
-      contextNodes.length > 0
-        ? contextNodes.map((n) => n.id)
-        : primaryNode
-          ? [primaryNode.id]
-          : [];
+    const contextRefs = resolveContextNodeRefs();
+    const contextFullNodes = resolveContextCanvasNodes();
+    const primaryNode = contextFullNodes[0] || selectedNode || selectedNodes[0] || null;
 
     return {
       primaryNode,
-      dependencyIds,
+      dependencyIds: contextRefs.map((n) => n.id),
       baseX: primaryNode?.x ?? 400,
       baseY: primaryNode?.y ?? 300,
     };
-  }, [contextNodes, selectedNode, selectedNodes]);
+  }, [resolveContextNodeRefs, resolveContextCanvasNodes, selectedNode, selectedNodes]);
+
+  const resolveLeanCodeFromSelection = useCallback((): string | null => {
+    for (const node of resolveContextCanvasNodes()) {
+      const lean = extractLeanCodeFromNode(node);
+      if (lean) return lean;
+    }
+    return null;
+  }, [resolveContextCanvasNodes]);
 
   useEffect(() => {
     onCreateNodeRef.current = onCreateNode;
@@ -952,18 +1049,8 @@ export function FloatingAIBar({
 
   // Build context for AI from selected nodes
   const aiContext = useMemo(() => {
-    if (contextNodes.length === 0) return "";
-    const details = contextNodes.map(n => {
-      const fullNode = selectedNode?.id === n.id ? selectedNode : selectedNodes.find(sn => sn.id === n.id);
-      const content = fullNode?.content
-        ? isImageContent(fullNode.content)
-          ? " [image attached]"
-          : ` - ${fullNode.content.slice(0, 500)}`
-        : "";
-      return `${n.title} (${n.type})${content}`;
-    }).join("\n");
-    return details;
-  }, [contextNodes, selectedNode, selectedNodes]);
+    return buildSelectedContextSummary(500);
+  }, [buildSelectedContextSummary]);
 
   const createTypedNodesFromText = useCallback(async (text: string): Promise<number> => {
     const createNode = onCreateNodeRef.current;
@@ -1100,7 +1187,23 @@ export function FloatingAIBar({
     });
   }, [createTypedNodesFromText, addInsight]);
 
-  const isExploring = activeAction === "explore" || activeAction === "explore-patterns" || activeAction === "pipeline";
+  const actionProgressLabel = useMemo(() => {
+    if (!activeAction) return null;
+    const labels: Record<string, string> = {
+      explore: "Explorer running",
+      "explore-patterns": "Explorer (patterns) running",
+      formalize: "Formalizer running",
+      verify: "Verifier running",
+      lean: "Lean mode running",
+      compute: "Compute agent running",
+      critic: "Critic running",
+      pipeline: "Pipeline running",
+      insight: "Insight agent running",
+      "generate-story": "Story agent running",
+      fusion: "Fusion agent running",
+    };
+    return labels[activeAction] || "Agent running";
+  }, [activeAction]);
   const cancelExplore = useCallback(() => {
     exploreRunTokenRef.current += 1;
     setIsLoading(false);
@@ -1129,6 +1232,9 @@ export function FloatingAIBar({
       void handleAssistantMessage(message.id, message.content);
     },
   });
+  const showActionProgressBar = Boolean(
+    actionProgressLabel && (isAiLoading || isLoading || isPipelineRunning || activeAction !== null)
+  );
 
   // Extract current thinking and response from streaming
   const currentThinking = useMemo(() => {
@@ -1252,20 +1358,18 @@ export function FloatingAIBar({
       return;
     }
     const effectivePrompt = (promptOverride ?? command).trim();
-    const autoContextNodes = contextNodes.length > 0
-      ? contextNodes
-      : selectedNode
-        ? [{ id: selectedNode.id, title: selectedNode.title, type: selectedNode.type }]
-        : selectedNodes.slice(0, 3).map((node) => ({ id: node.id, title: node.title, type: node.type }));
+    const autoContextNodes = resolveContextNodeRefs();
+    const autoContextFullNodes = resolveContextCanvasNodes();
+    const promptForRouter = effectivePrompt || autoContextNodes.map((n) => n.title).join("; ");
 
     console.log("[FloatingAIBar] handleExplore called:", {
       problemId,
-      command: effectivePrompt,
-      hasCommand: !!effectivePrompt,
+      command: promptForRouter,
+      hasCommand: !!promptForRouter,
       chatMessagesLength: chatMessages.length,
-      contextNodesLength: contextNodes.length,
+      contextNodesLength: autoContextNodes.length,
       effectiveContextNodesLength: autoContextNodes.length,
-      shouldProceed: !!(effectivePrompt || chatMessages.length > 0 || autoContextNodes.length > 0),
+      shouldProceed: !!(promptForRouter || chatMessages.length > 0 || autoContextNodes.length > 0),
     });
 
     if (!problemId) {
@@ -1273,7 +1377,7 @@ export function FloatingAIBar({
       return;
     }
     
-    const hasMeaningfulPrompt = hasMeaningfulCanvasPrompt(effectivePrompt);
+    const hasMeaningfulPrompt = hasMeaningfulCanvasPrompt(promptForRouter);
     if (
       !hasMeaningfulPrompt &&
       chatMessages.length === 0 &&
@@ -1287,7 +1391,7 @@ export function FloatingAIBar({
       return;
     }
 
-    if (!effectivePrompt && chatMessages.length === 0 && autoContextNodes.length === 0) {
+    if (!promptForRouter && chatMessages.length === 0 && autoContextNodes.length === 0) {
       console.warn("[FloatingAIBar] Cannot explore: no command, no chat messages, and no context nodes");
       addInsight({
         type: "insight",
@@ -1308,15 +1412,14 @@ export function FloatingAIBar({
 
       // Build rich context including node content + chat
       let contextStr = "";
-      if (autoContextNodes.length > 0) {
-        const contextDetails = autoContextNodes.map(n => {
-          const fullNode = selectedNode?.id === n.id ? selectedNode : selectedNodes.find(sn => sn.id === n.id);
+      if (autoContextFullNodes.length > 0) {
+        const contextDetails = autoContextFullNodes.map((fullNode) => {
           const content = fullNode?.content
             ? isImageContent(fullNode.content)
               ? " - [image]"
               : ` - ${fullNode.content}`
             : "";
-          return `${n.title} (${n.type})${content}`;
+          return `${fullNode.title} (${fullNode.type})${content}`;
         }).join("\n");
         contextStr = `Context nodes:\n${contextDetails}\n\n`;
       }
@@ -1326,7 +1429,7 @@ export function FloatingAIBar({
       console.log("[FloatingAIBar] Calling canvas router API...");
       const result = await routeCanvasIdeas({
         problem_id: problemId,
-        prompt: effectivePrompt,
+        prompt: promptForRouter,
         context: fullContext,
         max_iterations: 3,
         include_critique: true,
@@ -1351,8 +1454,7 @@ export function FloatingAIBar({
         });
       }
 
-      const baseX = selectedNode?.x ?? 400;
-      const baseY = selectedNode?.y ?? 300;
+      const { baseX, baseY } = getStartContext();
       const anchor = getOrderedPlacementAnchor(allNodes, baseX, baseY, {
         xOffset: 260,
         yOffset: 180,
@@ -1361,11 +1463,7 @@ export function FloatingAIBar({
       });
       const orderedBaseX = anchor.x;
       let proposalCursorY = anchor.y;
-      const dependencyIds = contextNodes.length > 0
-        ? contextNodes.map((n) => n.id)
-        : selectedNode
-          ? [selectedNode.id]
-          : [];
+      const dependencyIds = autoContextNodes.map((n) => n.id);
 
       if (!result.proposals || result.proposals.length === 0) {
         console.warn("[FloatingAIBar] No proposals received from API");
@@ -1622,7 +1720,7 @@ export function FloatingAIBar({
         setActiveAction(null);
       }
     }
-  }, [command, problemId, contextNodes, selectedNode, selectedNodes, chatMessages, addInsight, onCreateNode, onUpdateNode, onCreateBlock, allNodes, isLoading, activeAction, cancelExplore]);
+  }, [command, problemId, chatMessages, addInsight, onCreateNode, onUpdateNode, onCreateBlock, allNodes, isLoading, activeAction, cancelExplore, resolveContextNodeRefs, resolveContextCanvasNodes, getStartContext]);
 
   const handleChatSend = useCallback(async () => {
     if (!problemId || isAiLoading) return;
@@ -1644,7 +1742,6 @@ export function FloatingAIBar({
         setActiveSlashMode(slash.mode);
         trimmed = slash.text;
         setCommand(slash.text);
-        if (!trimmed) return;
       }
     }
 
@@ -1692,6 +1789,21 @@ export function FloatingAIBar({
 
     if (mode) {
       await runMode(mode, trimmed);
+      return;
+    }
+
+    const verifyPrompt = isVerifyDirectiveText(trimmed) ? stripVerifyDirectiveText(trimmed) : null;
+    if (verifyPrompt !== null) {
+      setActiveSlashMode("verify");
+      if (!verifyModeRef.current) {
+        addInsight({
+          type: "insight",
+          title: "Verify unavailable",
+          content: "No pude iniciar verificación en este momento.",
+        });
+        return;
+      }
+      await verifyModeRef.current(verifyPrompt);
       return;
     }
 
@@ -1835,17 +1947,19 @@ export function FloatingAIBar({
   }, [contextNodes, addInsight]);
 
   const handleFormalize = useCallback(async () => {
-    if (contextNodes.length === 0 || !problemId) return;
+    if (!problemId) return;
+    const selectedContextNodes = resolveContextCanvasNodes();
+    if (selectedContextNodes.length === 0) return;
 
     setIsLoading(true);
     setActiveAction("formalize");
 
     try {
-      const node = contextNodes[0];
-      const nodeContent = selectedNode?.id === node.id ? selectedNode?.content : "";
+      const node = selectedContextNodes[0];
+      const sourceText = buildSelectedContextSummary() || `${node.title}: ${node.content || ""}`;
       const result = await formalizeText({
         problem_id: problemId,
-        text: `${node.title}: ${nodeContent || ""}`,
+        text: sourceText,
       });
 
       setCurrentLeanCode(result.lean_code);
@@ -1890,10 +2004,12 @@ export function FloatingAIBar({
       setIsLoading(false);
       setActiveAction(null);
     }
-  }, [contextNodes, selectedNode, selectedNodes, problemId, addInsight, onUpdateNode, onCreateNode, getStartContext]);
+  }, [problemId, addInsight, onUpdateNode, onCreateNode, getStartContext, resolveContextCanvasNodes, buildSelectedContextSummary]);
 
-  const handleVerify = useCallback(async () => {
-    if (!currentLeanCode || !problemId) return;
+  const handleVerify = useCallback(async (leanCodeOverride?: string) => {
+    if (!problemId) return;
+    const leanCode = (leanCodeOverride ?? currentLeanCode ?? "").trim();
+    if (!leanCode) return;
 
     setIsLoading(true);
     setActiveAction("verify");
@@ -1902,7 +2018,7 @@ export function FloatingAIBar({
     try {
       const result = await verifyLeanCode({
         problem_id: problemId,
-        lean_code: currentLeanCode,
+        lean_code: leanCode,
       });
 
       setVerificationResult({ success: result.success, log: result.log });
@@ -1914,8 +2030,8 @@ export function FloatingAIBar({
           title: result.success
             ? `✓ Verification of ${primaryNode?.title || "Lean code"}`
             : `✗ Verification of ${primaryNode?.title || "Lean code"}`,
-          content: `**Result:** ${result.success ? "OK" : "Failed"}\n\n${result.log || result.error || "No log"}\n\n\`\`\`lean\n${currentLeanCode}\n\`\`\``,
-          leanCode: currentLeanCode,
+          content: `**Result:** ${result.success ? "OK" : "Failed"}\n\n${result.log || result.error || "No log"}\n\n\`\`\`lean\n${leanCode}\n\`\`\``,
+          leanCode: leanCode,
           x: baseX + 320,
           y: baseY + 260,
           dependencies: dependencyIds,
@@ -1955,44 +2071,29 @@ export function FloatingAIBar({
 
   const handleVerifyMode = useCallback(async (promptOverride?: string) => {
     const explicitPrompt = (promptOverride || "").trim();
-    if (explicitPrompt) {
-      if (!leanModeRef.current) {
-        addInsight({
-          type: "insight",
-          title: "Verify unavailable",
-          content: "No pude iniciar la verificacion en este momento.",
-        });
-        return;
-      }
-      await leanModeRef.current(explicitPrompt);
-      return;
-    }
-
-    if (currentLeanCode) {
-      await handleVerify();
-      return;
-    }
-
-    if (!leanModeRef.current) {
+    const leanFromSelection = resolveLeanCodeFromSelection();
+    if (!leanFromSelection) {
       addInsight({
         type: "insight",
-        title: "Verify needs input",
-        content: "Provide a statement or select a node to verify.",
+        title: "Verify needs Lean node",
+        content: explicitPrompt
+          ? "Selecciona un nodo con codigo Lean para verificar. /verify no formaliza ni genera codigo."
+          : "Selecciona un nodo que ya tenga codigo Lean para ejecutar la verificacion.",
       });
       return;
     }
-    await leanModeRef.current();
-  }, [addInsight, currentLeanCode, handleVerify]);
+
+    setCurrentLeanCode(leanFromSelection);
+    await handleVerify(leanFromSelection);
+  }, [addInsight, handleVerify, resolveLeanCodeFromSelection]);
 
   const handleLeanMode = useCallback(async (promptOverride?: string) => {
     if (!problemId) return;
 
     const { primaryNode, dependencyIds, baseX, baseY } = getStartContext();
     const explicitPrompt = (promptOverride ?? stripFormalizeDirectiveText(command.trim())).trim();
-    const sourceText = explicitPrompt || [
-      primaryNode?.title ? `Title: ${primaryNode.title}` : "",
-      primaryNode?.content ? `Content:\n${primaryNode.content}` : "",
-    ].filter(Boolean).join("\n\n");
+    const selectionSummary = buildSelectedContextSummary();
+    const sourceText = [selectionSummary, explicitPrompt].filter(Boolean).join("\n\n");
 
     if (!sourceText.trim()) {
       addInsight({
@@ -2004,8 +2105,7 @@ export function FloatingAIBar({
     }
 
     setIsLoading(true);
-    setActiveAction("lean");
-    setVerificationResult(null);
+    setActiveAction("formalize");
 
     try {
       const formalization = await formalizeText({
@@ -2014,9 +2114,8 @@ export function FloatingAIBar({
       });
       setCurrentLeanCode(formalization.lean_code);
 
-      let formalNodeId: string | undefined;
       if (onCreateNode) {
-        const created = await onCreateNode({
+        await onCreateNode({
           type: "FORMAL_TEST",
           title: primaryNode ? `Formal test: ${primaryNode.title}` : "Formal Lean test",
           content: `\`\`\`lean\n${formalization.lean_code}\n\`\`\``,
@@ -2027,68 +2126,20 @@ export function FloatingAIBar({
           authors: [AI_AUTHOR],
           source: buildAISource(formalization.run_id),
         });
-        if (created && typeof created === "object" && "id" in created && created.id) {
-          formalNodeId = created.id;
-        }
-      }
-
-      const verification = await verifyLeanCode({
-        problem_id: problemId,
-        lean_code: formalization.lean_code,
-      });
-      setVerificationResult({ success: verification.success, log: verification.log });
-
-      const resultLog = verification.log || verification.error || "No verification log";
-      const verificationDeps = Array.from(
-        new Set(
-          [formalNodeId, primaryNode?.id, ...dependencyIds].filter((id): id is string => Boolean(id))
-        )
-      );
-
-      if (onCreateNode) {
-        await onCreateNode({
-          type: "NOTE",
-          title: verification.success ? "Lean verification passed" : "Lean verification failed",
-          content: `**Result:** ${verification.success ? "PASS" : "FAIL"}\n\n\`\`\`text\n${resultLog}\n\`\`\``,
-          leanCode: formalization.lean_code,
-          x: baseX + 300,
-          y: baseY + 330,
-          dependencies: verificationDeps,
-          authors: [AI_AUTHOR],
-          source: buildAISource(verification.run_id),
-        });
       }
 
       if (onUpdateNode && primaryNode?.id) {
         onUpdateNode(primaryNode.id, {
           leanCode: formalization.lean_code,
-          status: verification.success ? "VERIFIED" : "PROPOSED",
-          verification: {
-            method: "lean4",
-            logs: resultLog,
-            status: verification.success ? "pass" : "fail",
-          },
-        });
-      }
-
-      if (onUpdateNode && formalNodeId) {
-        onUpdateNode(formalNodeId, {
-          status: verification.success ? "VERIFIED" : "PROPOSED",
-          verification: {
-            method: "lean4",
-            logs: resultLog,
-            status: verification.success ? "pass" : "fail",
-          },
         });
       }
 
       addInsight({
         type: "code",
-        title: verification.success ? "Lean mode complete" : "Lean mode completed with issues",
-        content: verification.success
-          ? "Formalization and verification finished successfully."
-          : resultLog.slice(0, 300),
-        runId: verification.run_id,
+        title: "Lean code generated",
+        content: formalization.lean_code.slice(0, 300),
+        score: formalization.confidence,
+        runId: formalization.run_id,
       });
       setCommand("");
     } catch (err) {
@@ -2101,7 +2152,7 @@ export function FloatingAIBar({
       setIsLoading(false);
       setActiveAction(null);
     }
-  }, [problemId, getStartContext, command, addInsight, onCreateNode, onUpdateNode]);
+  }, [problemId, getStartContext, command, addInsight, onCreateNode, onUpdateNode, buildSelectedContextSummary]);
 
   useEffect(() => {
     leanModeRef.current = handleLeanMode;
@@ -2111,11 +2162,15 @@ export function FloatingAIBar({
     if (!problemId) return;
 
     const { primaryNode, dependencyIds, baseX, baseY } = getStartContext();
+    const contextSelection = resolveContextCanvasNodes();
+    const selectedComputationNode =
+      contextSelection.find((node) => isComputationNode(node)) ||
+      (isComputationNode(primaryNode) ? primaryNode : undefined);
     const inputCode = (promptOverride ?? command).trim();
     const normalizedInputCode = inputCode
       ? ensurePythonComputation(inputCode)
       : "";
-    let targetNodeId: string | undefined = isComputationNode(primaryNode) ? primaryNode?.id : undefined;
+    let targetNodeId: string | undefined = selectedComputationNode?.id;
     let baseDependencies = dependencyIds;
 
     if (!targetNodeId) {
@@ -2245,7 +2300,7 @@ export function FloatingAIBar({
       setIsLoading(false);
       setActiveAction(null);
     }
-  }, [problemId, getStartContext, command, onCreateNode, onUpdateNode, addInsight]);
+  }, [problemId, getStartContext, command, onCreateNode, onUpdateNode, addInsight, resolveContextCanvasNodes]);
 
   useEffect(() => {
     verifyModeRef.current = handleVerifyMode;
@@ -2257,12 +2312,10 @@ export function FloatingAIBar({
 
   const handleCriticMode = useCallback(async (promptOverride?: string) => {
     if (!problemId) return;
-    const { primaryNode, dependencyIds, baseX, baseY } = getStartContext();
+    const { dependencyIds, baseX, baseY } = getStartContext();
     const explicitPrompt = (promptOverride || "").trim();
-    const targetProposal = explicitPrompt || [
-      primaryNode?.title ? `Title: ${primaryNode.title}` : "",
-      primaryNode?.content ? `Content:\n${primaryNode.content}` : "",
-    ].filter(Boolean).join("\n\n");
+    const selectionSummary = buildSelectedContextSummary();
+    const targetProposal = explicitPrompt || selectionSummary;
 
     if (!targetProposal.trim()) {
       addInsight({
@@ -2279,6 +2332,8 @@ export function FloatingAIBar({
       const critique = await critiqueProposal({
         problem_id: problemId,
         proposal: targetProposal,
+        context: selectionSummary || undefined,
+        goal: explicitPrompt || undefined,
       });
 
       if (onCreateNode) {
@@ -2317,7 +2372,7 @@ export function FloatingAIBar({
       setIsLoading(false);
       setActiveAction(null);
     }
-  }, [problemId, getStartContext, addInsight, onCreateNode]);
+  }, [problemId, getStartContext, addInsight, onCreateNode, buildSelectedContextSummary]);
 
   useEffect(() => {
     criticModeRef.current = handleCriticMode;
@@ -2764,7 +2819,7 @@ export function FloatingAIBar({
     if (activeSlashModeMeta) {
       if (activeSlashMode === "canvas") return "Describe the math idea to map into nodes...";
       if (activeSlashMode === "formalize") return "Write what you want formalized in Lean...";
-      if (activeSlashMode === "verify") return "Optional: statement to verify, or leave blank to verify current Lean...";
+      if (activeSlashMode === "verify") return "Select a node with Lean code and run /verify...";
       if (activeSlashMode === "critic") return "Write a claim/proof sketch to critique...";
       if (activeSlashMode === "compute") return "Write executable Python code...";
       if (activeSlashMode === "strategist") return "Goal or theorem to plan as a proof roadmap...";
@@ -2778,6 +2833,15 @@ export function FloatingAIBar({
   }, [activeSlashMode, activeSlashModeMeta, contextNodes]);
 
   const activeModeAccent = useMemo(() => getSlashModeAccent(activeSlashMode), [activeSlashMode]);
+  const contextRefCount = useMemo(() => resolveContextNodeRefs().length, [resolveContextNodeRefs]);
+  const hasSelectedLeanNode = useMemo(
+    () => resolveContextCanvasNodes().some((node) => Boolean(extractLeanCodeFromNode(node))),
+    [resolveContextCanvasNodes]
+  );
+  const hasSelectedComputationNode = useMemo(
+    () => resolveContextCanvasNodes().some((node) => isComputationNode(node)),
+    [resolveContextCanvasNodes]
+  );
 
   const canSubmit = useMemo(() => {
     if (isAiLoading) return false;
@@ -2789,24 +2853,24 @@ export function FloatingAIBar({
     const effectiveText = parsed.mode ? parsed.text : trimmed;
 
     if (effectiveMode === "canvas" || effectiveMode === "strategist" || effectiveMode === "socratic") {
-      return Boolean(effectiveText) || contextNodes.length > 0 || chatMessages.length > 0;
+      return Boolean(effectiveText) || contextRefCount > 0 || chatMessages.length > 0;
     }
     if (effectiveMode === "formalize") {
-      return Boolean(effectiveText) || contextNodes.length > 0 || Boolean(selectedNode) || selectedNodes.length > 0;
+      return Boolean(effectiveText) || contextRefCount > 0;
     }
     if (effectiveMode === "verify") {
-      return Boolean(effectiveText) || Boolean(currentLeanCode) || contextNodes.length > 0 || Boolean(selectedNode);
+      return hasSelectedLeanNode;
     }
     if (effectiveMode === "critic") {
-      return Boolean(effectiveText) || contextNodes.length > 0 || Boolean(selectedNode);
+      return Boolean(effectiveText) || contextRefCount > 0;
     }
     if (effectiveMode === "compute") {
-      return Boolean(effectiveText) || Boolean(selectedNode && isComputationNode(selectedNode));
+      return Boolean(effectiveText) || hasSelectedComputationNode;
     }
 
     if (!trimmed) return false;
     return true;
-  }, [isAiLoading, command, activeSlashMode, contextNodes.length, chatMessages.length, selectedNode, selectedNodes.length, currentLeanCode]);
+  }, [isAiLoading, command, activeSlashMode, chatMessages.length, hasSelectedComputationNode, contextRefCount, hasSelectedLeanNode]);
 
   if (!isVisible && !isMounted) {
     return (
@@ -2847,10 +2911,10 @@ export function FloatingAIBar({
             isClosing ? "pm-ai-panel-exit" : "pm-ai-panel-enter"
           }`}
         >
-          {isExploring && (
+          {showActionProgressBar && (
             <div className="px-4 pt-3">
               <div className="flex items-center justify-between text-[11px] text-neutral-500">
-                <span className="font-medium text-neutral-600">Exploring</span>
+                <span className="font-medium text-neutral-600">{actionProgressLabel}</span>
                 <span className="pm-thinking__dots">
                   <span className="pm-thinking__dot" />
                   <span className="pm-thinking__dot" />

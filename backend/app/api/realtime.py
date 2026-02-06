@@ -4,11 +4,15 @@ from datetime import datetime, timedelta
 from typing import Any
 import asyncio
 import json
+import uuid
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, HTTPException
 from jose import jwt, JWTError
+from sqlalchemy import select
 
 from app.config import get_settings
+from app.database import async_session_maker
+from app.models.user import User
 from app.schemas.realtime import (
     MessageType,
     UserPresence,
@@ -274,7 +278,7 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
-def get_user_from_token(token: str) -> tuple[str, str, str | None]:
+async def get_user_from_token(token: str) -> tuple[str, str, str | None]:
     """Extract user info from JWT token."""
     try:
         payload = jwt.decode(
@@ -283,11 +287,28 @@ def get_user_from_token(token: str) -> tuple[str, str, str | None]:
             algorithms=["HS256"],
         )
         user_id = payload.get("sub")
-        username = payload.get("username", "anonymous")
+        username = payload.get("username")
         display_name = payload.get("display_name")
         
         if user_id is None:
             raise ValueError("Invalid token")
+
+        # Access tokens in this project often only include `sub`.
+        # Resolve username from DB when it's missing to avoid "anonymous" presence labels.
+        if not username:
+            try:
+                user_uuid = uuid.UUID(str(user_id))
+                async with async_session_maker() as db:
+                    result = await db.execute(select(User).where(User.id == user_uuid))
+                    db_user = result.scalar_one_or_none()
+                    if db_user:
+                        username = db_user.username
+            except Exception:
+                # Keep websocket auth resilient; fallback below.
+                username = None
+
+        if not username:
+            username = "anonymous"
         
         return str(user_id), username, display_name
     except JWTError as e:
@@ -308,7 +329,7 @@ async def websocket_collaborate(
         return
     
     try:
-        user_id, username, display_name = get_user_from_token(token)
+        user_id, username, display_name = await get_user_from_token(token)
     except ValueError as e:
         await websocket.close(code=4001, reason=str(e))
         return

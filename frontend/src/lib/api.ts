@@ -517,8 +517,8 @@ async function apiFetch<T>(
 	const headers: HeadersInit = isFormData
 		? {}
 		: {
-				"Content-Type": "application/json",
-			};
+			"Content-Type": "application/json",
+		};
 
 	// Add auth headers if present
 	if (authHeaders && typeof authHeaders === 'object' && 'Authorization' in authHeaders) {
@@ -619,12 +619,12 @@ async function apiFetch<T>(
 	} catch (error) {
 		// Log network errors
 		if (error instanceof TypeError && error.message === "Failed to fetch") {
-				console.error("Network Error - Failed to fetch:", {
-					url,
-					method: requestOptions.method || "GET",
-					hasAuth,
-					message: "Unable to connect to the server. Please check if the backend is running.",
-				});
+			console.error("Network Error - Failed to fetch:", {
+				url,
+				method: requestOptions.method || "GET",
+				hasAuth,
+				message: "Unable to connect to the server. Please check if the backend is running.",
+			});
 			throw new Error("Network error: Unable to connect to the server. Please check if the backend is running.");
 		}
 		throw error;
@@ -715,8 +715,11 @@ export async function seedProblems(): Promise<{ problems: Problem[]; total: numb
 	return apiFetch("/problems/seed", { method: "POST" });
 }
 
-export async function getProblem(problemId: string): Promise<Problem> {
-	return apiFetch(`/problems/${problemId}`);
+export async function getProblem(
+	problemId: string,
+	options?: { suppressErrorLog?: boolean }
+): Promise<Problem> {
+	return apiFetch(`/problems/${problemId}`, options);
 }
 
 export async function createProblem(data: {
@@ -760,14 +763,15 @@ export async function forkProblem(problemId: string): Promise<Problem> {
 
 export async function getLibraryItems(
 	problemId: string,
-	params?: { kind?: LibraryItem["kind"]; status?: LibraryItem["status"] }
+	params?: { kind?: LibraryItem["kind"]; status?: LibraryItem["status"] },
+	options?: { suppressErrorLog?: boolean }
 ): Promise<{ items: LibraryItem[]; total: number }> {
 	const searchParams = new URLSearchParams();
 	if (params?.kind) searchParams.set("kind", params.kind);
 	if (params?.status) searchParams.set("status", params.status);
 
 	const query = searchParams.toString();
-	return apiFetch(`/problems/${problemId}/library${query ? `?${query}` : ""}`);
+	return apiFetch(`/problems/${problemId}/library${query ? `?${query}` : ""}`, options);
 }
 
 export async function getLibraryItem(problemId: string, itemId: string): Promise<LibraryItem> {
@@ -880,10 +884,12 @@ export async function unfollowUser(userId: string): Promise<{ status: string }> 
 export async function getSocialFeed(params?: {
 	scope?: "network" | "global";
 	limit?: number;
+	offset?: number;
 }): Promise<SocialFeedResponse> {
 	const searchParams = new URLSearchParams();
 	if (params?.scope) searchParams.set("scope", params.scope);
 	if (params?.limit) searchParams.set("limit", params.limit.toString());
+	if (params?.offset) searchParams.set("offset", params.offset.toString());
 	const query = searchParams.toString();
 	return apiFetch(`/social/feed${query ? `?${query}` : ""}`);
 }
@@ -1958,10 +1964,10 @@ export function connectCanvasAIWebSocket(
 	const wsUrl = API_BASE_URL.replace(/^http/, "ws");
 	const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
 	const url = `${wsUrl}/api/canvas-ai/problems/${problemId}/ws${token ? `?token=${token}` : ""}`;
-	
+
 	const socket = new WebSocket(url);
 	let pingInterval: NodeJS.Timeout | null = null;
-	
+
 	socket.onopen = () => {
 		console.log("Canvas AI WebSocket connected");
 		// Keep-alive ping every 30 seconds
@@ -1971,13 +1977,13 @@ export function connectCanvasAIWebSocket(
 			}
 		}, 30000);
 	};
-	
+
 	socket.onmessage = (event) => {
 		// Skip non-JSON messages (like "pong")
 		if (typeof event.data === "string" && event.data === "pong") {
 			return;
 		}
-		
+
 		try {
 			const data = JSON.parse(event.data) as CanvasAIEvent;
 			onEvent(data);
@@ -1985,7 +1991,7 @@ export function connectCanvasAIWebSocket(
 			console.error("Failed to parse WebSocket message:", e, event.data);
 		}
 	};
-	
+
 	socket.onerror = (event) => {
 		// WebSocket errors are expected when server is unavailable or user is not authenticated
 		// Only log in development for debugging
@@ -1994,7 +2000,7 @@ export function connectCanvasAIWebSocket(
 		}
 		onError?.(event);
 	};
-	
+
 	socket.onclose = () => {
 		console.log("Canvas AI WebSocket closed");
 		if (pingInterval) {
@@ -2002,7 +2008,7 @@ export function connectCanvasAIWebSocket(
 		}
 		onClose?.();
 	};
-	
+
 	return {
 		close: () => {
 			if (pingInterval) {
@@ -2059,13 +2065,13 @@ export function connectReasoningStreamWebSocket(
 	const wsUrl = API_BASE_URL.replace(/^http/, "ws");
 	const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
 	const url = `${wsUrl}/api/canvas-ai/runs/${runId}/stream${token ? `?token=${token}` : ""}`;
-	
+
 	const socket = new WebSocket(url);
-	
+
 	socket.onopen = () => {
 		console.log("Reasoning Stream WebSocket connected for run:", runId);
 	};
-	
+
 	socket.onmessage = (event) => {
 		try {
 			const data = JSON.parse(event.data);
@@ -2074,12 +2080,12 @@ export function connectReasoningStreamWebSocket(
 			console.error("Error parsing reasoning chunk:", error);
 		}
 	};
-	
+
 	socket.onerror = (event) => {
 		console.error("Reasoning Stream WebSocket error:", event);
 		onError?.(event);
 	};
-	
+
 	socket.onclose = () => {
 		console.log("Reasoning Stream WebSocket closed");
 		onClose?.();
@@ -2339,9 +2345,9 @@ function normalizeStoryFromApi(payload: StoryApiPayload, problemId: string): Sto
 			: riskLevel === "low";
 	const mostSimilar = noveltyCandidates.length > 0
 		? {
-				title: getString(noveltyCandidates[0]?.title),
-				similarity: toNumber(noveltyCandidates[0]?.similarity) ?? 0,
-			}
+			title: getString(noveltyCandidates[0]?.title),
+			similarity: toNumber(noveltyCandidates[0]?.similarity) ?? 0,
+		}
 		: undefined;
 
 	const sections = {
@@ -2366,31 +2372,31 @@ function normalizeStoryFromApi(payload: StoryApiPayload, problemId: string): Sto
 		},
 		review_result: review
 			? {
-					passed,
-					scores: {
-						reviewer_1: normalizedScores[0],
-						reviewer_2: normalizedScores[1],
-						reviewer_3: normalizedScores[2],
-						average: avgScoreNormalized,
-						q25,
-						q50,
-						q75,
-					},
-					individual_reviews: reviews.map((item) => ({
-						anchor_title: getString(item?.role || item?.reviewer || "Reviewer"),
-						score: clamp01((toNumber(item?.score) ?? 0) / 10),
-						justification: getString(item?.feedback),
-					})),
-					pass_criteria: getString(review?.pass_criteria, "avg_score >= 6.5"),
-				}
+				passed,
+				scores: {
+					reviewer_1: normalizedScores[0],
+					reviewer_2: normalizedScores[1],
+					reviewer_3: normalizedScores[2],
+					average: avgScoreNormalized,
+					q25,
+					q50,
+					q75,
+				},
+				individual_reviews: reviews.map((item) => ({
+					anchor_title: getString(item?.role || item?.reviewer || "Reviewer"),
+					score: clamp01((toNumber(item?.score) ?? 0) / 10),
+					justification: getString(item?.feedback),
+				})),
+				pass_criteria: getString(review?.pass_criteria, "avg_score >= 6.5"),
+			}
 			: undefined,
 		novelty_result: novelty
 			? {
-					is_novel: isNovel,
-					similarity_score: maxSimilarity,
-					risk_level: riskLevel,
-					most_similar: mostSimilar,
-				}
+				is_novel: isNovel,
+				similarity_score: maxSimilarity,
+				risk_level: riskLevel,
+				most_similar: mostSimilar,
+			}
 			: undefined,
 		parent_story_id: typeof rawStory.parent_story_id === "string" ? rawStory.parent_story_id : undefined,
 		version: toNumber(rawStory.version) ?? 1,

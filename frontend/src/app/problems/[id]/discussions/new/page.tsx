@@ -21,11 +21,14 @@ export default function NewProblemDiscussionPage() {
   useEffect(() => {
     async function loadProblem() {
       try {
-        const data = await getProblem(problemId);
+        const data = await getProblem(problemId, { suppressErrorLog: true });
         setProblem(data);
       } catch (err) {
-        setError("Failed to load problem");
-        console.error(err);
+        const message = err instanceof Error ? err.message : "";
+        setError(message.includes("HTTP 404") ? "Problem not found." : "Failed to load problem");
+        if (!message.includes("HTTP 404")) {
+          console.error(err);
+        }
       } finally {
         setLoading(false);
       }

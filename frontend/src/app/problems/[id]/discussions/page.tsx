@@ -31,15 +31,16 @@ export default function ProblemDiscussionsPage() {
   const loadData = useCallback(async () => {
     try {
       setLoading(true);
-      const [problemData, discussionsData] = await Promise.all([
-        getProblem(problemId),
-        getDiscussions({ problem_id: problemId, limit: 50 }),
-      ]);
+      const problemData = await getProblem(problemId, { suppressErrorLog: true });
+      const discussionsData = await getDiscussions({ problem_id: problemId, limit: 50 });
       setProblem(problemData);
       setDiscussions(discussionsData.discussions);
     } catch (err) {
-      setError("Failed to load discussions");
-      console.error(err);
+      const message = err instanceof Error ? err.message : "";
+      setError(message.includes("HTTP 404") ? "Problem not found." : "Failed to load discussions");
+      if (!message.includes("HTTP 404")) {
+        console.error(err);
+      }
     } finally {
       setLoading(false);
     }

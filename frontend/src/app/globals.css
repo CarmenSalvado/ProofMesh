@@ -177,9 +177,15 @@ body {
 }
 
 /* Selection */
-::selection {
-  background: var(--accent-primary);
-  color: white;
+*::selection {
+  background-color: rgba(99, 102, 241, 0.24);
+  color: #111827;
+  -webkit-text-fill-color: #111827;
+}
+
+*::-moz-selection {
+  background-color: rgba(99, 102, 241, 0.24);
+  color: #111827;
 }
 
 /* Scrollbar */
@@ -1073,10 +1079,16 @@ body {
   -webkit-backdrop-filter: blur(12px);
 }
 
-/* Selection highlight improvements */
-::selection {
-  background: rgba(125, 211, 252, 0.25);
-  color: #e0f2fe;
+/* Selection highlight improvements (dark workspace only) */
+.pm-shell *::selection {
+  background-color: rgba(125, 211, 252, 0.32);
+  color: #082f49;
+  -webkit-text-fill-color: #082f49;
+}
+
+.pm-shell *::-moz-selection {
+  background-color: rgba(125, 211, 252, 0.32);
+  color: #082f49;
 }
 
 /* Focus ring for accessibility */

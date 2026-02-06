@@ -157,7 +157,11 @@ export default function DashboardPage() {
   const [latexLoading, setLatexLoading] = useState(false);
   const [latexLineStart, setLatexLineStart] = useState(1);
   const [latexLineEnd, setLatexLineEnd] = useState(8);
+
   const [searchQuery, setSearchQuery] = useState("");
+  const [activityOffset, setActivityOffset] = useState(0);
+  const [hasMoreActivity, setHasMoreActivity] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -184,6 +188,8 @@ export default function DashboardPage() {
       setStats(statsData);
       setConnections(connectionsData);
       setFollowingCount(connectionsData.total_following);
+      setActivityOffset(0);
+      setHasMoreActivity(feedData.items.length >= 20);
     } catch (err) {
       console.error("Failed to load dashboard data", err);
     } finally {
@@ -469,6 +475,39 @@ export default function DashboardPage() {
     }
   };
 
+
+
+  const handleLoadMore = async () => {
+    if (loadingMore || !hasMoreActivity) return;
+    setLoadingMore(true);
+    try {
+      const nextOffset = activityOffset + 20;
+      const feedData = await getSocialFeed({
+        scope: feedTab === "following" ? "network" : "global",
+        limit: 20,
+        offset: nextOffset,
+      });
+
+      if (feedData.items.length > 0) {
+        setFeedItems((prev) => {
+          const existingIds = new Set(prev.map((item) => item.id));
+          const newItems = feedData.items.filter((item) => !existingIds.has(item.id));
+          return [...prev, ...newItems];
+        });
+        setActivityOffset(nextOffset);
+        if (feedData.items.length < 20) {
+          setHasMoreActivity(false);
+        }
+      } else {
+        setHasMoreActivity(false);
+      }
+    } catch (err) {
+      console.error("Failed to load more activity", err);
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
   const filteredProblems = problems.filter((p) =>
     p.title.toLowerCase().includes(repoFilter.toLowerCase())
   );
@@ -565,7 +604,7 @@ export default function DashboardPage() {
                 <div className="text-xs text-neutral-500">Proofs</div>
                 <div className="text-sm font-semibold text-neutral-900">{problems.length}</div>
               </div>
-              <button 
+              <button
                 onClick={() => setShowFollowingModal(true)}
                 className="text-center hover:bg-neutral-50 rounded-md transition-colors"
               >
@@ -731,21 +770,19 @@ export default function DashboardPage() {
           <div className="flex gap-6 border-b border-neutral-200 mb-6">
             <button
               onClick={() => setFeedTab("following")}
-              className={`pb-3 text-sm font-medium transition-colors ${
-                feedTab === "following"
-                  ? "text-neutral-900 border-b-2 border-indigo-500"
-                  : "text-neutral-500 hover:text-neutral-900"
-              }`}
+              className={`pb-3 text-sm font-medium transition-colors ${feedTab === "following"
+                ? "text-neutral-900 border-b-2 border-indigo-500"
+                : "text-neutral-500 hover:text-neutral-900"
+                }`}
             >
               Following
             </button>
             <button
               onClick={() => setFeedTab("discover")}
-              className={`pb-3 text-sm font-medium transition-colors ${
-                feedTab === "discover"
-                  ? "text-neutral-900 border-b-2 border-indigo-500"
-                  : "text-neutral-500 hover:text-neutral-900"
-              }`}
+              className={`pb-3 text-sm font-medium transition-colors ${feedTab === "discover"
+                ? "text-neutral-900 border-b-2 border-indigo-500"
+                : "text-neutral-500 hover:text-neutral-900"
+                }`}
             >
               Discover
             </button>
@@ -766,8 +803,8 @@ export default function DashboardPage() {
                 {searchQuery.trim()
                   ? "Try a different search term."
                   : feedTab === "following"
-                  ? "Follow other researchers to see their updates here."
-                  : "Be the first to share something!"}
+                    ? "Follow other researchers to see their updates here."
+                    : "Be the first to share something!"}
               </p>
             </div>
           ) : (
@@ -804,8 +841,8 @@ export default function DashboardPage() {
                 const libraryStatusLabel = status === "verified"
                   ? "verified"
                   : status === "proposed"
-                  ? "proposed"
-                  : status || "updated";
+                    ? "proposed"
+                    : status || "updated";
                 const libraryPill = [
                   libraryStatusLabel,
                   verification || null,
@@ -816,7 +853,7 @@ export default function DashboardPage() {
                 return (
                   <div
                     key={item.id}
-                    className={`relative bg-white rounded-lg border border-neutral-200 p-5 shadow-sm ${isRecentPost ? "pm-post-card-enter border-indigo-200/60 shadow-md" : ""}`}
+                    className={`relative bg-white rounded-lg border border-neutral-200 p-5 shadow-sm ${isRecentPost ? "pm-post-card-enter shadow-md" : ""}`}
                   >
                     <div className="flex items-start gap-3">
                       {item.actor.avatar_url ? (
@@ -910,9 +947,14 @@ export default function DashboardPage() {
             </div>
           )}
 
-          {filteredFeedItems.length > 0 && (
+          {filteredFeedItems.length > 0 && hasMoreActivity && !searchQuery && (
             <div className="mt-8 text-center">
-              <button className="text-sm text-indigo-600 font-medium hover:text-indigo-800 transition-colors">
+              <button
+                onClick={handleLoadMore}
+                disabled={loadingMore}
+                className="text-sm text-indigo-600 font-medium hover:text-indigo-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 mx-auto"
+              >
+                {loadingMore && <div className="animate-spin rounded-full h-3 w-3 border-2 border-current border-t-transparent" />}
                 Load more activity
               </button>
             </div>
@@ -932,7 +974,7 @@ export default function DashboardPage() {
                   const maxScore = trending[0]?.activity_score || 1;
                   const percentage = Math.round((problem.activity_score / maxScore) * 100);
                   const isHot = problem.trend_label === "Hot";
-                  
+
                   return (
                     <div key={problem.id} className="group">
                       <div className="flex items-center justify-between mb-1">
@@ -943,11 +985,10 @@ export default function DashboardPage() {
                           {problem.title}
                         </Link>
                         {problem.trend_label && (
-                          <span className={`text-[10px] px-1.5 py-0.5 rounded ${
-                            isHot 
-                              ? "bg-emerald-50 text-emerald-600" 
-                              : "bg-neutral-100 text-neutral-500"
-                          }`}>
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded ${isHot
+                            ? "bg-emerald-50 text-emerald-600"
+                            : "bg-neutral-100 text-neutral-500"
+                            }`}>
                             {problem.trend_label}
                           </span>
                         )}
@@ -956,9 +997,9 @@ export default function DashboardPage() {
                         by {problem.author.username} · {problem.star_count} stars
                       </p>
                       <div className="w-full bg-neutral-100 rounded-full h-1">
-                        <div 
-                          className={`h-1 rounded-full ${isHot ? "bg-emerald-500" : "bg-neutral-900"}`} 
-                          style={{ width: `${percentage}%` }} 
+                        <div
+                          className={`h-1 rounded-full ${isHot ? "bg-emerald-500" : "bg-neutral-900"}`}
+                          style={{ width: `${percentage}%` }}
                         />
                       </div>
                     </div>
@@ -1018,12 +1059,6 @@ export default function DashboardPage() {
             <Link href="/discussions" className="hover:text-neutral-600">
               Discussions
             </Link>
-            <Link href="#" className="hover:text-neutral-600">
-              Docs
-            </Link>
-            <Link href="#" className="hover:text-neutral-600">
-              API
-            </Link>
             <Link href="/privacy" className="hover:text-neutral-600">
               Privacy
             </Link>
@@ -1071,21 +1106,19 @@ export default function DashboardPage() {
               <div className="flex gap-2">
                 <button
                   onClick={() => setCanvasMode("block")}
-                  className={`px-3 py-1.5 text-xs font-medium rounded-md border ${
-                    canvasMode === "block"
-                      ? "border-indigo-200 bg-indigo-50 text-indigo-700"
-                      : "border-neutral-200 text-neutral-500 hover:text-neutral-700"
-                  }`}
+                  className={`px-3 py-1.5 text-xs font-medium rounded-md border ${canvasMode === "block"
+                    ? "border-indigo-200 bg-indigo-50 text-indigo-700"
+                    : "border-neutral-200 text-neutral-500 hover:text-neutral-700"
+                    }`}
                 >
                   Blocks
                 </button>
                 <button
                   onClick={() => setCanvasMode("nodes")}
-                  className={`px-3 py-1.5 text-xs font-medium rounded-md border ${
-                    canvasMode === "nodes"
-                      ? "border-indigo-200 bg-indigo-50 text-indigo-700"
-                      : "border-neutral-200 text-neutral-500 hover:text-neutral-700"
-                  }`}
+                  className={`px-3 py-1.5 text-xs font-medium rounded-md border ${canvasMode === "nodes"
+                    ? "border-indigo-200 bg-indigo-50 text-indigo-700"
+                    : "border-neutral-200 text-neutral-500 hover:text-neutral-700"
+                    }`}
                 >
                   Nodes
                 </button>
@@ -1103,11 +1136,10 @@ export default function DashboardPage() {
                       <button
                         key={block.id}
                         onClick={() => setSelectedBlockId(block.id)}
-                        className={`w-full text-left px-3 py-2 rounded-md border text-sm ${
-                          selectedBlockId === block.id
-                            ? "border-indigo-200 bg-indigo-50 text-indigo-700"
-                            : "border-neutral-200 text-neutral-600 hover:bg-neutral-50"
-                        }`}
+                        className={`w-full text-left px-3 py-2 rounded-md border text-sm ${selectedBlockId === block.id
+                          ? "border-indigo-200 bg-indigo-50 text-indigo-700"
+                          : "border-neutral-200 text-neutral-600 hover:bg-neutral-50"
+                          }`}
                       >
                         <div className="font-medium">{block.name || "Untitled block"}</div>
                         <div className="text-[11px] text-neutral-500">{block.node_ids.length} nodes</div>
@@ -1146,11 +1178,10 @@ export default function DashboardPage() {
                                 return next;
                               });
                             }}
-                            className={`w-full text-left rounded-md border px-3 py-2 text-xs transition ${
-                              selected
-                                ? "border-indigo-200 bg-indigo-50"
-                                : "border-neutral-200 hover:bg-neutral-50"
-                            }`}
+                            className={`w-full text-left rounded-md border px-3 py-2 text-xs transition ${selected
+                              ? "border-indigo-200 bg-indigo-50"
+                              : "border-neutral-200 hover:bg-neutral-50"
+                              }`}
                           >
                             <div className="flex items-start justify-between gap-3">
                               <div className="min-w-0 flex-1">
@@ -1163,9 +1194,8 @@ export default function DashboardPage() {
                                 </div>
                               </div>
                               <div
-                                className={`mt-1 h-4 w-4 rounded border flex items-center justify-center ${
-                                  selected ? "bg-indigo-600 border-indigo-600 text-white" : "border-neutral-300"
-                                }`}
+                                className={`mt-1 h-4 w-4 rounded border flex items-center justify-center ${selected ? "bg-indigo-600 border-indigo-600 text-white" : "border-neutral-300"
+                                  }`}
                               >
                                 {selected && (
                                   <svg viewBox="0 0 20 20" className="h-3 w-3" fill="currentColor">

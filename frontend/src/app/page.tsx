@@ -82,7 +82,7 @@ export default function LandingPage() {
               </div>
             </div>
             <span className="text-[10px] font-medium text-neutral-500">
-              Rho Hackathon demo for collaborative theorem proving
+              Gemini Hackathon demo for collaborative theorem proving
             </span>
           </div>
 
@@ -92,7 +92,7 @@ export default function LandingPage() {
             <span className="text-neutral-400">Verify together.</span>
           </h1>
           <p className="text-lg text-neutral-500 max-w-2xl mx-auto mb-10 font-light leading-relaxed">
-            A social-first theorem workspace built for the Rho Hackathon: Rho powers
+            A social-first theorem workspace built for the Gemini Hackathon: Rho powers
             chat reasoning and critique, while Idea2Story embeddings retrieve shared context for
             rigorous exploration.
           </p>
@@ -439,10 +439,7 @@ export default function LandingPage() {
             <Link href="/terms" className="hover:text-neutral-300">
               Terms
             </Link>
-            <a href="https://twitter.com" className="hover:text-neutral-300">
-              Twitter
-            </a>
-            <a href="https://github.com" className="hover:text-neutral-300">
+            <a href="https://github.com/CarmenSalvado/ProofMesh" className="hover:text-neutral-300">
               GitHub
             </a>
           </div>

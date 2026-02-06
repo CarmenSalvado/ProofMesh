@@ -17,6 +17,7 @@ import {
   createCanvasBlock,
   updateCanvasBlock,
   deleteCanvasBlock,
+  createDiscussion,
   Problem,
   LibraryItem,
   CanvasBlock,
@@ -42,6 +43,7 @@ import { NodeDetailPanel } from "@/components/canvas/NodeDetailPanel";
 import { CanvasNode, CanvasEdge, CanvasBlock as LocalCanvasBlock } from "@/components/canvas/types";
 import { useCanvasHistory } from "@/hooks/useCanvasHistory";
 import { useCanvasAIAnimations } from "@/hooks/useCanvasAIAnimations";
+import { PostAttachment, serializePostContent } from "@/lib/postAttachments";
 
 // Store positions locally (keyed by item id)
 type PositionMap = Record<string, { x: number; y: number }>;
@@ -184,7 +186,12 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
   const [nodeAnchorStatus, setNodeAnchorStatus] = useState<Map<string, { hasAnchors: boolean; isStale: boolean; count: number }>>(new Map());
   const [aiBarVisible, setAiBarVisible] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [shareStatus, setShareStatus] = useState<"idle" | "copied">("idle");
+  const [shareStatus, setShareStatus] = useState<"idle" | "posted">("idle");
+  const [shareModalOpen, setShareModalOpen] = useState(false);
+  const [shareMode, setShareMode] = useState<"block" | "nodes">("nodes");
+  const [shareMessage, setShareMessage] = useState("");
+  const [sharePosting, setSharePosting] = useState(false);
+  const [shareError, setShareError] = useState<string | null>(null);
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [commitModalOpen, setCommitModalOpen] = useState(false);
   const [detailPanelNodeId, setDetailPanelNodeId] = useState<string | null>(null);
@@ -276,20 +283,65 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
     return { nodes: canvasNodes, edges: canvasEdges };
   }, [libraryItems, positions]);
 
+  const canvasCollaborators = useMemo(() => {
+    if (!collaboration) return [];
+
+    return collaboration.users.flatMap((u) => {
+      // Do not render our own cursor marker.
+      if (user && String(u.user_id) === String(user.id)) return [];
+
+      const cursorPos = collaboration.cursors.get(u.user_id);
+      const x = cursorPos?.x ?? u.cursor_x;
+      const y = cursorPos?.y ?? u.cursor_y;
+
+      // Skip collaborators that haven't sent a cursor position yet.
+      if (typeof x !== "number" || typeof y !== "number") return [];
+
+      const name = (u.display_name || u.username || "").trim();
+      // Hide placeholder identities from incomplete presence payloads.
+      if (!name || /anonymous|annonymous/i.test(name)) return [];
+
+      return [{
+        id: String(u.user_id),
+        name,
+        color: u.avatar_color,
+        x,
+        y,
+      }];
+    });
+  }, [collaboration, user]);
+
+  const shareNodeIds = useMemo(() => {
+    if (selectedNodeIds.size > 0) return Array.from(selectedNodeIds);
+    if (selectedNodeId) return [selectedNodeId];
+    return [];
+  }, [selectedNodeId, selectedNodeIds]);
+
+  const shareBlock = useMemo(
+    () => (selectedBlockId ? blocks.find((block) => block.id === selectedBlockId) || null : null),
+    [blocks, selectedBlockId]
+  );
+
+  const shareNodes = useMemo(
+    () => shareNodeIds.map((id) => nodes.find((node) => node.id === id)).filter(Boolean) as CanvasNode[],
+    [nodes, shareNodeIds]
+  );
+
   const loadData = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
       let problemData: Problem;
       try {
-        problemData = await getProblem(problemId);
+        problemData = await getProblem(problemId, { suppressErrorLog: true });
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Problem not found");
+        const message = err instanceof Error ? err.message : "Problem not found";
+        setError(message.includes("HTTP 404") ? "Problem not found." : message);
         setLoading(false);
         return;
       }
       const [libraryData, blocksData] = await Promise.all([
-        getLibraryItems(problemId),
+        getLibraryItems(problemId, undefined, { suppressErrorLog: true }),
         getCanvasBlocks(problemId).catch(() => []), // Fallback to empty array if API fails
       ]);
       setProblem(problemData);
@@ -498,16 +550,78 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
     };
   }, [collaboration, loadData, selectedNodeId]);
 
+  const handleOpenShareModal = useCallback(() => {
+    setShareMode(selectedBlockId ? "block" : "nodes");
+    setShareError(null);
+    setShareModalOpen(true);
+  }, [selectedBlockId]);
+
+  const handleCloseShareModal = useCallback(() => {
+    setShareModalOpen(false);
+    setShareError(null);
+  }, []);
+
   const handleShare = useCallback(async () => {
-    const url = `${window.location.origin}/problems/${problemId}/canvas`;
-    try {
-      await navigator.clipboard.writeText(url);
-      setShareStatus("copied");
-      setTimeout(() => setShareStatus("idle"), 2000);
-    } catch {
-      console.error("Failed to copy");
+    if (!problem) return;
+
+    const visibility = problem.visibility === "private" ? "private" : "public";
+    let attachment: PostAttachment | null = null;
+    let title = "Shared canvas snapshot";
+
+    if (shareMode === "block") {
+      if (!shareBlock) {
+        setShareError("Select a block to share.");
+        return;
+      }
+      const blockNodeTitles = shareBlock.nodeIds
+        .map((nodeId) => nodes.find((node) => node.id === nodeId)?.title)
+        .filter(Boolean) as string[];
+      attachment = {
+        kind: "canvas_block",
+        problem_id: problemId,
+        problem_title: problem.title,
+        visibility,
+        block_id: shareBlock.id,
+        block_name: shareBlock.name || "Untitled block",
+        node_ids: shareBlock.nodeIds,
+        node_titles: blockNodeTitles,
+      };
+      title = `Canvas block: ${shareBlock.name || "Untitled block"}`;
+    } else {
+      if (shareNodeIds.length === 0) {
+        setShareError("Select at least one node to share.");
+        return;
+      }
+      attachment = {
+        kind: "canvas_nodes",
+        problem_id: problemId,
+        problem_title: problem.title,
+        visibility,
+        node_ids: shareNodeIds,
+        node_titles: shareNodes.map((node) => node.title),
+      };
+      title = `Canvas nodes (${shareNodeIds.length})`;
     }
-  }, [problemId]);
+
+    setSharePosting(true);
+    setShareError(null);
+
+    try {
+      await createDiscussion({
+        title: title.slice(0, 100),
+        content: serializePostContent(shareMessage, [attachment]),
+        problem_id: problemId,
+      });
+      setShareModalOpen(false);
+      setShareMessage("");
+      setShareStatus("posted");
+      setTimeout(() => setShareStatus("idle"), 2200);
+    } catch (err) {
+      setShareError(err instanceof Error ? err.message : "Failed to share to feed.");
+    } finally {
+      setSharePosting(false);
+    }
+  }, [nodes, problem, problemId, shareBlock, shareMessage, shareMode, shareNodeIds, shareNodes]);
 
   const handleNodeSelect = useCallback((nodeId: string | null) => {
     setSelectedNodeId(nodeId);
@@ -1097,6 +1211,36 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
     [problemId, collaboration, libraryItems, positions, recordMultiDelete]
   );
 
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Delete") return;
+
+      const target = event.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+
+      if (selectedNodeIds.size > 0) {
+        event.preventDefault();
+        void handleMultiDelete(Array.from(selectedNodeIds));
+        return;
+      }
+
+      if (selectedNodeId) {
+        event.preventDefault();
+        void handleDeleteNode(selectedNodeId);
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [handleDeleteNode, handleMultiDelete, selectedNodeId, selectedNodeIds]);
+
   // Handle undo
   const applyPositionsSnapshot = useCallback((nextPositions: Record<string, { x: number; y: number }>) => {
     setLibraryItems(prev =>
@@ -1355,11 +1499,11 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
 
           {/* Share Button */}
           <button
-            onClick={handleShare}
+            onClick={handleOpenShareModal}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors"
           >
             <Share2 className="w-4 h-4" />
-            {shareStatus === "copied" ? "Copied!" : "Share"}
+            {shareStatus === "posted" ? "Posted!" : "Share"}
           </button>
 
         </div>
@@ -1424,19 +1568,7 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
             onCursorMove={(x, y) => {
               collaboration?.sendCursorMove?.(x, y, `canvas:${problemId}`);
             }}
-            collaborators={
-              collaboration?.users.map((u) => {
-                // Get cursor position from the cursors Map (more up-to-date)
-                const cursorPos = collaboration.cursors.get(u.user_id);
-                return {
-                  id: String(u.user_id),
-                  name: u.display_name || u.username,
-                  color: u.avatar_color,
-                  x: cursorPos?.x ?? u.cursor_x ?? 0,
-                  y: cursorPos?.y ?? u.cursor_y ?? 0,
-                };
-              }) || []
-            }
+            collaborators={canvasCollaborators}
           />
 
           {/* Node Detail Panel (Edit + Comments) */}
@@ -1464,6 +1596,99 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
           onCreateBlock={handleCreateBlock}
         />
       </div>
+
+      {/* Share Modal */}
+      {shareModalOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
+          onClick={handleCloseShareModal}
+        >
+          <div
+            className="bg-white rounded-lg shadow-xl max-w-xl w-full border border-neutral-200"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-center justify-between p-4 border-b border-neutral-200">
+              <h2 className="text-sm font-semibold text-neutral-900">Share to Feed</h2>
+              <button
+                onClick={handleCloseShareModal}
+                className="text-neutral-400 hover:text-neutral-600 transition-colors"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="p-4 space-y-4">
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setShareMode("block")}
+                  className={`px-3 py-1.5 text-xs font-medium rounded-md border ${
+                    shareMode === "block"
+                      ? "border-indigo-200 bg-indigo-50 text-indigo-700"
+                      : "border-neutral-200 text-neutral-500 hover:text-neutral-700"
+                  }`}
+                >
+                  Block
+                </button>
+                <button
+                  onClick={() => setShareMode("nodes")}
+                  className={`px-3 py-1.5 text-xs font-medium rounded-md border ${
+                    shareMode === "nodes"
+                      ? "border-indigo-200 bg-indigo-50 text-indigo-700"
+                      : "border-neutral-200 text-neutral-500 hover:text-neutral-700"
+                  }`}
+                >
+                  Nodes
+                </button>
+              </div>
+
+              <div className="rounded-md border border-neutral-200 bg-neutral-50 px-3 py-2 text-xs text-neutral-600">
+                {shareMode === "block"
+                  ? shareBlock
+                    ? `Selected block: ${shareBlock.name || "Untitled block"} (${shareBlock.nodeIds.length} nodes)`
+                    : "No block selected in canvas. Select one and try again."
+                  : shareNodeIds.length > 0
+                  ? `${shareNodeIds.length} node${shareNodeIds.length === 1 ? "" : "s"} selected`
+                  : "No nodes selected in canvas. Select one or multiple nodes and try again."}
+              </div>
+
+              <div>
+                <label className="text-[11px] font-medium text-neutral-500">Caption (optional)</label>
+                <textarea
+                  value={shareMessage}
+                  onChange={(event) => setShareMessage(event.target.value)}
+                  placeholder="Add context for your team..."
+                  rows={4}
+                  className="mt-1 w-full rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-800"
+                />
+              </div>
+
+              {shareError && (
+                <div className="text-xs text-red-600 border border-red-200 bg-red-50 rounded-md px-3 py-2">
+                  {shareError}
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-2 p-4 border-t border-neutral-200">
+              <button
+                onClick={handleCloseShareModal}
+                className="px-3 py-1.5 text-xs font-medium text-neutral-500 hover:text-neutral-700"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleShare}
+                disabled={sharePosting || (shareMode === "block" ? !shareBlock : shareNodeIds.length === 0)}
+                className="px-4 py-1.5 text-xs font-medium bg-neutral-900 text-white rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {sharePosting ? "Posting..." : "Post to Feed"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Add Node Modal */}
       <AddNodeModal

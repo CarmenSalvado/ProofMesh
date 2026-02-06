@@ -643,11 +643,14 @@ export default function LabPage({ params }: PageProps) {
 
   const loadProblem = useCallback(async () => {
     try {
-      const data = await getProblem(problemId);
+      const data = await getProblem(problemId, { suppressErrorLog: true });
       setProblem(data);
       setWorkspaceReady(true);
     } catch (error) {
-      console.error("Failed to load problem", error);
+      const message = error instanceof Error ? error.message : "";
+      if (!message.includes("HTTP 404")) {
+        console.error("Failed to load problem", error);
+      }
       setWorkspaceReady(false);
     }
   }, [problemId]);

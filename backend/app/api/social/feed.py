@@ -36,6 +36,7 @@ router = APIRouter()
 async def get_feed(
     scope: str = Query(default="network", pattern="^(network|global)$"),
     limit: int = Query(default=30, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -47,7 +48,7 @@ async def get_feed(
     query = select(Activity).options(selectinload(Activity.user)).order_by(Activity.created_at.desc())
     if scope == "network":
         query = query.where(Activity.user_id.in_(ids))
-    query = query.limit(limit)
+    query = query.limit(limit).offset(offset)
 
     result = await db.execute(query)
     activities = result.scalars().all()

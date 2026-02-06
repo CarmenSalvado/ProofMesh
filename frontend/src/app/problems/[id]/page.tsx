@@ -78,15 +78,18 @@ export default function ProblemPage({ params }: PageProps) {
       setLoading(true);
       setError(null);
 
-      const [problemData, libraryData] = await Promise.all([
-        getProblem(problemId),
-        getLibraryItems(problemId),
-      ]);
+      const problemData = await getProblem(problemId, { suppressErrorLog: true });
+      const libraryData = await getLibraryItems(problemId, undefined, { suppressErrorLog: true });
 
       setProblem(problemData);
       setLibraryItems(libraryData.items);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load problem");
+      const message = err instanceof Error ? err.message : "Failed to load problem";
+      if (message.includes("HTTP 404")) {
+        setError("Problem not found.");
+        return;
+      }
+      setError(message);
     } finally {
       setLoading(false);
     }

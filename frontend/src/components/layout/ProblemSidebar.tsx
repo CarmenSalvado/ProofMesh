@@ -132,16 +132,20 @@ export function ProblemSidebar({ problemId }: ProblemSidebarProps) {
 
 	async function loadData() {
 		try {
-			const [problemData, libraryData] = await Promise.all([
-				getProblem(problemId),
-				getLibraryItems(problemId),
-			]);
+			const problemData = await getProblem(problemId, { suppressErrorLog: true });
+			const libraryData = await getLibraryItems(problemId, undefined, { suppressErrorLog: true });
 			setProblem(problemData);
 			setLibraryItems(libraryData.items);
 			// Canvases are now integrated with the library system
 			setCanvases([{ id: "default", title: "Visual Canvas", folder: "/" }]);
 		} catch (err) {
-			console.error("Failed to load problem data:", err);
+			const message = err instanceof Error ? err.message : "";
+			if (!message.includes("HTTP 404")) {
+				console.error("Failed to load problem data:", err);
+			}
+			setProblem(null);
+			setLibraryItems([]);
+			setCanvases([]);
 		} finally {
 			setLoading(false);
 		}
