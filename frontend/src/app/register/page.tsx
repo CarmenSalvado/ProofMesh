@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth";
+import { Logo } from "@/components/Logo";
 
 export default function RegisterPage() {
 	const { register, demo } = useAuth();
@@ -51,9 +52,7 @@ export default function RegisterPage() {
 				{/* Logo */}
 				<div className="flex justify-center mb-12">
 					<Link href="/" className="flex items-center gap-2">
-						<div className="w-6 h-6 bg-[var(--text-primary)] rounded-md flex items-center justify-center text-[var(--bg-primary)]">
-							<span className="font-[var(--font-math)] italic text-sm logo-rho">&rho;</span>
-						</div>
+						<Logo size={24} />
 						<span className="text-base font-semibold tracking-tight text-[var(--text-primary)]">ProofMesh</span>
 					</Link>
 				</div>

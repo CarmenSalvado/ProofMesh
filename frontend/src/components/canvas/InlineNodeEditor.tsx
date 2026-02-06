@@ -28,6 +28,7 @@ const QUICK_TYPES = [
   "NOTE",
   "COUNTEREXAMPLE",
   "COMPUTATION",
+  "FORMAL_TEST",
   "IDEA",
   "RESOURCE",
 ] as const;
@@ -43,6 +44,7 @@ const TYPE_DOT_COLOR: Record<string, string> = {
   NOTE: "bg-neutral-500",
   COUNTEREXAMPLE: "bg-red-500",
   COMPUTATION: "bg-purple-500",
+  FORMAL_TEST: "bg-sky-500",
   IDEA: "bg-fuchsia-500",
   RESOURCE: "bg-slate-500",
 };

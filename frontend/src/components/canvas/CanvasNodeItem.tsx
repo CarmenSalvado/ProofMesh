@@ -1,8 +1,7 @@
 "use client";
 
 import { useCallback } from "react";
-import { useRouter } from "next/navigation";
-import { Bot, MessageSquare, Link2, ExternalLink, FileText, AlertCircle, FileCode } from "lucide-react";
+import { Bot, MessageSquare, Link2, FileText, AlertCircle, FileCode } from "lucide-react";
 import { CanvasNode, NODE_TYPE_CONFIG, STATUS_CONFIG } from "./types";
 import { MarkdownRenderer } from "@/components/ui/MarkdownRenderer";
 
@@ -13,14 +12,12 @@ interface CanvasNodeItemProps {
   isDragging?: boolean;
   isConnecting?: boolean;
   isNew?: boolean;
-  problemId?: string;
   anchorStatus?: { hasAnchors: boolean; isStale: boolean; count: number };
   onMouseDown: (e: React.MouseEvent) => void;
   onMouseUp: (e: React.MouseEvent) => void;
   onDoubleClick?: (e: React.MouseEvent) => void;
   onConnectionStart?: (e: React.MouseEvent) => void;
   onContextMenu?: (e: React.MouseEvent) => void;
-  onOpenInEditor?: (node: CanvasNode) => void;
   onOpenComments?: (nodeId: string) => void;
 }
 
@@ -31,17 +28,14 @@ export function CanvasNodeItem({
   isDragging = false,
   isConnecting = false,
   isNew = false,
-  problemId,
   anchorStatus,
   onMouseDown,
   onMouseUp,
   onDoubleClick,
   onConnectionStart,
   onContextMenu,
-  onOpenInEditor,
   onOpenComments,
 }: CanvasNodeItemProps) {
-  const router = useRouter();
   const typeConfig = NODE_TYPE_CONFIG[node.type] || NODE_TYPE_CONFIG.NOTE;
   const statusConfig = STATUS_CONFIG[node.status] || STATUS_CONFIG.DRAFT;
   const isHighlighted = isSelected || isMultiSelected;
@@ -80,6 +74,30 @@ export function CanvasNodeItem({
     return null;
   };
 
+  const extractComputationExecution = (verification?: Record<string, unknown> | null) => {
+    if (!verification) return null;
+    const history = Array.isArray(verification.history) ? verification.history : [];
+    const lastHistory = history.length > 0 ? history[history.length - 1] : null;
+    const run = (lastHistory && typeof lastHistory === "object" ? lastHistory : verification) as Record<string, unknown>;
+
+    const statusRaw = String(run.status ?? verification.status ?? "").toLowerCase();
+    if (!statusRaw) return null;
+
+    const stdout = String(run.stdout ?? verification.stdout ?? "");
+    const stderr = String(run.stderr ?? verification.stderr ?? "");
+    const logs = String(run.logs ?? verification.logs ?? "");
+    const durationRaw = run.duration_ms ?? verification.duration_ms;
+    const durationMs = typeof durationRaw === "number" ? durationRaw : null;
+    const timestamp = String(run.timestamp ?? verification.last_run_at ?? "");
+
+    return {
+      status: statusRaw,
+      output: (stdout || stderr || logs || "(empty)").trim(),
+      durationMs,
+      timestamp,
+    };
+  };
+
   // Extract confidence score from content if present (e.g., "**Confidence: 85%**")
   const extractConfidence = (content?: string): number | null => {
     if (!content) return null;
@@ -93,6 +111,10 @@ export function CanvasNodeItem({
   const confidence = extractConfidence(node.content);
 
   const imageSrc = extractImageSrc(node.content);
+  const computationExecution =
+    (node.type || "").toUpperCase() === "COMPUTATION"
+      ? extractComputationExecution(node.verification)
+      : null;
 
   const formulaValue = normalizeFormula(node.formula);
   const contentValue = normalizeContent(node.content);
@@ -107,17 +129,6 @@ export function CanvasNodeItem({
     e.stopPropagation();
     onConnectionStart?.(e);
   }, [onConnectionStart]);
-
-  const handleOpenInEditor = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (onOpenInEditor) {
-      onOpenInEditor(node);
-    } else if (problemId) {
-      // Deep link to lab view with this node's content
-      router.push(`/problems/${problemId}/lab?nodeId=${node.id}`);
-    }
-  }, [node, problemId, router, onOpenInEditor]);
 
   return (
     <div
@@ -239,6 +250,30 @@ export function CanvasNodeItem({
             />
           </div>
         )}
+
+        {computationExecution && (
+          <div
+            className={`mt-2 rounded-md border px-2 py-1.5 ${
+              computationExecution.status === "pass"
+                ? "border-emerald-200 bg-emerald-50"
+                : computationExecution.status === "error"
+                  ? "border-red-200 bg-red-50"
+                  : "border-amber-200 bg-amber-50"
+            }`}
+          >
+            <div className="text-[10px] font-semibold uppercase tracking-wide text-neutral-600">
+              {computationExecution.status === "pass"
+                ? "Last run passed"
+                : computationExecution.status === "error"
+                  ? "Last run error"
+                  : "Last run failed"}
+              {computationExecution.durationMs !== null ? ` · ${computationExecution.durationMs} ms` : ""}
+            </div>
+            <pre className="mt-1 text-[11px] leading-snug text-neutral-700 max-h-14 overflow-hidden whitespace-pre-wrap break-words">
+              {computationExecution.output}
+            </pre>
+          </div>
+        )}
       </div>
 
       {/* Node Footer */}
@@ -249,6 +284,21 @@ export function CanvasNodeItem({
             <div className="flex items-center gap-1 text-[10px] text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded-full">
               <FileCode className="w-3 h-3" />
               <span className="font-medium">Lean</span>
+            </div>
+          )}
+
+          {computationExecution && (
+            <div
+              className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
+                computationExecution.status === "pass"
+                  ? "text-emerald-700 bg-emerald-100"
+                  : computationExecution.status === "error"
+                    ? "text-red-700 bg-red-100"
+                    : "text-amber-700 bg-amber-100"
+              }`}
+              title={computationExecution.timestamp || "Latest execution"}
+            >
+              Python {computationExecution.status}
             </div>
           )}
 
@@ -309,13 +359,6 @@ export function CanvasNodeItem({
 
           {/* Actions on hover */}
           <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100">
-            <button
-              className="p-1.5 text-neutral-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
-              onClick={handleOpenInEditor}
-              title="Open in Editor"
-            >
-              <ExternalLink className="w-3 h-3" />
-            </button>
             <button
               className="p-1.5 text-neutral-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
               onClick={(e) => {

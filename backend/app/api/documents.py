@@ -436,7 +436,15 @@ async def commit_to_document(
         raise HTTPException(status_code=400, detail="No valid nodes found")
     
     # Sort items by dependencies (topological-ish: definitions first, then lemmas, then theorems)
-    kind_order = {"DEFINITION": 0, "NOTE": 1, "LEMMA": 2, "CLAIM": 3, "THEOREM": 4, "COUNTEREXAMPLE": 5}
+    kind_order = {
+        "DEFINITION": 0,
+        "NOTE": 1,
+        "LEMMA": 2,
+        "CLAIM": 3,
+        "FORMAL_TEST": 4,
+        "THEOREM": 5,
+        "COUNTEREXAMPLE": 6,
+    }
     items = sorted(items, key=lambda x: kind_order.get(x.kind.value if hasattr(x.kind, 'value') else x.kind, 10))
     
     # Determine order_index for new section

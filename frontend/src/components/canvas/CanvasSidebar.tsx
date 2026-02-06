@@ -51,6 +51,7 @@ const KIND_ICONS: Record<string, typeof FileText> = {
   CONTENT: FileText,
   COUNTEREXAMPLE: AlertCircle,
   COMPUTATION: FileCode,
+  FORMAL_TEST: FileCode,
 };
 
 const STATUS_ICONS: Record<string, typeof CheckCircle> = {

@@ -18,6 +18,7 @@ import {
   Map,
   X,
 } from "lucide-react";
+import { Logo } from "@/components/Logo";
 
 interface AgentSuggestion {
   id: string;
@@ -83,9 +84,9 @@ export function AISuggestionsPanel({
       <button
         onClick={onToggle}
         className="absolute right-4 top-20 bg-white border border-neutral-200 rounded-lg shadow-sm p-3 hover:bg-neutral-50 transition-colors z-40"
-        title="Show AI Suggestions"
+        title="Show Rho Suggestions"
       >
-        <Sparkles className="w-5 h-5 text-indigo-600" />
+        <Logo size={20} />
         {suggestions.length > 0 && (
           <span className="absolute -top-1 -right-1 w-4 h-4 bg-indigo-600 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
             {suggestions.length}
@@ -101,10 +102,10 @@ export function AISuggestionsPanel({
       <div className="p-4 border-b border-neutral-100 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 bg-indigo-100 rounded-lg flex items-center justify-center">
-            <Sparkles className="w-4 h-4 text-indigo-600" />
+            <Logo size={16} />
           </div>
           <div>
-            <h3 className="text-sm font-semibold text-neutral-900">AI Suggestions</h3>
+            <h3 className="text-sm font-semibold text-neutral-900">Rho Suggestions</h3>
             <p className="text-[10px] text-neutral-500">
               {filteredSuggestions.length} suggestions available
             </p>
@@ -274,7 +275,7 @@ export function AISuggestionsPanel({
       {/* Footer */}
       <div className="p-3 border-t border-neutral-100 shrink-0">
         <div className="flex items-center justify-between text-[10px] text-neutral-500">
-          <span>Powered by Gemini Pro</span>
+          <span>Powered by Rho (Gemini)</span>
           <button className="text-indigo-600 hover:text-indigo-700 font-medium">
             Configure
           </button>

@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import { use, useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import Editor, { type Monaco } from "@monaco-editor/react";
@@ -74,6 +74,7 @@ import {
 } from "@/lib/api";
 import { LibraryItem } from "@/lib/types";
 import { useAuth } from "@/lib/auth";
+import { Logo } from "@/components/Logo";
 import ReactMarkdown from "react-markdown";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
@@ -234,6 +235,19 @@ function normalizePath(value: string) {
   return value.replace(/^\/+/, "").trim();
 }
 
+function basenamePath(path: string) {
+  const parts = path.split("/").filter(Boolean);
+  return parts[parts.length - 1] || path;
+}
+
+function remapPathForMove(path: string, from: string, to: string) {
+  if (path === from) return to;
+  if (path.startsWith(`${from}/`)) {
+    return `${to}${path.slice(from.length)}`;
+  }
+  return path;
+}
+
 function isImagePath(path: string) {
   const ext = path.split(".").pop()?.toLowerCase();
   return ["png", "jpg", "jpeg", "gif", "svg", "webp"].includes(ext || "");
@@ -306,6 +320,8 @@ export default function LabPage({ params }: PageProps) {
   const [renameTarget, setRenameTarget] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [draggingItem, setDraggingItem] = useState<{ path: string; type: "file" | "directory" } | null>(null);
+  const [dropTargetDir, setDropTargetDir] = useState<string | null>(null);
   const [fileLoading, setFileLoading] = useState(false);
   const [filesLoaded, setFilesLoaded] = useState(false);
   const [fileParamApplied, setFileParamApplied] = useState(false);
@@ -1712,6 +1728,118 @@ export default function LabPage({ params }: PageProps) {
     });
   }, []);
 
+  const canDropToDirectory = useCallback(
+    (targetDir: string) => {
+      if (!draggingItem || !canEdit) return false;
+      const sourcePath = draggingItem.path;
+      const sourceName = basenamePath(sourcePath);
+      const destinationPath = normalizePath(targetDir ? `${targetDir}/${sourceName}` : sourceName);
+      if (!destinationPath || destinationPath === sourcePath) return false;
+      if (
+        draggingItem.type === "directory" &&
+        (targetDir === sourcePath || targetDir.startsWith(`${sourcePath}/`))
+      ) {
+        return false;
+      }
+
+      if (draggingItem.type === "file") {
+        return !files.some((file) => file.path === destinationPath);
+      }
+
+      return !files.some(
+        (file) => file.path === destinationPath || file.path.startsWith(`${destinationPath}/`)
+      );
+    },
+    [draggingItem, canEdit, files]
+  );
+
+  const movePathToDirectory = useCallback(
+    async (sourcePath: string, sourceType: "file" | "directory", targetDir: string) => {
+      if (!canEdit) return;
+      const sourceName = basenamePath(sourcePath);
+      const destinationPath = normalizePath(targetDir ? `${targetDir}/${sourceName}` : sourceName);
+      if (!destinationPath || destinationPath === sourcePath) return;
+      if (
+        sourceType === "directory" &&
+        (targetDir === sourcePath || targetDir.startsWith(`${sourcePath}/`))
+      ) {
+        return;
+      }
+      const destinationExists =
+        sourceType === "file"
+          ? files.some((file) => file.path === destinationPath)
+          : files.some(
+              (file) => file.path === destinationPath || file.path.startsWith(`${destinationPath}/`)
+            );
+      if (destinationExists) return;
+
+      await renameLatexPath(problemId, sourcePath, destinationPath);
+
+      setOpenTabs((prev) => {
+        const mapped = prev.map((tab) => remapPathForMove(tab, sourcePath, destinationPath));
+        const deduped = Array.from(new Set(mapped));
+        return deduped.length > 0 ? deduped : [DEFAULT_MAIN];
+      });
+      setActivePath((prev) => remapPathForMove(prev, sourcePath, destinationPath));
+      if (renameTarget) {
+        setRenameTarget((prev) => (prev ? remapPathForMove(prev, sourcePath, destinationPath) : null));
+      }
+      if (deleteTarget) {
+        setDeleteTarget((prev) => (prev ? remapPathForMove(prev, sourcePath, destinationPath) : null));
+      }
+      setDropTargetDir(null);
+      setDraggingItem(null);
+      await refreshFiles();
+    },
+    [canEdit, files, problemId, refreshFiles, renameTarget, deleteTarget]
+  );
+
+  const handleNodeDragStart = useCallback(
+    (event: DragEvent<HTMLDivElement>, item: { path: string; type: "file" | "directory" }) => {
+      if (!canEdit) return;
+      setDraggingItem(item);
+      setDropTargetDir(null);
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", item.path);
+    },
+    [canEdit]
+  );
+
+  const handleNodeDragEnd = useCallback(() => {
+    setDraggingItem(null);
+    setDropTargetDir(null);
+  }, []);
+
+  const handleDirectoryDragOver = useCallback(
+    (event: DragEvent<HTMLDivElement>, targetDir: string) => {
+      if (!canDropToDirectory(targetDir)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      event.dataTransfer.dropEffect = "move";
+      if (dropTargetDir !== targetDir) {
+        setDropTargetDir(targetDir);
+      }
+    },
+    [canDropToDirectory, dropTargetDir]
+  );
+
+  const handleDirectoryDragLeave = useCallback(
+    (targetDir: string) => {
+      setDropTargetDir((prev) => (prev === targetDir ? null : prev));
+    },
+    []
+  );
+
+  const handleDirectoryDrop = useCallback(
+    async (event: DragEvent<HTMLDivElement>, targetDir: string) => {
+      if (!draggingItem || !canDropToDirectory(targetDir)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      await movePathToDirectory(draggingItem.path, draggingItem.type, targetDir);
+    },
+    [draggingItem, canDropToDirectory, movePathToDirectory]
+  );
+
   const handlePrevPage = useCallback(() => {
     setPdfPage((prev) => Math.max(1, prev - 1));
   }, []);
@@ -1985,7 +2113,7 @@ export default function LabPage({ params }: PageProps) {
       {
         id: `${Date.now()}`,
         timestamp: now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-        summary: "AI edit",
+        summary: "Rho edit",
         content,
       },
       ...prev,
@@ -3247,11 +3375,11 @@ export default function LabPage({ params }: PageProps) {
   }, [pdfBlob]);
 
   useEffect(() => {
-    if (!pdfDocRef.current || pdfPages === 0) return;
+    if (!rightOpen || !pdfDocRef.current || pdfPages === 0) return;
     renderPdfPage(pdfPage, pdfZoom).catch((error) => {
       console.error("Failed to render PDF page", error);
     });
-  }, [pdfPage, pdfZoom, pdfPages, renderPdfPage]);
+  }, [rightOpen, pdfPage, pdfZoom, pdfPages, renderPdfPage]);
 
 
   useEffect(() => {
@@ -3543,11 +3671,20 @@ export default function LabPage({ params }: PageProps) {
       const isDeleting = deleteTarget === node.path;
       if (node.type === "directory") {
         const expanded = expandedDirs.has(node.path);
+        const isDropTarget = dropTargetDir === node.path && canDropToDirectory(node.path);
         return (
           <div key={node.path}>
             <div
+              draggable={canEdit && node.path !== "" && !isRenaming && !isDeleting}
+              onDragStart={(event) =>
+                handleNodeDragStart(event, { path: node.path, type: "directory" })
+              }
+              onDragEnd={handleNodeDragEnd}
+              onDragOver={(event) => handleDirectoryDragOver(event, node.path)}
+              onDragLeave={() => handleDirectoryDragLeave(node.path)}
+              onDrop={(event) => void handleDirectoryDrop(event, node.path)}
               className={`w-full flex items-center gap-1.5 py-1 text-xs text-left rounded-md px-2 group ${node.path === "" ? "text-neutral-600" : "text-neutral-400"
-                }`}
+                } ${isDropTarget ? "bg-emerald-500/12 ring-1 ring-emerald-500/40" : ""}`}
               style={{ paddingLeft: padding }}
             >
               <button
@@ -3659,6 +3796,9 @@ export default function LabPage({ params }: PageProps) {
       return (
         <div
           key={node.path}
+          draggable={canEdit && !isRenaming && !isDeleting}
+          onDragStart={(event) => handleNodeDragStart(event, { path: node.path, type: "file" })}
+          onDragEnd={handleNodeDragEnd}
           className={`w-full flex items-center gap-1.5 py-1 text-xs rounded-md px-2 group ${activePath === node.path ? "bg-[#1a1a1a] text-neutral-200" : "text-neutral-500 hover:bg-[#141414] hover:text-neutral-300"
             } transition-colors`}
           style={{ paddingLeft: padding }}
@@ -3745,6 +3885,9 @@ export default function LabPage({ params }: PageProps) {
       renameTarget,
       renameValue,
       deleteTarget,
+      dropTargetDir,
+      canDropToDirectory,
+      canEdit,
       submitRename,
       cancelRename,
       handleCreateFile,
@@ -3752,6 +3895,11 @@ export default function LabPage({ params }: PageProps) {
       startRename,
       startDelete,
       cancelDelete,
+      handleNodeDragStart,
+      handleNodeDragEnd,
+      handleDirectoryDragOver,
+      handleDirectoryDragLeave,
+      handleDirectoryDrop,
       renderCreateRow,
       handleDeleteFile,
     ]
@@ -3765,9 +3913,7 @@ export default function LabPage({ params }: PageProps) {
       <header className="h-11 border-b border-[#1a1a1a] flex items-center justify-between px-4 shrink-0 z-20 bg-[#0a0a0a]">
         <div className="flex items-center gap-5">
           <Link href="/dashboard" className="flex items-center gap-2 group">
-            <div className="w-5 h-5 bg-neutral-700 rounded-sm flex items-center justify-center text-neutral-200 group-hover:bg-neutral-600 transition-colors">
-              <span className="font-[var(--font-math)] italic text-[12px] leading-none logo-rho">&rho;</span>
-            </div>
+            <Logo size={20} className="group-hover:opacity-90 transition-opacity" />
             <span className="font-medium tracking-tight text-neutral-400 text-sm group-hover:text-neutral-300 transition-colors">ProofMesh</span>
           </Link>
 
@@ -3935,12 +4081,19 @@ export default function LabPage({ params }: PageProps) {
               <div className="flex-1 overflow-y-auto px-2 py-2">
                 {leftTab === "files" && (
                   <>
-                    {renderCreateRow("", 0)}
-                    {fileTree?.children?.length ? (
-                      fileTree.children.map((child) => renderNode(child, 0))
-                    ) : (
-                      <div className="px-2 py-2 text-[11px] text-neutral-600">No files yet</div>
-                    )}
+                    <div
+                      onDragOver={(event) => handleDirectoryDragOver(event, "")}
+                      onDragLeave={() => handleDirectoryDragLeave("")}
+                      onDrop={(event) => void handleDirectoryDrop(event, "")}
+                      className={`${dropTargetDir === "" && canDropToDirectory("") ? "bg-emerald-500/8 ring-1 ring-emerald-500/30 rounded-md" : ""}`}
+                    >
+                      {renderCreateRow("", 0)}
+                      {fileTree?.children?.length ? (
+                        fileTree.children.map((child) => renderNode(child, 0))
+                      ) : (
+                        <div className="px-2 py-2 text-[11px] text-neutral-600">No files yet</div>
+                      )}
+                    </div>
                   </>
                 )}
                 {leftTab === "chats" && (
@@ -4496,7 +4649,7 @@ export default function LabPage({ params }: PageProps) {
                             }}
                             placeholder="Ask anything..."
                             rows={2}
-                            className="w-full bg-transparent text-sm font-light text-zinc-100 placeholder-zinc-600 p-4 min-h-[5rem] max-h-48 resize-none outline-none border-none leading-relaxed"
+                            className="w-full bg-transparent focus:bg-transparent text-sm font-light text-zinc-100 placeholder-zinc-600 p-4 min-h-[5rem] max-h-48 resize-none outline-none border-none leading-relaxed"
                           />
                           {mentionOpen === "persistent" && (
                             <div className="absolute bottom-4 left-4 right-4 bg-[#0f0f0f] border border-[#252525] rounded-md shadow-lg z-20 max-h-40 overflow-y-auto">
@@ -4655,7 +4808,7 @@ export default function LabPage({ params }: PageProps) {
                     onChange={handleEditorChange}
                     options={{
                       fontSize: 13,
-                      fontFamily: "'JetBrains Mono', 'Fira Code', ui-monospace, monospace",
+                      fontFamily: "'Geist Mono', 'Fira Code', ui-monospace, monospace",
                       fontLigatures: true,
                       minimap: { enabled: false },
                       wordWrap: "on",
@@ -4792,7 +4945,7 @@ export default function LabPage({ params }: PageProps) {
                                               </div>
                                               <div className="flex items-center justify-between gap-2">
                                                 <div className="text-[10px] text-neutral-400 truncate">
-                                                  {change.summary || "AI change"}
+                                                  {change.summary || "Rho change"}
                                                 </div>
                                                 {change.status && change.status !== "pending" && (
                                                   <span className="text-[10px] text-neutral-500">
@@ -5021,7 +5174,7 @@ export default function LabPage({ params }: PageProps) {
                               }}
                               placeholder={aiLoading ? "Thinking..." : "Ask anything..."}
                               rows={2}
-                              className={`w-full bg-transparent text-sm font-light text-zinc-100 placeholder-zinc-600 p-4 min-h-[5rem] max-h-48 resize-none outline-none border-none leading-relaxed ${aiLoading ? "opacity-50 cursor-not-allowed" : ""}`}
+                              className={`w-full bg-transparent focus:bg-transparent text-sm font-light text-zinc-100 placeholder-zinc-600 p-4 min-h-[5rem] max-h-48 resize-none outline-none border-none leading-relaxed ${aiLoading ? "opacity-50 cursor-not-allowed" : ""}`}
                             />
                             {mentionOpen === "temp" && (
                               <div className="absolute bottom-4 left-4 right-4 bg-[#0f0f0f] border border-[#252525] rounded-md shadow-lg z-20 max-h-40 overflow-y-auto">

@@ -14,7 +14,6 @@ import {
   Plus,
   Image as ImageIcon,
   Target,
-  Play,
   Zap,
   CheckCircle,
   XCircle,
@@ -22,8 +21,8 @@ import {
   BookOpen,
   GitMerge,
   Filter,
-  MoreHorizontal,
 } from "lucide-react";
+import { Logo } from "@/components/Logo";
 import ReactMarkdown from "react-markdown";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
@@ -32,6 +31,7 @@ import { CanvasNode, NODE_TYPE_CONFIG } from "./types";
 import {
   getOrchestrationStatus,
   exploreContext,
+  routeCanvasIdeas,
   exploreWithPatterns,
   formalizeText,
   verifyLeanCode,
@@ -40,6 +40,7 @@ import {
   createCanvasAIRun,
   generateStory,
   fuseIdeas,
+  executeComputationNode,
   type Story,
   type CanvasAIMessage,
   type CanvasAIRun,
@@ -70,6 +71,7 @@ interface FloatingAIBarProps {
   problemId: string;
   selectedNode: CanvasNode | null;
   selectedNodes?: CanvasNode[];
+  allNodes?: CanvasNode[];
   isVisible: boolean;
   onToggle: () => void;
   onCreateNode?: (data: { type: string; title: string; content: string; formula?: string; leanCode?: string; x?: number; y?: number; dependencies?: string[]; authors?: Array<{ type: "human" | "agent"; id: string; name?: string }>; source?: { file_path?: string; cell_id?: string; agent_run_id?: string } }) => Promise<{ id: string } | void>;
@@ -77,8 +79,209 @@ interface FloatingAIBarProps {
   onCreateBlock?: (name: string, nodeIds: string[]) => void;
 }
 
-const AI_AUTHOR = { type: "agent", id: "orchestrator", name: "AI Pipeline" } as const;
+const AI_AUTHOR = { type: "agent", id: "orchestrator", name: "Rho" } as const;
 const buildAISource = (runId?: string) => (runId ? { agent_run_id: runId } : undefined);
+const isComputationNode = (node?: ContextNode | CanvasNode | null) =>
+  (node?.type || "").toUpperCase() === "COMPUTATION";
+
+const hasMeaningfulCanvasPrompt = (value: string) => {
+  const text = (value || "").trim();
+  if (!text) return false;
+  if (text.length >= 8) return true;
+  if (/[0-9=+\-*/^()]/.test(text)) return true;
+  return /\b(odd|even|par|impar|lemma|theorem|proof|lean|python|compute|verify)\b/i.test(text);
+};
+
+type SlashMode =
+  | "canvas"
+  | "formalize"
+  | "verify"
+  | "critic"
+  | "compute"
+  | "strategist"
+  | "socratic";
+
+const SLASH_MODE_OPTIONS: Array<{
+  id: SlashMode;
+  label: string;
+  title: string;
+  description: string;
+  aliases: string[];
+}> = [
+  {
+    id: "canvas",
+    label: "/explorer",
+    title: "Explorer",
+    description: "Explore ideas and connect nodes directly on canvas",
+    aliases: ["canvas", "explore", "mapa", "diagram"],
+  },
+  {
+    id: "formalize",
+    label: "/formalize",
+    title: "Lean Formalizer",
+    description: "Turn math text into Lean and run verification",
+    aliases: ["formaliza", "lean", "formalise"],
+  },
+  {
+    id: "verify",
+    label: "/verify",
+    title: "Lean Verifier",
+    description: "Verify current Lean code or verify from a statement",
+    aliases: ["verifica", "check"],
+  },
+  {
+    id: "critic",
+    label: "/critic",
+    title: "Rigorous Critic",
+    description: "Stress-test assumptions and detect weak spots",
+    aliases: ["critica", "review", "peer"],
+  },
+  {
+    id: "compute",
+    label: "/compute",
+    title: "Computation Lab",
+    description: "Run Python computations tied to computation nodes",
+    aliases: ["python", "calc", "run"],
+  },
+  {
+    id: "strategist",
+    label: "/strategist",
+    title: "Proof Strategist",
+    description: "Plan proof roadmap and node decomposition",
+    aliases: ["strategy", "plan", "roadmap", "estrategia"],
+  },
+  {
+    id: "socratic",
+    label: "/socratic",
+    title: "Socratic Tutor",
+    description: "Short guided hints instead of long answers",
+    aliases: ["tutor", "coach", "hint"],
+  },
+];
+
+const SLASH_MODE_ALIASES: Record<string, SlashMode> = SLASH_MODE_OPTIONS.reduce((acc, option) => {
+  acc[option.id] = option.id;
+  option.aliases.forEach((alias) => {
+    acc[alias] = option.id;
+  });
+  return acc;
+}, {} as Record<string, SlashMode>);
+
+const parseSlashCommand = (value: string): { mode: SlashMode | null; text: string; hasDirective: boolean } => {
+  const trimmed = (value || "").trim();
+  if (!trimmed.startsWith("/")) {
+    return { mode: null, text: trimmed, hasDirective: false };
+  }
+
+  const match = trimmed.match(/^\/([a-zA-Z_-]+)\b\s*(.*)$/);
+  if (!match) {
+    return { mode: null, text: trimmed, hasDirective: false };
+  }
+
+  const token = (match[1] || "").toLowerCase();
+  const mapped = SLASH_MODE_ALIASES[token] || null;
+  const rest = (match[2] || "").trim();
+  return { mode: mapped, text: rest, hasDirective: true };
+};
+
+const getSlashQuery = (value: string): string | null => {
+  const trimmedStart = (value || "").trimStart();
+  const match = trimmedStart.match(/^\/([a-zA-Z_-]*)$/);
+  return match ? (match[1] || "").toLowerCase() : null;
+};
+
+const buildExplorePromptForMode = (mode: SlashMode, userPrompt: string) => {
+  const trimmed = userPrompt.trim();
+  if (!trimmed) return "";
+  if (mode === "strategist") {
+    return [
+      "Role: proof strategist.",
+      "Output compact, node-oriented structure for canvas.",
+      "Prioritize theorem/lemma/dependency ordering and minimal steps.",
+      "",
+      trimmed,
+    ].join("\n");
+  }
+  if (mode === "socratic") {
+    return [
+      "Role: socratic tutor.",
+      "Keep responses very short and convert guidance into concrete canvas nodes.",
+      "Prefer questions + next action over long exposition.",
+      "",
+      trimmed,
+    ].join("\n");
+  }
+  return trimmed;
+};
+
+const getSlashModeIcon = (mode: SlashMode) => {
+  switch (mode) {
+    case "formalize":
+      return FileCode;
+    case "verify":
+      return CheckCircle;
+    case "critic":
+      return Filter;
+    case "compute":
+      return Zap;
+    case "strategist":
+      return GitMerge;
+    case "socratic":
+      return BookOpen;
+    case "canvas":
+    default:
+      return Compass;
+  }
+};
+
+const getSlashModeAccent = (mode: SlashMode | null) => {
+  if (mode === "canvas") {
+    return {
+      panel: "bg-sky-50/40",
+      badge: "bg-sky-100 text-sky-700 border-sky-200",
+    };
+  }
+  if (mode === "formalize" || mode === "verify") {
+    return {
+      panel: "bg-emerald-50/40",
+      badge: "bg-emerald-100 text-emerald-700 border-emerald-200",
+    };
+  }
+  if (mode === "critic") {
+    return {
+      panel: "bg-amber-50/40",
+      badge: "bg-amber-100 text-amber-700 border-amber-200",
+    };
+  }
+  if (mode === "compute") {
+    return {
+      panel: "bg-fuchsia-50/35",
+      badge: "bg-fuchsia-100 text-fuchsia-700 border-fuchsia-200",
+    };
+  }
+  if (mode === "strategist") {
+    return {
+      panel: "bg-indigo-50/35",
+      badge: "bg-indigo-100 text-indigo-700 border-indigo-200",
+    };
+  }
+  if (mode === "socratic") {
+    return {
+      panel: "bg-cyan-50/40",
+      badge: "bg-cyan-100 text-cyan-700 border-cyan-200",
+    };
+  }
+  return {
+    panel: "",
+    badge: "bg-neutral-100 text-neutral-700 border-neutral-200",
+  };
+};
+
+const FORMALIZE_DIRECTIVE_REGEX = /^(?:formaliza(?:\s+esto)?|formalize(?:\s+this)?|verifica(?:\s+esto)?|verify(?:\s+this)?|lean)\b[:\s-]*/i;
+
+const isFormalizeDirectiveText = (value: string) => FORMALIZE_DIRECTIVE_REGEX.test((value || "").trim());
+
+const stripFormalizeDirectiveText = (value: string) => (value || "").trim().replace(FORMALIZE_DIRECTIVE_REGEX, "").trim();
 
 const isImageContent = (value?: string) => {
   if (!value) return false;
@@ -92,6 +295,18 @@ const readFileAsDataUrl = (file: File) => new Promise<string>((resolve, reject) 
   reader.onerror = () => reject(new Error("Failed to read image"));
   reader.readAsDataURL(file);
 });
+
+const isEditableTarget = (target: EventTarget | null): boolean => {
+  const element = target instanceof HTMLElement ? target : null;
+  if (!element) return false;
+  if (element.closest('[data-no-shortcuts="true"]')) return true;
+  if (element.closest(".monaco-editor")) return true;
+  if (element.isContentEditable) return true;
+  const tagName = element.tagName;
+  if (tagName === "INPUT" || tagName === "TEXTAREA" || tagName === "SELECT") return true;
+  const role = element.getAttribute("role");
+  return role === "textbox" || role === "combobox";
+};
 
 const stripMarkdown = (value: string) => value
   .replace(/`{1,3}[^`]*`{1,3}/g, " ")
@@ -119,6 +334,7 @@ const SECTION_KEYWORDS = [
   "corollary",
   "counterexample",
   "computation",
+  "formal test",
   "idea",
   "note",
   "resource",
@@ -148,6 +364,8 @@ const mapKeywordToType = (keyword: string) => {
       return "COUNTEREXAMPLE";
     case "computation":
       return "COMPUTATION";
+    case "formal test":
+      return "FORMAL_TEST";
     case "idea":
       return "IDEA";
     case "resource":
@@ -181,6 +399,7 @@ const inferNodeTypeFromText = (value: string) => {
   if (lower.includes("corollary")) return "LEMMA";
   if (lower.includes("counterexample")) return "COUNTEREXAMPLE";
   if (lower.includes("computation") || lower.includes("calculation")) return "COMPUTATION";
+  if (lower.includes("formal test") || lower.includes("lean test")) return "FORMAL_TEST";
   if (lower.includes("resource") || lower.includes("reference") || lower.includes("paper")) return "RESOURCE";
   if (lower.includes("idea") || lower.includes("approach")) return "IDEA";
   if (lower.includes("insight")) return "CLAIM";
@@ -245,6 +464,103 @@ const parseTypedSections = (text: string) => {
 const extractChatResponse = (content: string) => {
   const stripped = content.replace(/<thinking>[\s\S]*?<\/thinking>/g, "").trim();
   return stripped || content.trim();
+};
+
+const MAX_CHAT_PREVIEW_CHARS = 180;
+const MAX_NODE_CONTENT_CHARS = 360;
+const MAX_SECTIONS_PER_RESPONSE = 8;
+
+const compactChatText = (content: string, maxChars = MAX_CHAT_PREVIEW_CHARS) => {
+  const cleaned = stripMarkdown(content || "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!cleaned) return "";
+  if (cleaned.length <= maxChars) return cleaned;
+  return `${cleaned.slice(0, maxChars).trim()}...`;
+};
+
+const splitLongInsightContent = (content: string, maxChars = 220) => {
+  const cleaned = (content || "").trim();
+  if (!cleaned) return [];
+
+  const bulletLines = cleaned
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => /^(?:[-*+]|\d+\.)\s+/.test(line))
+    .map((line) => line.replace(/^(?:[-*+]|\d+\.)\s+/, "").trim())
+    .filter(Boolean);
+
+  if (bulletLines.length >= 2) {
+    return bulletLines;
+  }
+
+  const paragraphs = cleaned
+    .split(/\n{2,}/)
+    .map((para) => para.trim())
+    .filter(Boolean);
+  if (paragraphs.length >= 2) {
+    return paragraphs;
+  }
+
+  const sentences = cleaned
+    .replace(/\n+/g, " ")
+    .split(/(?<=[.!?])\s+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  if (sentences.length <= 1) {
+    return [cleaned];
+  }
+
+  const chunks: string[] = [];
+  let current = "";
+  sentences.forEach((sentence) => {
+    const candidate = current ? `${current} ${sentence}` : sentence;
+    if (candidate.length <= maxChars) {
+      current = candidate;
+      return;
+    }
+    if (current) chunks.push(current);
+    current = sentence;
+  });
+  if (current) chunks.push(current);
+
+  return chunks.length > 0 ? chunks : [cleaned];
+};
+
+const extractCodeFence = (content: string, language: string): string => {
+  const regex = new RegExp("```" + language + "\\n([\\s\\S]*?)```", "i");
+  const match = (content || "").match(regex);
+  return match && match[1] ? match[1].trim() : "";
+};
+
+const looksLikePythonCode = (value: string): boolean => {
+  const text = (value || "").trim();
+  if (!text) return false;
+  const pythonKeywordRegex = /(^|\b)(def|class|for|while|if|elif|else|try|except|import|from|return|with|print|lambda)(\b|$)/m;
+  const assignmentRegex = /^\s*[a-zA-Z_][a-zA-Z0-9_]*\s*=/m;
+  const callRegex = /\b[a-zA-Z_][a-zA-Z0-9_]*\s*\(/;
+  const newlineIndentRegex = /\n\s{2,}\S/;
+  return (
+    pythonKeywordRegex.test(text) ||
+    assignmentRegex.test(text) ||
+    callRegex.test(text) ||
+    newlineIndentRegex.test(text)
+  );
+};
+
+const ensurePythonComputation = (input: string): string | null => {
+  const trimmed = (input || "").trim();
+  if (!trimmed) return "# TODO: write python code";
+  const fenced = extractCodeFence(trimmed, "python") || extractCodeFence(trimmed, "py");
+  const code = (fenced || trimmed).trim();
+  if (!code) return "# TODO: write python code";
+  if (looksLikePythonCode(code)) return code;
+
+  const expressionLike = /^[a-zA-Z0-9_+\-*/().,\s]+$/.test(code) && /[+\-*/()]/.test(code);
+  if (expressionLike) return code;
+
+  return null;
 };
 
 const buildChatContext = (messages: ChatMessage[]) => {
@@ -339,9 +655,15 @@ const sanitizeDiagram = (diagram?: DiagramSpec | null) => {
   return { nodes: finalNodes, edges };
 };
 
-const layoutDiagram = (nodes: Array<{ id: string }>, edges: Array<{ from: string; to: string }>, baseX: number, baseY: number) => {
+const layoutDiagram = (
+  nodes: Array<{ id: string; title: string }>,
+  edges: Array<{ from: string; to: string }>,
+  baseX: number,
+  baseY: number
+) => {
   const incoming = new Map<string, number>();
   const adjacency = new Map<string, string[]>();
+  const nodeById = new Map(nodes.map((node) => [node.id, node]));
 
   nodes.forEach((node) => {
     incoming.set(node.id, 0);
@@ -355,65 +677,132 @@ const layoutDiagram = (nodes: Array<{ id: string }>, edges: Array<{ from: string
   });
 
   const depths = new Map<string, number>();
-  const queue: string[] = [];
-  nodes.forEach((node) => {
-    if ((incoming.get(node.id) || 0) === 0) {
-      depths.set(node.id, 0);
-      queue.push(node.id);
-    }
-  });
+  const queue = nodes
+    .filter((node) => (incoming.get(node.id) || 0) === 0)
+    .sort((a, b) => a.title.localeCompare(b.title))
+    .map((node) => node.id);
+
+  queue.forEach((id) => depths.set(id, 0));
 
   while (queue.length > 0) {
     const current = queue.shift() as string;
     const depth = depths.get(current) || 0;
-    const neighbors = adjacency.get(current) || [];
+    const neighbors = (adjacency.get(current) || [])
+      .slice()
+      .sort((a, b) => (nodeById.get(a)?.title || a).localeCompare(nodeById.get(b)?.title || b));
+
     neighbors.forEach((next) => {
-      const nextDepth = Math.max(depths.get(next) || 0, depth + 1);
-      depths.set(next, nextDepth);
+      depths.set(next, Math.max(depths.get(next) || 0, depth + 1));
       incoming.set(next, (incoming.get(next) || 1) - 1);
-      if ((incoming.get(next) || 0) <= 0) {
-        queue.push(next);
-      }
+      if ((incoming.get(next) || 0) <= 0) queue.push(next);
     });
   }
 
-  const groups = new Map<number, string[]>();
+  nodes.forEach((node) => {
+    if (!depths.has(node.id)) depths.set(node.id, 0);
+  });
+
+  const groups = new Map<number, Array<{ id: string; title: string }>>();
   nodes.forEach((node) => {
     const depth = depths.get(node.id) ?? 0;
     if (!groups.has(depth)) groups.set(depth, []);
-    groups.get(depth)?.push(node.id);
+    groups.get(depth)?.push(node);
   });
 
+  const layerDepths = Array.from(groups.keys()).sort((a, b) => a - b);
+  const maxLayerSize = Math.max(...layerDepths.map((d) => groups.get(d)?.length || 0), 1);
   const positions: Record<string, { x: number; y: number }> = {};
-  const xSpacing = 420; // Increased from 320 for better separation
-  const ySpacing = 280; // Increased from 190 for better separation
+  const xSpacing = 420;
+  const ySpacing = 220;
+  const topY = baseY;
 
-  Array.from(groups.entries()).forEach(([depth, ids]) => {
-    ids.forEach((id, index) => {
-      const offset = index - (ids.length - 1) / 2;
-      positions[id] = {
+  layerDepths.forEach((depth) => {
+    const layer = (groups.get(depth) || [])
+      .slice()
+      .sort((a, b) => a.title.localeCompare(b.title));
+    const layerOffset = (maxLayerSize - layer.length) * ySpacing * 0.5;
+
+    layer.forEach((node, index) => {
+      positions[node.id] = {
         x: baseX + depth * xSpacing,
-        y: baseY + offset * ySpacing,
+        y: topY + layerOffset + index * ySpacing,
       };
     });
   });
 
-  nodes.forEach((node, index) => {
-    if (!positions[node.id]) {
-      positions[node.id] = {
-        x: baseX + (index % 3) * xSpacing,
-        y: baseY + Math.floor(index / 3) * ySpacing,
-      };
-    }
-  });
-
   return positions;
+};
+
+const getDiagramBounds = (positions: Record<string, { x: number; y: number }>) => {
+  const points = Object.values(positions);
+  if (points.length === 0) {
+    return { minX: 0, minY: 0, maxX: 0, maxY: 0 };
+  }
+  const minX = Math.min(...points.map((p) => p.x));
+  const minY = Math.min(...points.map((p) => p.y));
+  const maxX = Math.max(...points.map((p) => p.x));
+  const maxY = Math.max(...points.map((p) => p.y));
+  return { minX, minY, maxX, maxY };
+};
+
+const getOrderedPlacementAnchor = (
+  nodes: CanvasNode[],
+  seedX: number,
+  seedY: number,
+  options?: {
+    xOffset?: number;
+    yOffset?: number;
+    laneTolerance?: number;
+    laneGap?: number;
+  }
+) => {
+  const xOffset = options?.xOffset ?? 260;
+  const yOffset = options?.yOffset ?? 180;
+  const laneTolerance = options?.laneTolerance ?? 560;
+  const laneGap = options?.laneGap ?? 240;
+  const fallback = {
+    x: seedX + xOffset,
+    y: seedY + yOffset,
+  };
+
+  const positionedNodes = nodes.filter(
+    (node) =>
+      typeof node.x === "number" &&
+      Number.isFinite(node.x) &&
+      typeof node.y === "number" &&
+      Number.isFinite(node.y)
+  );
+
+  if (positionedNodes.length === 0) return fallback;
+
+  const laneNodes = positionedNodes.filter((node) => Math.abs(node.x - fallback.x) <= laneTolerance);
+  if (laneNodes.length === 0) return fallback;
+
+  const laneMaxY = Math.max(...laneNodes.map((node) => node.y as number));
+  return {
+    x: fallback.x,
+    y: Math.max(fallback.y, laneMaxY + laneGap),
+  };
+};
+
+const SECTION_TYPE_ORDER: Record<string, number> = {
+  DEFINITION: 0,
+  THEOREM: 1,
+  LEMMA: 2,
+  CLAIM: 3,
+  FORMAL_TEST: 4,
+  COMPUTATION: 5,
+  IDEA: 6,
+  CONTENT: 7,
+  NOTE: 8,
+  RESOURCE: 9,
 };
 
 export function FloatingAIBar({
   problemId,
   selectedNode,
   selectedNodes = [],
+  allNodes = [],
   isVisible,
   onToggle,
   onCreateNode,
@@ -434,7 +823,10 @@ export function FloatingAIBar({
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [isInputFocused, setIsInputFocused] = useState(false);
   const [activeRuns, setActiveRuns] = useState<CanvasAIRun[]>([]);
-  const [showThinking, setShowThinking] = useState(true);
+  const [showThinking, setShowThinking] = useState(false);
+  const [assistantNodeCounts, setAssistantNodeCounts] = useState<Record<string, number>>({});
+  const [slashMenuIndex, setSlashMenuIndex] = useState(0);
+  const [activeSlashMode, setActiveSlashMode] = useState<SlashMode | null>(null);
   const [isMounted, setIsMounted] = useState(isVisible);
   const [isClosing, setIsClosing] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -449,14 +841,57 @@ export function FloatingAIBar({
   const [generatedStory, setGeneratedStory] = useState<Story | null>(null);
   const [isGeneratingStory, setIsGeneratingStory] = useState(false);
   const [selectedStoriesForFusion, setSelectedStoriesForFusion] = useState<string[]>([]);
-  const [showMoreActions, setShowMoreActions] = useState(false);
   const processedChatMessageIdsRef = useRef<Set<string>>(new Set());
   const onCreateNodeRef = useRef<FloatingAIBarProps["onCreateNode"]>(onCreateNode);
+  const leanModeRef = useRef<((promptOverride?: string) => Promise<void>) | null>(null);
+  const verifyModeRef = useRef<((promptOverride?: string) => Promise<void>) | null>(null);
+  const computeModeRef = useRef<((promptOverride?: string) => Promise<void>) | null>(null);
+  const criticModeRef = useRef<((promptOverride?: string) => Promise<void>) | null>(null);
+  const exploreRunTokenRef = useRef(0);
   const startContextRef = useRef<{ dependencyIds: string[]; baseX: number; baseY: number }>({
     dependencyIds: [],
     baseX: 400,
     baseY: 300,
   });
+  const slashQuery = useMemo(() => getSlashQuery(command), [command]);
+  const slashModeOptions = useMemo(() => {
+    if (slashQuery === null) return [];
+    if (!slashQuery) return SLASH_MODE_OPTIONS;
+    return SLASH_MODE_OPTIONS.filter((option) =>
+      [option.id, ...option.aliases].some((token) => token.startsWith(slashQuery))
+    );
+  }, [slashQuery]);
+  const showSlashModePicker = slashQuery !== null && slashModeOptions.length > 0;
+  const activeSlashModeMeta = useMemo(
+    () => (activeSlashMode ? SLASH_MODE_OPTIONS.find((option) => option.id === activeSlashMode) || null : null),
+    [activeSlashMode]
+  );
+
+  const applySlashMode = useCallback((mode: SlashMode) => {
+    setActiveSlashMode(mode);
+    setCommand("");
+    setSlashMenuIndex(0);
+    setIsInputFocused(true);
+    inputRef.current?.focus();
+  }, []);
+
+  const clearSlashMode = useCallback(() => {
+    setActiveSlashMode(null);
+    setSlashMenuIndex(0);
+    setIsInputFocused(true);
+    inputRef.current?.focus();
+  }, []);
+
+  const handleCommandChange = useCallback((value: string) => {
+    const parsed = parseSlashCommand(value);
+    if (parsed.hasDirective && parsed.mode) {
+      setActiveSlashMode(parsed.mode);
+      setCommand(parsed.text);
+      setSlashMenuIndex(0);
+      return;
+    }
+    setCommand(value);
+  }, []);
 
   const getStartContext = useCallback(() => {
     const primaryNode = selectedNode || selectedNodes[0] || null;
@@ -501,6 +936,16 @@ export function FloatingAIBar({
   }, [isVisible, isMounted]);
 
   useEffect(() => {
+    if (!showSlashModePicker) {
+      setSlashMenuIndex(0);
+      return;
+    }
+    if (slashMenuIndex >= slashModeOptions.length) {
+      setSlashMenuIndex(0);
+    }
+  }, [showSlashModePicker, slashMenuIndex, slashModeOptions.length]);
+
+  useEffect(() => {
     const { dependencyIds, baseX, baseY } = getStartContext();
     startContextRef.current = { dependencyIds, baseX, baseY };
   }, [getStartContext]);
@@ -520,55 +965,95 @@ export function FloatingAIBar({
     return details;
   }, [contextNodes, selectedNode, selectedNodes]);
 
-  const createTypedNodesFromText = useCallback(async (text: string) => {
+  const createTypedNodesFromText = useCallback(async (text: string): Promise<number> => {
     const createNode = onCreateNodeRef.current;
-    if (!createNode) return;
+    if (!createNode) return 0;
     const trimmed = text.trim();
-    if (!trimmed) return;
+    if (!trimmed) return 0;
 
     const { dependencyIds, baseX, baseY } = startContextRef.current;
+    const anchor = getOrderedPlacementAnchor(allNodes, baseX, baseY, {
+      xOffset: 240,
+      yOffset: 180,
+      laneTolerance: 520,
+      laneGap: 220,
+    });
     let sections = parseTypedSections(trimmed);
-    if (sections.length === 0) return;
+    if (sections.length === 0) return 0;
 
     if (sections.length === 1 && sections[0].type === "NOTE") {
-      const paragraphs = sections[0].content
-        .split(/\n{2,}/)
-        .map((para) => para.trim())
-        .filter(Boolean);
-      if (paragraphs.length >= 2) {
+      const chunks = splitLongInsightContent(sections[0].content);
+      if (chunks.length >= 2) {
         const cycle = ["IDEA", "CLAIM", "CONTENT", "NOTE"];
-        sections = paragraphs.map((para, idx) => {
-          let type = inferNodeTypeFromText(para);
+        sections = chunks.map((chunk, idx) => {
+          let type = inferNodeTypeFromText(chunk);
           if (type === "NOTE") {
             type = cycle[idx % cycle.length];
           }
           return {
             type,
-            title: deriveGroupTitle(para, `Insight ${idx + 1}`),
-            content: para,
+            title: deriveGroupTitle(chunk, `Insight ${idx + 1}`),
+            content: chunk,
           };
         });
       }
     }
+
+    sections = sections
+      .filter((section) => section.title.trim() || section.content.trim())
+      .slice(0, MAX_SECTIONS_PER_RESPONSE)
+      .map((section) => {
+        const title = deriveGroupTitle(section.title || section.content, "Insight").trim();
+        const rawContent = section.content.trim() || section.title.trim();
+        const content = rawContent.length > MAX_NODE_CONTENT_CHARS
+          ? `${rawContent.slice(0, MAX_NODE_CONTENT_CHARS).trim()}...`
+          : rawContent;
+        return {
+          type: section.type,
+          title,
+          content,
+        };
+      })
+      .sort((a, b) => {
+        const orderA = SECTION_TYPE_ORDER[a.type] ?? 999;
+        const orderB = SECTION_TYPE_ORDER[b.type] ?? 999;
+        if (orderA !== orderB) return orderA - orderB;
+        return a.title.localeCompare(b.title);
+      })
+      .map((section) => ({
+        ...section,
+        title: section.title.trim(),
+        content: section.content.trim(),
+      }));
+
+    if (sections.length === 0) return 0;
 
     let lastCreatedId: string | null = null;
     const createdIds: string[] = [];
 
     for (let index = 0; index < sections.length; index += 1) {
       const section = sections[index];
-      const column = index % 2;
-      const row = Math.floor(index / 2);
+      const rowsPerColumn = 6;
+      const column = Math.floor(index / rowsPerColumn);
+      const row = index % rowsPerColumn;
       const position = {
-        x: baseX + 220 + column * 260,
-        y: baseY + 180 + row * 200,
+        x: anchor.x + column * 360,
+        y: anchor.y + row * 220,
       };
       const deps = new Set(dependencyIds);
       if (lastCreatedId) deps.add(lastCreatedId);
+      const normalizedComputation = section.type === "COMPUTATION"
+        ? ensurePythonComputation(section.content || section.title)
+        : null;
+      const finalType = section.type === "COMPUTATION" && !normalizedComputation ? "NOTE" : section.type;
+      const nodeContent = finalType === "COMPUTATION"
+        ? (normalizedComputation || "# TODO: write python code")
+        : section.content;
 
       const created = await createNode({
-        type: section.type,
+        type: finalType,
         title: section.title,
-        content: section.content,
+        content: nodeContent,
         x: position.x,
         y: position.y,
         dependencies: Array.from(deps),
@@ -581,20 +1066,51 @@ export function FloatingAIBar({
       }
     }
 
-    if (createdIds.length > 0 && (sections.length > 1 || sections[0].type !== "NOTE")) {
-      await createNode({
-        type: "NOTE",
-        title: "Explanation",
-        content: trimmed,
-        x: baseX + 220,
-        y: baseY + 180 + Math.ceil(sections.length / 2) * 210,
-        dependencies: createdIds,
-        authors: [AI_AUTHOR],
-      });
-    }
+    return createdIds.length;
+  }, [allNodes]);
+
+  const addInsight = useCallback((insight: Omit<FloatingInsight, "id" | "timestamp">) => {
+    const newInsight: FloatingInsight = {
+      ...insight,
+      id: crypto.randomUUID(),
+      timestamp: new Date(),
+    };
+    setInsights((prev) => [newInsight, ...prev].slice(0, 5));
   }, []);
 
+  const handleAssistantMessage = useCallback(async (messageId: string, content: string) => {
+    if (processedChatMessageIdsRef.current.has(messageId)) return;
+    processedChatMessageIdsRef.current.add(messageId);
+
+    const response = extractChatResponse(content);
+    if (!response) return;
+
+    const createdCount = await createTypedNodesFromText(response);
+    setAssistantNodeCounts((prev) => ({
+      ...prev,
+      [messageId]: createdCount,
+    }));
+
+    addInsight({
+      type: "insight",
+      title: "Canvas actualizado",
+      content: createdCount > 0
+        ? `Creé ${createdCount} nodo${createdCount === 1 ? "" : "s"} en el canvas.`
+        : compactChatText(response, 120),
+    });
+  }, [createTypedNodesFromText, addInsight]);
+
   const isExploring = activeAction === "explore" || activeAction === "explore-patterns" || activeAction === "pipeline";
+  const cancelExplore = useCallback(() => {
+    exploreRunTokenRef.current += 1;
+    setIsLoading(false);
+    setActiveAction((prev) => (prev === "explore" ? null : prev));
+    addInsight({
+      type: "insight",
+      title: "Exploración cancelada",
+      content: "Cancelé la generación en curso.",
+    });
+  }, [addInsight]);
 
   // AI SDK useChat for streaming exploration
   const {
@@ -610,33 +1126,7 @@ export function FloatingAIBar({
       problem_id: problemId,
     },
     onFinish: (message) => {
-      // Parse thinking tags and final response
-      const content = message.content;
-      const hasThinking = content.includes("<thinking>") && content.includes("</thinking>");
-      
-      if (hasThinking) {
-        // Extract final response (after all thinking tags)
-        const parts = content.split(/<\/thinking>/);
-        const finalResponse = parts[parts.length - 1].trim();
-        
-        if (finalResponse) {
-          addInsight({
-            type: "proposal",
-            title: "AI Exploration Complete",
-            content: finalResponse.slice(0, 300) + (finalResponse.length > 300 ? "..." : ""),
-          });
-          processedChatMessageIdsRef.current.add(message.id);
-          void createTypedNodesFromText(finalResponse);
-        }
-      } else {
-        addInsight({
-          type: "proposal",
-          title: "AI Exploration Complete",
-          content: content.slice(0, 300) + (content.length > 300 ? "..." : ""),
-        });
-        processedChatMessageIdsRef.current.add(message.id);
-        void createTypedNodesFromText(content);
-      }
+      void handleAssistantMessage(message.id, message.content);
     },
   });
 
@@ -728,26 +1218,8 @@ export function FloatingAIBar({
     const lastAssistant = [...aiMessages].reverse().find((msg) => msg.role === "assistant");
     if (!lastAssistant) return;
     if (processedChatMessageIdsRef.current.has(lastAssistant.id)) return;
-    const response = extractChatResponse(lastAssistant.content);
-    if (!response) {
-      processedChatMessageIdsRef.current.add(lastAssistant.id);
-      return;
-    }
-    processedChatMessageIdsRef.current.add(lastAssistant.id);
-    void createTypedNodesFromText(response);
-  }, [aiMessages, isAiLoading, createTypedNodesFromText]);
-
-  useEffect(() => {
-    if (!showMoreActions) return;
-    const handleClick = (event: MouseEvent) => {
-      const target = event.target as HTMLElement | null;
-      if (!target) return;
-      if (target.closest('[data-floating-ai-more]')) return;
-      setShowMoreActions(false);
-    };
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, [showMoreActions]);
+    void handleAssistantMessage(lastAssistant.id, lastAssistant.content);
+  }, [aiMessages, isAiLoading, handleAssistantMessage]);
 
   useEffect(() => {
     return () => {
@@ -760,6 +1232,8 @@ export function FloatingAIBar({
   // Keyboard shortcut
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Do not execute global shortcuts while user is typing.
+      if (isEditableTarget(e.target)) return;
       if ((e.metaKey || e.ctrlKey) && e.key === "k") {
         e.preventDefault();
         onToggle();
@@ -772,24 +1246,26 @@ export function FloatingAIBar({
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [isVisible, onToggle]);
 
-  const addInsight = useCallback((insight: Omit<FloatingInsight, "id" | "timestamp">) => {
-    const newInsight: FloatingInsight = {
-      ...insight,
-      id: crypto.randomUUID(),
-      timestamp: new Date(),
-    };
-    setInsights((prev) => [newInsight, ...prev].slice(0, 5));
-  }, []);
+  const handleExplore = useCallback(async (promptOverride?: string) => {
+    if (isLoading && activeAction === "explore") {
+      cancelExplore();
+      return;
+    }
+    const effectivePrompt = (promptOverride ?? command).trim();
+    const autoContextNodes = contextNodes.length > 0
+      ? contextNodes
+      : selectedNode
+        ? [{ id: selectedNode.id, title: selectedNode.title, type: selectedNode.type }]
+        : selectedNodes.slice(0, 3).map((node) => ({ id: node.id, title: node.title, type: node.type }));
 
-
-  const handleExplore = useCallback(async () => {
     console.log("[FloatingAIBar] handleExplore called:", {
       problemId,
-      command: command.trim(),
-      hasCommand: !!command.trim(),
+      command: effectivePrompt,
+      hasCommand: !!effectivePrompt,
       chatMessagesLength: chatMessages.length,
       contextNodesLength: contextNodes.length,
-      shouldProceed: !!(command.trim() || chatMessages.length > 0 || contextNodes.length > 0)
+      effectiveContextNodesLength: autoContextNodes.length,
+      shouldProceed: !!(effectivePrompt || chatMessages.length > 0 || autoContextNodes.length > 0),
     });
 
     if (!problemId) {
@@ -797,7 +1273,21 @@ export function FloatingAIBar({
       return;
     }
     
-    if (!command.trim() && chatMessages.length === 0 && contextNodes.length === 0) {
+    const hasMeaningfulPrompt = hasMeaningfulCanvasPrompt(effectivePrompt);
+    if (
+      !hasMeaningfulPrompt &&
+      chatMessages.length === 0 &&
+      autoContextNodes.length === 0
+    ) {
+      addInsight({
+        type: "insight",
+        title: "Prompt muy corto",
+        content: "Escribe una petición un poco más concreta o selecciona un nodo.",
+      });
+      return;
+    }
+
+    if (!effectivePrompt && chatMessages.length === 0 && autoContextNodes.length === 0) {
       console.warn("[FloatingAIBar] Cannot explore: no command, no chat messages, and no context nodes");
       addInsight({
         type: "insight",
@@ -807,6 +1297,9 @@ export function FloatingAIBar({
       return;
     }
 
+    const runToken = ++exploreRunTokenRef.current;
+    const isStaleRun = () => runToken !== exploreRunTokenRef.current;
+
     setIsLoading(true);
     setActiveAction("explore");
 
@@ -815,8 +1308,8 @@ export function FloatingAIBar({
 
       // Build rich context including node content + chat
       let contextStr = "";
-      if (contextNodes.length > 0) {
-        const contextDetails = contextNodes.map(n => {
+      if (autoContextNodes.length > 0) {
+        const contextDetails = autoContextNodes.map(n => {
           const fullNode = selectedNode?.id === n.id ? selectedNode : selectedNodes.find(sn => sn.id === n.id);
           const content = fullNode?.content
             ? isImageContent(fullNode.content)
@@ -828,25 +1321,46 @@ export function FloatingAIBar({
         contextStr = `Context nodes:\n${contextDetails}\n\n`;
       }
       const chatContext = buildChatContext(chatMessages);
-      const fullContext = [contextStr, chatContext, command.trim()].filter(Boolean).join("\n\n");
+      const fullContext = [contextStr, chatContext, effectivePrompt].filter(Boolean).join("\n\n");
 
-      console.log("[FloatingAIBar] Calling exploreContext API...");
-      const result = await exploreContext({
+      console.log("[FloatingAIBar] Calling canvas router API...");
+      const result = await routeCanvasIdeas({
         problem_id: problemId,
+        prompt: effectivePrompt,
         context: fullContext,
         max_iterations: 3,
+        include_critique: true,
       });
+      if (isStaleRun()) return;
       
-      console.log("[FloatingAIBar] exploreContext result:", {
+      console.log("[FloatingAIBar] canvas router result:", {
+        route: result.route,
+        agents: result.agents_used,
         proposalsCount: result.proposals?.length,
         runId: result.run_id,
-        hasDiagrams: result.proposals?.some((p: any) => p.diagram)
+        hasDiagrams: result.proposals?.some((proposal) => Boolean((proposal as { diagram?: DiagramSpec }).diagram)),
       });
       
       const runId = result.run_id;
 
+      if (result.insight) {
+        addInsight({
+          type: "insight",
+          title: "Router",
+          content: `${result.insight} (${result.route})`,
+        });
+      }
+
       const baseX = selectedNode?.x ?? 400;
       const baseY = selectedNode?.y ?? 300;
+      const anchor = getOrderedPlacementAnchor(allNodes, baseX, baseY, {
+        xOffset: 260,
+        yOffset: 180,
+        laneTolerance: 640,
+        laneGap: 260,
+      });
+      const orderedBaseX = anchor.x;
+      let proposalCursorY = anchor.y;
       const dependencyIds = contextNodes.length > 0
         ? contextNodes.map((n) => n.id)
         : selectedNode
@@ -866,6 +1380,7 @@ export function FloatingAIBar({
       console.log(`[FloatingAIBar] Processing ${result.proposals.length} proposals...`);
       
       for (let index = 0; index < result.proposals.length; index += 1) {
+        if (isStaleRun()) break;
         const proposal = result.proposals[index];
         
         console.log(`[FloatingAIBar] Processing proposal ${index + 1}:`, {
@@ -896,8 +1411,10 @@ export function FloatingAIBar({
             nodes: diagram.nodes.map(n => ({ id: n.id, type: n.type, title: n.title }))
           });
           
-          const diagramBaseY = baseY + index * 650; // Increased from 420 for better separation between proposals
-          const positions = layoutDiagram(diagram.nodes, diagram.edges || [], baseX, diagramBaseY);
+          const diagramBaseX = orderedBaseX;
+          const diagramBaseY = proposalCursorY;
+          const positions = layoutDiagram(diagram.nodes, diagram.edges || [], diagramBaseX, diagramBaseY);
+          const diagramBounds = getDiagramBounds(positions);
           const incomingCounts = new Map<string, number>();
 
           diagram.nodes.forEach((node) => {
@@ -917,12 +1434,19 @@ export function FloatingAIBar({
 
               // Create all diagram nodes
               for (const node of diagram.nodes) {
-                const position = positions[node.id] || { x: baseX, y: diagramBaseY };
+                const position = positions[node.id] || { x: diagramBaseX, y: diagramBaseY };
                 const baseDeps = (incomingCounts.get(node.id) || 0) === 0 ? dependencyIds : [];
-                const nodeContent = node.content || proposal.content || node.title;
+                const rawNodeContent = node.content || proposal.content || node.title;
+                const normalizedComputation = node.type === "COMPUTATION"
+                  ? ensurePythonComputation(rawNodeContent)
+                  : null;
+                const finalType = node.type === "COMPUTATION" && !normalizedComputation ? "NOTE" : node.type;
+                const nodeContent = finalType === "COMPUTATION"
+                  ? (normalizedComputation || "# TODO: write python code")
+                  : rawNodeContent;
 
                 const created = await onCreateNode({
-                  type: node.type,
+                  type: finalType,
                   title: node.title,
                   content: nodeContent,
                   formula: node.formula,
@@ -980,8 +1504,8 @@ export function FloatingAIBar({
                   type: "NOTE",
                   title: explanationTitle,
                   content: `**Reasoning**\n\n${proposal.reasoning}`,
-                  x: baseX + 320,
-                  y: diagramBaseY + 240,
+                  x: diagramBounds.maxX + 320,
+                  y: diagramBounds.minY,
                   dependencies: explanationDeps,
                   authors: [AI_AUTHOR],
                   source: buildAISource(runId),
@@ -1005,13 +1529,13 @@ export function FloatingAIBar({
             }
           );
 
+          proposalCursorY = Math.max(proposalCursorY + 360, diagramBounds.maxY + 420);
+
           continue;
         }
 
-        const angle = ((index - (result.proposals.length - 1) / 2) * 45) * (Math.PI / 180);
-        const distance = 300;
-        const nodeX = baseX + Math.sin(angle) * distance;
-        const nodeY = baseY + distance * 0.7;
+        const nodeX = orderedBaseX;
+        const nodeY = proposalCursorY + 20;
         const confidencePercent = Math.round(proposal.score * 100);
         const nodeContent = `**Confidence: ${confidencePercent}%**\n\n${proposal.content}\n\n---\n*Reasoning: ${proposal.reasoning}*`;
 
@@ -1021,10 +1545,18 @@ export function FloatingAIBar({
         await queueCanvasOperation(
           `create-single-node-${proposal.content.slice(0, 30)}`,
           async () => {
+            if (isStaleRun()) return undefined;
+            const inferredType = inferNodeTypeFromText(`${proposal.content}\n${proposal.reasoning || ""}`);
+            const normalizedComputation = inferredType === "COMPUTATION"
+              ? ensurePythonComputation(`${proposal.content}\n${proposal.reasoning || ""}`)
+              : null;
+            const finalType = inferredType === "COMPUTATION" && !normalizedComputation ? "NOTE" : inferredType;
             const created = await onCreateNode({
-              type: inferNodeTypeFromText(`${proposal.content}\n${proposal.reasoning || ""}`),
+              type: finalType,
               title: deriveGroupTitle(proposal.content, "Proposal"),
-              content: nodeContent,
+              content: finalType === "COMPUTATION"
+                ? (normalizedComputation || "# TODO: write python code")
+                : nodeContent,
               x: nodeX,
               y: nodeY,
               dependencies: dependencyIds,
@@ -1038,8 +1570,8 @@ export function FloatingAIBar({
                 type: "NOTE",
                 title: explanationTitle,
                 content: `**Reasoning**\n\n${proposal.reasoning}`,
-                x: nodeX + 240,
-                y: nodeY + 160,
+                x: nodeX + 360,
+                y: nodeY,
                 dependencies: [created.id],
                 authors: [AI_AUTHOR],
                 source: buildAISource(runId),
@@ -1067,6 +1599,8 @@ export function FloatingAIBar({
             },
           }
         );
+
+        proposalCursorY += 420;
       }
 
       setCommand("");
@@ -1075,6 +1609,7 @@ export function FloatingAIBar({
       
       console.log("[FloatingAIBar] ✅ Exploration completed successfully");
     } catch (err) {
+      if (isStaleRun()) return;
       console.error("[FloatingAIBar] ❌ Exploration failed:", err);
       addInsight({
         type: "insight",
@@ -1082,23 +1617,107 @@ export function FloatingAIBar({
         content: err instanceof Error ? err.message : "Exploration failed",
       });
     } finally {
-      setIsLoading(false);
-      setActiveAction(null);
+      if (!isStaleRun()) {
+        setIsLoading(false);
+        setActiveAction(null);
+      }
     }
-  }, [command, problemId, contextNodes, selectedNode, selectedNodes, chatMessages, addInsight, onCreateNode, onUpdateNode, onCreateBlock]);
+  }, [command, problemId, contextNodes, selectedNode, selectedNodes, chatMessages, addInsight, onCreateNode, onUpdateNode, onCreateBlock, allNodes, isLoading, activeAction, cancelExplore]);
 
   const handleChatSend = useCallback(async () => {
-    const trimmed = command.trim();
-    if (!trimmed || !problemId || isAiLoading) return;
+    if (!problemId || isAiLoading) return;
+    let trimmed = command.trim();
+    let mode = activeSlashMode;
 
+    if (trimmed.startsWith("/")) {
+      const slash = parseSlashCommand(trimmed);
+      if (slash.hasDirective && !slash.mode) {
+        addInsight({
+          type: "insight",
+          title: "Unknown command",
+          content: "Use /canvas, /formalize, /verify, /critic, /compute, /strategist o /socratic.",
+        });
+        return;
+      }
+      if (slash.mode) {
+        mode = slash.mode;
+        setActiveSlashMode(slash.mode);
+        trimmed = slash.text;
+        setCommand(slash.text);
+        if (!trimmed) return;
+      }
+    }
+
+    const runMode = async (selectedMode: SlashMode, inputText: string) => {
+      if (selectedMode === "canvas" || selectedMode === "strategist" || selectedMode === "socratic") {
+        await handleExplore(buildExplorePromptForMode(selectedMode, inputText));
+        return;
+      }
+      if (selectedMode === "formalize") {
+        if (!leanModeRef.current) {
+          addInsight({
+            type: "insight",
+            title: "Formalize unavailable",
+            content: "No pude iniciar formalización en este momento.",
+          });
+          return;
+        }
+        await leanModeRef.current(inputText);
+        return;
+      }
+      if (selectedMode === "verify") {
+        if (!verifyModeRef.current) {
+          addInsight({ type: "insight", title: "Verify unavailable", content: "Verify mode is not ready yet." });
+          return;
+        }
+        await verifyModeRef.current(inputText);
+        return;
+      }
+      if (selectedMode === "critic") {
+        if (!criticModeRef.current) {
+          addInsight({ type: "insight", title: "Critic unavailable", content: "Critic mode is not ready yet." });
+          return;
+        }
+        await criticModeRef.current(inputText);
+        return;
+      }
+      if (selectedMode === "compute") {
+        if (!computeModeRef.current) {
+          addInsight({ type: "insight", title: "Compute unavailable", content: "Compute mode is not ready yet." });
+          return;
+        }
+        await computeModeRef.current(inputText);
+      }
+    };
+
+    if (mode) {
+      await runMode(mode, trimmed);
+      return;
+    }
+
+    const formalizePrompt = isFormalizeDirectiveText(trimmed) ? stripFormalizeDirectiveText(trimmed) : null;
+    if (formalizePrompt !== null) {
+      setActiveSlashMode("formalize");
+      if (!leanModeRef.current) {
+        addInsight({
+          type: "insight",
+          title: "Formalize unavailable",
+          content: "No pude iniciar formalización en este momento.",
+        });
+        return;
+      }
+      await leanModeRef.current(formalizePrompt);
+      return;
+    }
+
+    if (!trimmed) return;
     setCommand("");
-    
-    // Use AI SDK streaming instead of backend worker
+
     await appendAiMessage({
       role: "user",
       content: trimmed,
     });
-  }, [command, problemId, isAiLoading, appendAiMessage]);
+  }, [problemId, isAiLoading, command, activeSlashMode, addInsight, handleExplore, appendAiMessage]);
 
   const handleUseChatInExplore = useCallback(async (content: string) => {
     const trimmed = content.trim();
@@ -1110,13 +1729,34 @@ export function FloatingAIBar({
     setIsLoading(true);
     setActiveAction("explore");
     try {
-      const result = await exploreContext({
+      const contextSummary = contextNodes.length > 0
+        ? `Context nodes:\n${contextNodes.map((node) => `- ${node.title} (${node.type})`).join("\n")}`
+        : "";
+      const result = await routeCanvasIdeas({
         problem_id: problemId,
         prompt: trimmed,
-        context_nodes: contextNodes.map((node) => node.id),
+        context: [contextSummary, trimmed].filter(Boolean).join("\n\n"),
+        max_iterations: 3,
+        include_critique: true,
       });
       const explorationRunId = result?.run_id || undefined;
       if (result?.proposals?.length) {
+        if (result.insight) {
+          addInsight({
+            type: "insight",
+            title: "Router",
+            content: `${result.insight} (${result.route})`,
+          });
+        }
+        const { baseX, baseY, dependencyIds } = getStartContext();
+        const anchor = getOrderedPlacementAnchor(allNodes, baseX, baseY, {
+          xOffset: 260,
+          yOffset: 180,
+          laneTolerance: 560,
+          laneGap: 220,
+        });
+        let proposalY = anchor.y;
+
         addInsight({
           type: "insight",
           title: "Exploration Draft",
@@ -1130,13 +1770,14 @@ export function FloatingAIBar({
                 type: inferNodeTypeFromText(`${proposal.content}\n${proposal.reasoning || ""}`),
                 title: deriveGroupTitle(proposal.content, "Proposal"),
                 content: proposal.content,
-                x: (selectedNode?.x ?? 400) + 220,
-                y: (selectedNode?.y ?? 300) + 180,
-                dependencies: contextNodes.map((node) => node.id),
+                x: anchor.x,
+                y: proposalY,
+                dependencies: dependencyIds,
                 authors: [AI_AUTHOR],
                 source: buildAISource(explorationRunId),
               })
             );
+            proposalY += 240;
           } catch (err) {
             console.error("Failed to create exploration node", err);
           }
@@ -1161,12 +1802,13 @@ export function FloatingAIBar({
     }
   }, [
     addInsight,
+    allNodes,
     contextNodes,
+    getStartContext,
     isLoading,
     isPipelineRunning,
     onCreateNode,
     problemId,
-    selectedNode,
   ]);
 
   const handleQuickInsight = useCallback(async () => {
@@ -1213,7 +1855,7 @@ export function FloatingAIBar({
 
       if (onCreateNode) {
         await onCreateNode({
-          type: "LEMMA",
+          type: "FORMAL_TEST",
           title: leanTitle.slice(0, 80),
           content: `Lean 4 code for ${primaryNode?.title || "this step"}:\n\n\`\`\`lean\n${result.lean_code}\n\`\`\``,
           leanCode: result.lean_code,
@@ -1310,6 +1952,376 @@ export function FloatingAIBar({
       setActiveAction(null);
     }
   }, [currentLeanCode, problemId, addInsight, onCreateNode, onUpdateNode, getStartContext]);
+
+  const handleVerifyMode = useCallback(async (promptOverride?: string) => {
+    const explicitPrompt = (promptOverride || "").trim();
+    if (explicitPrompt) {
+      if (!leanModeRef.current) {
+        addInsight({
+          type: "insight",
+          title: "Verify unavailable",
+          content: "No pude iniciar la verificacion en este momento.",
+        });
+        return;
+      }
+      await leanModeRef.current(explicitPrompt);
+      return;
+    }
+
+    if (currentLeanCode) {
+      await handleVerify();
+      return;
+    }
+
+    if (!leanModeRef.current) {
+      addInsight({
+        type: "insight",
+        title: "Verify needs input",
+        content: "Provide a statement or select a node to verify.",
+      });
+      return;
+    }
+    await leanModeRef.current();
+  }, [addInsight, currentLeanCode, handleVerify]);
+
+  const handleLeanMode = useCallback(async (promptOverride?: string) => {
+    if (!problemId) return;
+
+    const { primaryNode, dependencyIds, baseX, baseY } = getStartContext();
+    const explicitPrompt = (promptOverride ?? stripFormalizeDirectiveText(command.trim())).trim();
+    const sourceText = explicitPrompt || [
+      primaryNode?.title ? `Title: ${primaryNode.title}` : "",
+      primaryNode?.content ? `Content:\n${primaryNode.content}` : "",
+    ].filter(Boolean).join("\n\n");
+
+    if (!sourceText.trim()) {
+      addInsight({
+        type: "insight",
+        title: "Lean mode needs input",
+        content: "Select a node or write what you want to formalize.",
+      });
+      return;
+    }
+
+    setIsLoading(true);
+    setActiveAction("lean");
+    setVerificationResult(null);
+
+    try {
+      const formalization = await formalizeText({
+        problem_id: problemId,
+        text: sourceText,
+      });
+      setCurrentLeanCode(formalization.lean_code);
+
+      let formalNodeId: string | undefined;
+      if (onCreateNode) {
+        const created = await onCreateNode({
+          type: "FORMAL_TEST",
+          title: primaryNode ? `Formal test: ${primaryNode.title}` : "Formal Lean test",
+          content: `\`\`\`lean\n${formalization.lean_code}\n\`\`\``,
+          leanCode: formalization.lean_code,
+          x: baseX + 260,
+          y: baseY + 140,
+          dependencies: dependencyIds,
+          authors: [AI_AUTHOR],
+          source: buildAISource(formalization.run_id),
+        });
+        if (created && typeof created === "object" && "id" in created && created.id) {
+          formalNodeId = created.id;
+        }
+      }
+
+      const verification = await verifyLeanCode({
+        problem_id: problemId,
+        lean_code: formalization.lean_code,
+      });
+      setVerificationResult({ success: verification.success, log: verification.log });
+
+      const resultLog = verification.log || verification.error || "No verification log";
+      const verificationDeps = Array.from(
+        new Set(
+          [formalNodeId, primaryNode?.id, ...dependencyIds].filter((id): id is string => Boolean(id))
+        )
+      );
+
+      if (onCreateNode) {
+        await onCreateNode({
+          type: "NOTE",
+          title: verification.success ? "Lean verification passed" : "Lean verification failed",
+          content: `**Result:** ${verification.success ? "PASS" : "FAIL"}\n\n\`\`\`text\n${resultLog}\n\`\`\``,
+          leanCode: formalization.lean_code,
+          x: baseX + 300,
+          y: baseY + 330,
+          dependencies: verificationDeps,
+          authors: [AI_AUTHOR],
+          source: buildAISource(verification.run_id),
+        });
+      }
+
+      if (onUpdateNode && primaryNode?.id) {
+        onUpdateNode(primaryNode.id, {
+          leanCode: formalization.lean_code,
+          status: verification.success ? "VERIFIED" : "PROPOSED",
+          verification: {
+            method: "lean4",
+            logs: resultLog,
+            status: verification.success ? "pass" : "fail",
+          },
+        });
+      }
+
+      if (onUpdateNode && formalNodeId) {
+        onUpdateNode(formalNodeId, {
+          status: verification.success ? "VERIFIED" : "PROPOSED",
+          verification: {
+            method: "lean4",
+            logs: resultLog,
+            status: verification.success ? "pass" : "fail",
+          },
+        });
+      }
+
+      addInsight({
+        type: "code",
+        title: verification.success ? "Lean mode complete" : "Lean mode completed with issues",
+        content: verification.success
+          ? "Formalization and verification finished successfully."
+          : resultLog.slice(0, 300),
+        runId: verification.run_id,
+      });
+      setCommand("");
+    } catch (err) {
+      addInsight({
+        type: "insight",
+        title: "Lean mode error",
+        content: err instanceof Error ? err.message : "Lean mode failed",
+      });
+    } finally {
+      setIsLoading(false);
+      setActiveAction(null);
+    }
+  }, [problemId, getStartContext, command, addInsight, onCreateNode, onUpdateNode]);
+
+  useEffect(() => {
+    leanModeRef.current = handleLeanMode;
+  }, [handleLeanMode]);
+
+  const handleComputeMode = useCallback(async (promptOverride?: string) => {
+    if (!problemId) return;
+
+    const { primaryNode, dependencyIds, baseX, baseY } = getStartContext();
+    const inputCode = (promptOverride ?? command).trim();
+    const normalizedInputCode = inputCode
+      ? ensurePythonComputation(inputCode)
+      : "";
+    let targetNodeId: string | undefined = isComputationNode(primaryNode) ? primaryNode?.id : undefined;
+    let baseDependencies = dependencyIds;
+
+    if (!targetNodeId) {
+      if (!inputCode) {
+        addInsight({
+          type: "insight",
+          title: "Compute mode needs code",
+          content: "Select a COMPUTATION node or write Python code in the input.",
+        });
+        return;
+      }
+      if (!normalizedInputCode) {
+        addInsight({
+          type: "insight",
+          title: "Compute mode expects Python",
+          content: "Escribe codigo Python ejecutable en lugar de texto descriptivo.",
+        });
+        return;
+      }
+      if (!onCreateNode) {
+        addInsight({
+          type: "insight",
+          title: "Cannot create computation node",
+          content: "Computation requires node creation support in this canvas view.",
+        });
+        return;
+      }
+
+      const created = await onCreateNode({
+        type: "COMPUTATION",
+        title: deriveGroupTitle(inputCode, "Computation"),
+        content: normalizedInputCode,
+        x: baseX + 220,
+        y: baseY + 140,
+        dependencies: dependencyIds,
+        authors: [AI_AUTHOR],
+      });
+      if (created && typeof created === "object" && "id" in created && created.id) {
+        targetNodeId = created.id;
+        baseDependencies = Array.from(new Set([created.id, ...dependencyIds]));
+      }
+    }
+
+    if (!targetNodeId) {
+      addInsight({
+        type: "insight",
+        title: "Compute mode unavailable",
+        content: "Unable to resolve a computation node for execution.",
+      });
+      return;
+    }
+
+    setIsLoading(true);
+    setActiveAction("compute");
+    try {
+      if (inputCode && !normalizedInputCode) {
+        addInsight({
+          type: "insight",
+          title: "Compute mode expects Python",
+          content: "Escribe codigo Python ejecutable en lugar de texto descriptivo.",
+        });
+        return;
+      }
+      const execution = await executeComputationNode(problemId, targetNodeId, {
+        code: normalizedInputCode || undefined,
+      });
+
+      const combinedLog = [execution.stdout, execution.stderr].filter(Boolean).join("\n").trim();
+      if (onUpdateNode) {
+        onUpdateNode(targetNodeId, {
+          status: execution.success ? "VERIFIED" : "PROPOSED",
+          verification: {
+            method: "python",
+            logs: combinedLog || execution.error || "",
+            status: execution.success ? "pass" : "fail",
+          },
+        });
+      }
+
+      if (onCreateNode) {
+        const previewStdout = execution.stdout || "(no stdout)";
+        const previewStderr = execution.stderr || "(no stderr)";
+        await onCreateNode({
+          type: "NOTE",
+          title: execution.success ? "Computation result" : "Computation error",
+          content: [
+            `**Success:** ${execution.success ? "yes" : "no"}`,
+            `**Duration:** ${execution.duration_ms} ms`,
+            "",
+            "**Executed code**",
+            "```python",
+            execution.executed_code,
+            "```",
+            "",
+            "**Stdout**",
+            "```text",
+            previewStdout,
+            "```",
+            "",
+            "**Stderr**",
+            "```text",
+            previewStderr,
+            "```",
+          ].join("\n"),
+          x: baseX + 320,
+          y: baseY + 300,
+          dependencies: Array.from(new Set([targetNodeId, ...baseDependencies])),
+          authors: [AI_AUTHOR],
+        });
+      }
+
+      addInsight({
+        type: "insight",
+        title: execution.success ? "Compute mode complete" : "Compute mode failed",
+        content: execution.success
+          ? (execution.stdout || "Execution finished without stdout.").slice(0, 300)
+          : (execution.error || execution.stderr || "Execution failed").slice(0, 300),
+      });
+      setCommand("");
+    } catch (err) {
+      addInsight({
+        type: "insight",
+        title: "Compute mode error",
+        content: err instanceof Error ? err.message : "Computation failed",
+      });
+    } finally {
+      setIsLoading(false);
+      setActiveAction(null);
+    }
+  }, [problemId, getStartContext, command, onCreateNode, onUpdateNode, addInsight]);
+
+  useEffect(() => {
+    verifyModeRef.current = handleVerifyMode;
+  }, [handleVerifyMode]);
+
+  useEffect(() => {
+    computeModeRef.current = handleComputeMode;
+  }, [handleComputeMode]);
+
+  const handleCriticMode = useCallback(async (promptOverride?: string) => {
+    if (!problemId) return;
+    const { primaryNode, dependencyIds, baseX, baseY } = getStartContext();
+    const explicitPrompt = (promptOverride || "").trim();
+    const targetProposal = explicitPrompt || [
+      primaryNode?.title ? `Title: ${primaryNode.title}` : "",
+      primaryNode?.content ? `Content:\n${primaryNode.content}` : "",
+    ].filter(Boolean).join("\n\n");
+
+    if (!targetProposal.trim()) {
+      addInsight({
+        type: "insight",
+        title: "Critic needs input",
+        content: "Write a claim/proof sketch or select a node first.",
+      });
+      return;
+    }
+
+    setIsLoading(true);
+    setActiveAction("critic");
+    try {
+      const critique = await critiqueProposal({
+        problem_id: problemId,
+        proposal: targetProposal,
+      });
+
+      if (onCreateNode) {
+        await onCreateNode({
+          type: "NOTE",
+          title: `Critique: ${deriveGroupTitle(targetProposal, "Proposal")}`,
+          content: [
+            `**Score:** ${(critique.score * 100).toFixed(0)}%`,
+            "",
+            "**Feedback**",
+            critique.feedback,
+          ].join("\n"),
+          x: baseX + 320,
+          y: baseY + 220,
+          dependencies: dependencyIds,
+          authors: [AI_AUTHOR],
+          source: buildAISource(critique.run_id),
+        });
+      }
+
+      addInsight({
+        type: "insight",
+        title: "Critique complete",
+        content: compactChatText(critique.feedback, 180),
+        score: critique.score,
+        runId: critique.run_id,
+      });
+      setCommand("");
+    } catch (err) {
+      addInsight({
+        type: "insight",
+        title: "Critic mode error",
+        content: err instanceof Error ? err.message : "Critique failed",
+      });
+    } finally {
+      setIsLoading(false);
+      setActiveAction(null);
+    }
+  }, [problemId, getStartContext, addInsight, onCreateNode]);
+
+  useEffect(() => {
+    criticModeRef.current = handleCriticMode;
+  }, [handleCriticMode]);
 
   const handleFullPipeline = useCallback(async () => {
     if (!problemId) return;
@@ -1413,7 +2425,7 @@ export function FloatingAIBar({
         );
 
         const createdLean = await onCreateNode({
-          type: "LEMMA",
+          type: "FORMAL_TEST",
           title: primaryNode ? `Lean for ${primaryNode.title}` : "Lean formalization",
           content: `\`\`\`lean\n${formalization.lean_code}\n\`\`\``,
           leanCode: formalization.lean_code,
@@ -1538,13 +2550,20 @@ export function FloatingAIBar({
 
       // Create nodes from proposals (similar to handleExplore)
       const { baseX, baseY, dependencyIds } = getStartContext();
+      const anchor = getOrderedPlacementAnchor(allNodes, baseX, baseY, {
+        xOffset: 260,
+        yOffset: 180,
+        laneTolerance: 620,
+        laneGap: 240,
+      });
 
       for (let index = 0; index < result.proposals.length; index += 1) {
         const proposal = result.proposals[index];
-        const angle = ((index - (result.proposals.length - 1) / 2) * 45) * (Math.PI / 180);
-        const distance = 300;
-        const nodeX = baseX + Math.sin(angle) * distance;
-        const nodeY = baseY + distance * 0.7;
+        const rowsPerColumn = 5;
+        const column = Math.floor(index / rowsPerColumn);
+        const row = index % rowsPerColumn;
+        const nodeX = anchor.x + column * 360;
+        const nodeY = anchor.y + row * 220;
 
         if (onCreateNode) {
           await onCreateNode({
@@ -1572,7 +2591,7 @@ export function FloatingAIBar({
       setIsLoading(false);
       setActiveAction(null);
     }
-  }, [command, contextNodes, problemId, addInsight, onCreateNode, getStartContext]);
+  }, [command, contextNodes, problemId, addInsight, onCreateNode, getStartContext, allNodes]);
 
   // Generate Story
   const handleGenerateStory = useCallback(async () => {
@@ -1741,6 +2760,54 @@ export function FloatingAIBar({
     })();
   }, [onCreateNode, selectedNode]);
 
+  const inputPlaceholder = useMemo(() => {
+    if (activeSlashModeMeta) {
+      if (activeSlashMode === "canvas") return "Describe the math idea to map into nodes...";
+      if (activeSlashMode === "formalize") return "Write what you want formalized in Lean...";
+      if (activeSlashMode === "verify") return "Optional: statement to verify, or leave blank to verify current Lean...";
+      if (activeSlashMode === "critic") return "Write a claim/proof sketch to critique...";
+      if (activeSlashMode === "compute") return "Write executable Python code...";
+      if (activeSlashMode === "strategist") return "Goal or theorem to plan as a proof roadmap...";
+      if (activeSlashMode === "socratic") return "Ask for short guided hints...";
+      return `${activeSlashModeMeta.title} mode`;
+    }
+    if (contextNodes.length > 0) {
+      return `Insights about ${contextNodes[0].title}... (type / for modes)`;
+    }
+    return "Type / to choose Rho mode";
+  }, [activeSlashMode, activeSlashModeMeta, contextNodes]);
+
+  const activeModeAccent = useMemo(() => getSlashModeAccent(activeSlashMode), [activeSlashMode]);
+
+  const canSubmit = useMemo(() => {
+    if (isAiLoading) return false;
+    const trimmed = command.trim();
+
+    const parsed = parseSlashCommand(trimmed);
+    if (parsed.hasDirective && !parsed.mode) return false;
+    const effectiveMode = parsed.mode || activeSlashMode;
+    const effectiveText = parsed.mode ? parsed.text : trimmed;
+
+    if (effectiveMode === "canvas" || effectiveMode === "strategist" || effectiveMode === "socratic") {
+      return Boolean(effectiveText) || contextNodes.length > 0 || chatMessages.length > 0;
+    }
+    if (effectiveMode === "formalize") {
+      return Boolean(effectiveText) || contextNodes.length > 0 || Boolean(selectedNode) || selectedNodes.length > 0;
+    }
+    if (effectiveMode === "verify") {
+      return Boolean(effectiveText) || Boolean(currentLeanCode) || contextNodes.length > 0 || Boolean(selectedNode);
+    }
+    if (effectiveMode === "critic") {
+      return Boolean(effectiveText) || contextNodes.length > 0 || Boolean(selectedNode);
+    }
+    if (effectiveMode === "compute") {
+      return Boolean(effectiveText) || Boolean(selectedNode && isComputationNode(selectedNode));
+    }
+
+    if (!trimmed) return false;
+    return true;
+  }, [isAiLoading, command, activeSlashMode, contextNodes.length, chatMessages.length, selectedNode, selectedNodes.length, currentLeanCode]);
+
   if (!isVisible && !isMounted) {
     return (
       <>
@@ -1750,8 +2817,8 @@ export function FloatingAIBar({
           onDoubleClick={(e) => e.stopPropagation()}
           className="fixed bottom-24 left-4 z-50 flex items-center gap-2 px-4 py-2.5 bg-white/80 backdrop-blur-xl text-neutral-700 rounded-full shadow-lg shadow-black/5 hover:bg-white hover:shadow-xl transition-all duration-200 group animate-in fade-in slide-in-from-bottom-2 duration-300"
         >
-          <Sparkles className="w-4 h-4 text-neutral-400 group-hover:text-neutral-600 transition-colors" />
-          <span className="text-sm font-medium">AI</span>
+          <Logo size={16} className="opacity-80 group-hover:opacity-100 transition-opacity" />
+          <span className="text-sm font-medium">Rho</span>
           <kbd className="hidden sm:inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-medium text-neutral-400">
             ⌘K
           </kbd>
@@ -1817,6 +2884,10 @@ export function FloatingAIBar({
                   const content = msg.content;
                   const thinkingBlocks = content.match(/<thinking>([\s\S]*?)<\/thinking>/g) || [];
                   const responseText = content.replace(/<thinking>[\s\S]*?<\/thinking>/g, "").trim();
+                  const createdNodes = assistantNodeCounts[msg.id] || 0;
+                  const compactResponse = createdNodes > 0
+                    ? `Creé ${createdNodes} nodo${createdNodes === 1 ? "" : "s"} en el canvas.`
+                    : compactChatText(responseText);
                   
                   return (
                     <div key={msg.id} className="flex flex-col gap-2">
@@ -1845,7 +2916,7 @@ export function FloatingAIBar({
                           <div className="max-w-[85%] rounded-xl px-3 py-2 text-xs leading-relaxed bg-neutral-50 border border-neutral-200 text-neutral-700 whitespace-pre-wrap">
                             <div className="markdown-content text-xs text-neutral-700">
                               <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
-                                {responseText}
+                                {compactResponse}
                               </ReactMarkdown>
                             </div>
                             <div className="mt-2 flex gap-2">
@@ -1889,7 +2960,7 @@ export function FloatingAIBar({
                         <div className="max-w-[85%] rounded-xl px-3 py-2 text-xs leading-relaxed bg-neutral-50 border border-neutral-200 text-neutral-700 whitespace-pre-wrap">
                           <div className="markdown-content text-xs text-neutral-700">
                             <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
-                              {currentResponse}
+                              {compactChatText(currentResponse, 140)}
                             </ReactMarkdown>
                           </div>
                           <span className="inline-block w-1.5 h-3 bg-neutral-400 animate-pulse ml-0.5" />
@@ -1899,7 +2970,7 @@ export function FloatingAIBar({
                     {!currentThinking && !currentResponse && (
                       <div className="flex items-center gap-2 text-xs text-neutral-400">
                         <Loader2 className="w-3 h-3 animate-spin" />
-                        <span>Iniciando...</span>
+                        <span>Rho iniciando...</span>
                       </div>
                     )}
                   </div>
@@ -1954,190 +3025,157 @@ export function FloatingAIBar({
               >
                 <Plus className="w-3 h-3" />
                 <span className={`w-1.5 h-1.5 rounded-full ${NODE_TYPE_CONFIG[selectedNode.type]?.color.replace("text-", "bg-") || "bg-neutral-400"}`} />
-                <span className="max-w-[120px] truncate">Add "{selectedNode.title}"</span>
+                <span className="max-w-[120px] truncate">Add &quot;{selectedNode.title}&quot;</span>
               </button>
             </div>
           )}
 
           {/* Main Input */}
-          <div className="flex items-center gap-3 px-4 py-3">
-            <Sparkles className="w-5 h-5 text-neutral-400 flex-shrink-0" />
-
-            <input
-              ref={inputRef}
-              type="text"
-              value={command}
-              onChange={(e) => setCommand(e.target.value)}
-              onFocus={() => setIsInputFocused(true)}
-              onBlur={() => setIsInputFocused(false)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  handleChatSend();
-                }
-              }}
-              placeholder={contextNodes.length > 0 ? `Insights about ${contextNodes[0].title}...` : "Insights..."}
-              className="flex-1 text-sm bg-transparent outline-none border-none ring-0 focus:outline-none focus:ring-0 focus:border-none placeholder:text-neutral-400 text-neutral-800"
-              disabled={isAiLoading}
-              autoFocus
-            />
-
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              multiple
-              className="hidden"
-              onChange={handleFileChange}
-            />
-
-            <div className="flex items-center gap-0.5">
-              <button
-                onClick={handleImageAttach}
-                className="p-2 text-neutral-400 hover:text-neutral-600 rounded-full transition-colors"
-                title="Attach image"
-              >
-                <ImageIcon className="w-4 h-4" />
-              </button>
-
-              {isAiLoading ? (
-                <div className="p-2">
-                  <Loader2 className="w-4 h-4 text-neutral-400 animate-spin" />
+          <div className="border-t border-neutral-100/90">
+            {showSlashModePicker && (
+              <div className="px-4 pt-3">
+                <div className="rounded-xl border border-neutral-200 bg-white shadow-sm">
+                  {slashModeOptions.map((option, index) => {
+                    const ModeIcon = getSlashModeIcon(option.id);
+                    const active = index === slashMenuIndex;
+                    return (
+                      <button
+                        key={option.id}
+                        type="button"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => applySlashMode(option.id)}
+                        className={`w-full flex items-center justify-between px-3 py-2 text-left transition-colors ${
+                          active ? "bg-neutral-900 text-white" : "text-neutral-700 hover:bg-neutral-50"
+                        }`}
+                      >
+                        <span className="flex items-center gap-2">
+                          <ModeIcon className="w-3.5 h-3.5" />
+                          <span className="text-xs font-semibold">{option.label}</span>
+                        </span>
+                        <span className={`text-[11px] ${active ? "text-neutral-300" : "text-neutral-500"}`}>
+                          {option.description}
+                        </span>
+                      </button>
+                    );
+                  })}
                 </div>
-              ) : (
+              </div>
+            )}
+
+            <div
+              className={`flex items-center gap-3 px-4 py-3 ${activeModeAccent.panel}`}
+            >
+              <Sparkles className="w-5 h-5 text-neutral-400 flex-shrink-0" />
+
+              {activeSlashModeMeta && (
                 <button
-                  onClick={handleChatSend}
-                  disabled={!command.trim() || isAiLoading}
-                  className="p-2 text-neutral-500 hover:text-neutral-700 rounded-full transition-colors disabled:opacity-30"
+                  type="button"
+                  onClick={clearSlashMode}
+                  className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full border text-xs font-semibold flex-shrink-0 ${activeModeAccent.badge}`}
+                  title="Clear mode"
                 >
-                  <Send className="w-4 h-4" />
+                  {activeSlashModeMeta.label}
+                  <X className="w-3 h-3" />
                 </button>
               )}
 
-              <button
-                onClick={onToggle}
-                className="p-2 text-neutral-400 hover:text-neutral-600 rounded-full transition-colors"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
+              <input
+                ref={inputRef}
+                type="text"
+                value={command}
+                data-no-shortcuts="true"
+                onChange={(e) => handleCommandChange(e.target.value)}
+                onFocus={() => setIsInputFocused(true)}
+                onBlur={() => setIsInputFocused(false)}
+                onKeyDown={(e) => {
+                  if (showSlashModePicker && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+                    e.preventDefault();
+                    setSlashMenuIndex((prev) => {
+                      const delta = e.key === "ArrowDown" ? 1 : -1;
+                      const next = prev + delta;
+                      if (next < 0) return slashModeOptions.length - 1;
+                      if (next >= slashModeOptions.length) return 0;
+                      return next;
+                    });
+                    return;
+                  }
+                  if (showSlashModePicker && (e.key === "Enter" || e.key === "Tab")) {
+                    e.preventDefault();
+                    const nextOption = slashModeOptions[slashMenuIndex] || slashModeOptions[0];
+                    if (nextOption) {
+                      applySlashMode(nextOption.id);
+                    }
+                    return;
+                  }
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    void handleChatSend();
+                  }
+                }}
+                placeholder={inputPlaceholder}
+                className="flex-1 text-sm bg-transparent outline-none border-none ring-0 focus:outline-none focus:ring-0 focus:border-none placeholder:text-neutral-400 text-neutral-800"
+                disabled={isAiLoading}
+                autoFocus
+              />
 
-          {/* Quick Actions - minimal bottom bar */}
-          <div className="flex items-center gap-1 px-4 py-2 bg-neutral-50/50 relative">
-            <QuickActionButton
-              icon={Compass}
-              label="Explore"
-              onClick={handleExplore}
-              disabled={(!command.trim() && aiMessages.length === 0 && contextNodes.length === 0) || isLoading}
-              active={activeAction === "explore"}
-            />
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                className="hidden"
+                onChange={handleFileChange}
+              />
 
-            <QuickActionButton
-              icon={Lightbulb}
-              label="Insight"
-              onClick={handleQuickInsight}
-              disabled={contextNodes.length === 0 || isLoading}
-              active={activeAction === "insight"}
-            />
+              <div className="flex items-center gap-0.5">
+                <button
+                  onClick={handleImageAttach}
+                  className="p-2 text-neutral-400 hover:text-neutral-600 rounded-full transition-colors"
+                  title="Attach image"
+                >
+                  <ImageIcon className="w-4 h-4" />
+                </button>
 
-            <div className="flex-1" />
+                {isAiLoading ? (
+                  <div className="p-2">
+                    <Loader2 className="w-4 h-4 text-neutral-400 animate-spin" />
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => void handleChatSend()}
+                    disabled={!canSubmit}
+                    className="p-2 text-neutral-500 hover:text-neutral-700 rounded-full transition-colors disabled:opacity-30"
+                  >
+                    <Send className="w-4 h-4" />
+                  </button>
+                )}
 
-            <div className="relative" data-floating-ai-more>
-              <button
-                type="button"
-                onClick={() => setShowMoreActions((prev) => !prev)}
-                className={`flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-full transition-colors ${showMoreActions ? "text-neutral-800 bg-neutral-200" : "text-neutral-500 hover:text-neutral-700"}`}
-              >
-                <MoreHorizontal className="w-3 h-3" />
-                More
-              </button>
-
-              {showMoreActions && (
-                <div className="absolute right-0 bottom-9 w-44 rounded-xl border border-neutral-200 bg-white shadow-lg p-2 z-50">
-                  <div className="text-[10px] uppercase tracking-wide text-neutral-400 px-2 py-1">Core</div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowMoreActions(false);
-                      handleFormalize();
-                    }}
-                    disabled={contextNodes.length === 0 || !isOrchestrationAvailable || isLoading}
-                    className="w-full text-left px-2 py-1.5 text-xs rounded-md text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 disabled:opacity-40"
-                  >
-                    Formalize
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowMoreActions(false);
-                      handleVerify();
-                    }}
-                    disabled={!currentLeanCode || !isOrchestrationAvailable || isLoading}
-                    className="w-full text-left px-2 py-1.5 text-xs rounded-md text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 disabled:opacity-40"
-                  >
-                    Verify
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowMoreActions(false);
-                      handleFullPipeline();
-                    }}
-                    disabled={(!command.trim() && contextNodes.length === 0 && chatMessages.length === 0) || !isOrchestrationAvailable || isLoading || isPipelineRunning}
-                    className="w-full text-left px-2 py-1.5 text-xs rounded-md text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 disabled:opacity-40"
-                  >
-                    Pipeline
-                  </button>
-
-                  <div className="mt-2 text-[10px] uppercase tracking-wide text-neutral-400 px-2 py-1">Idea2Paper</div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowMoreActions(false);
-                      handleExploreWithPatterns();
-                    }}
-                    disabled={(!command.trim() && contextNodes.length === 0) || isLoading}
-                    className="w-full text-left px-2 py-1.5 text-xs rounded-md text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 disabled:opacity-40"
-                  >
-                    Patterns
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowMoreActions(false);
-                      handleGenerateStory();
-                    }}
-                    disabled={(!command.trim() && contextNodes.length === 0) || isGeneratingStory}
-                    className="w-full text-left px-2 py-1.5 text-xs rounded-md text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 disabled:opacity-40"
-                  >
-                    Story
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowMoreActions(false);
-                      handleFusionIdeas();
-                    }}
-                    disabled={contextNodes.length < 2 || isLoading}
-                    className="w-full text-left px-2 py-1.5 text-xs rounded-md text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 disabled:opacity-40"
-                  >
-                    Fusion
-                  </button>
-                </div>
-              )}
+                <button
+                  onClick={onToggle}
+                  className="p-2 text-neutral-400 hover:text-neutral-600 rounded-full transition-colors"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
             </div>
 
-            {verificationResult && (
-              <span className={`flex items-center gap-1 text-[10px] ${verificationResult.success ? "text-emerald-600" : "text-red-500"}`}>
-                {verificationResult.success ? <CheckCircle className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
-                {verificationResult.success ? "Verified" : "Failed"}
+            <div className="flex items-center gap-1 px-4 py-2 bg-neutral-50/60 relative">
+              <span className="text-[10px] text-neutral-500">
+                {activeSlashModeMeta ? `${activeSlashModeMeta.title} active` : "Type `/` for Rho modes"}
               </span>
-            )}
+              <div className="flex-1" />
 
-            <span className="text-[10px] text-neutral-400">
-              esc
-            </span>
+              {verificationResult && (
+                <span className={`flex items-center gap-1 text-[10px] ${verificationResult.success ? "text-emerald-600" : "text-red-500"}`}>
+                  {verificationResult.success ? <CheckCircle className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
+                  {verificationResult.success ? "Verified" : "Failed"}
+                </span>
+              )}
+
+              <span className="text-[10px] text-neutral-400">
+                esc
+              </span>
+            </div>
           </div>
         </div>
       </div>
@@ -2279,7 +3317,7 @@ export function FloatingAIBar({
                   </div>
                   {generatedStory.novelty_result.most_similar && (
                     <p className="text-xs text-neutral-600 mt-2">
-                      Most similar: "{generatedStory.novelty_result.most_similar.title}" ({(generatedStory.novelty_result.most_similar.similarity * 100).toFixed(0)}%)
+                      Most similar: &quot;{generatedStory.novelty_result.most_similar.title}&quot; ({(generatedStory.novelty_result.most_similar.similarity * 100).toFixed(0)}%)
                     </p>
                   )}
                 </section>
@@ -2320,34 +3358,6 @@ export function FloatingAIBar({
         </div>
       )}
     </>
-  );
-}
-
-interface QuickActionButtonProps {
-  icon: React.ComponentType<{ className?: string }>;
-  label: string;
-  onClick: () => void;
-  disabled?: boolean;
-  active?: boolean;
-}
-
-function QuickActionButton({ icon: Icon, label, onClick, disabled, active }: QuickActionButtonProps) {
-  const getClassName = () => {
-    const base = "flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-full transition-colors ";
-    if (active) return base + "text-neutral-800 bg-neutral-200";
-    if (disabled) return base + "text-neutral-300 cursor-not-allowed";
-    return base + "text-neutral-500 hover:text-neutral-700";
-  };
-
-  return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      className={getClassName()}
-    >
-      <Icon className="w-3 h-3" />
-      {label}
-    </button>
   );
 }
 

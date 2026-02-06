@@ -2,7 +2,6 @@
 
 import { useState, useCallback, useEffect, useRef } from "react";
 import {
-  Bot,
   Sparkles,
   Users,
   ChevronRight,
@@ -24,6 +23,7 @@ import {
   XCircle,
   Compass,
 } from "lucide-react";
+import { Logo } from "@/components/Logo";
 import { CanvasNode, AgentSuggestion, AgentActivity, NODE_TYPE_CONFIG } from "./types";
 import {
   getOrchestrationStatus,
@@ -303,9 +303,9 @@ export function AgentIntelligencePanel({
       <button
         onClick={onToggle}
         className="absolute right-4 top-4 bg-white border border-neutral-200 rounded-lg shadow-sm p-3 hover:bg-neutral-50 transition-colors z-40"
-        title="Show Agent Intelligence"
+        title="Show Rho Intelligence"
       >
-        <Bot className="w-5 h-5 text-indigo-600" />
+        <Logo size={20} />
         {proposals.length > 0 && (
           <span className="absolute -top-1 -right-1 w-4 h-4 bg-indigo-600 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
             {proposals.length}
@@ -322,10 +322,10 @@ export function AgentIntelligencePanel({
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 bg-indigo-100 rounded-lg flex items-center justify-center">
-              <Bot className="w-4 h-4 text-indigo-600" />
+              <Logo size={16} />
             </div>
             <div>
-              <h3 className="text-sm font-semibold text-neutral-900">AI Orchestrator</h3>
+              <h3 className="text-sm font-semibold text-neutral-900">Rho Orchestrator</h3>
               <p className="text-[10px] text-neutral-500">
                 {isOrchestrationAvailable ? "Connected" : "Unavailable"}
               </p>
@@ -344,13 +344,13 @@ export function AgentIntelligencePanel({
           <div className={`flex items-center gap-2 text-xs ${isOrchestrationAvailable ? "text-emerald-700" : "text-amber-700"}`}>
             {isOrchestrationAvailable ? <Zap className="w-3.5 h-3.5" /> : <AlertTriangle className="w-3.5 h-3.5" />}
             <span className="font-medium">
-              {isOrchestrationAvailable ? "AI agents ready" : "Configure GEMINI_API_KEY"}
+              {isOrchestrationAvailable ? "Rho personalities ready" : "Configure GEMINI_API_KEY"}
             </span>
           </div>
           <p className={`text-[10px] mt-1 ${isOrchestrationAvailable ? "text-emerald-600" : "text-amber-600"}`}>
             {isOrchestrationAvailable
-              ? `${AGENT_PROFILES.length} agents + ${collaboratorCount} collaborator${collaboratorCount !== 1 ? "s" : ""}`
-              : "Set environment variable to enable AI"}
+              ? `${AGENT_PROFILES.length} personalities + ${collaboratorCount} collaborator${collaboratorCount !== 1 ? "s" : ""}`
+              : "Set environment variable to enable Rho"}
           </p>
         </div>
       </div>
@@ -358,7 +358,7 @@ export function AgentIntelligencePanel({
       {/* Active Agents */}
       <div className="px-4 py-3 border-b border-neutral-100 shrink-0">
         <h4 className="text-[10px] font-semibold text-neutral-500 uppercase tracking-wider mb-2">
-          Available Agents
+          Available Personalities
         </h4>
         <div className="flex flex-wrap gap-2">
           {AGENT_PROFILES.map((agent) => {
@@ -460,7 +460,7 @@ export function AgentIntelligencePanel({
       <div className="flex-1 overflow-y-auto p-4">
         <div className="flex items-center justify-between mb-3">
           <h4 className="text-[10px] font-semibold text-neutral-500 uppercase tracking-wider">
-            AI Proposals
+            Rho Proposals
           </h4>
           {proposals.length > 0 && (
             <button
@@ -631,7 +631,7 @@ export function AgentIntelligencePanel({
         {isLoading && (
           <div className="py-8 text-center">
             <Loader2 className="w-8 h-8 text-indigo-500 mx-auto mb-2 animate-spin" />
-            <p className="text-sm text-neutral-500">AI is thinking...</p>
+            <p className="text-sm text-neutral-500">Rho is thinking...</p>
           </div>
         )}
       </div>
@@ -690,7 +690,7 @@ export function AgentIntelligencePanel({
         </div>
         <div className="flex items-center justify-between mt-2">
           <span className="text-[9px] text-neutral-400">
-            {isOrchestrationAvailable ? "Powered by Gemini" : "AI unavailable"}
+            {isOrchestrationAvailable ? "Powered by Rho (Gemini)" : "Rho unavailable"}
           </span>
         </div>
       </div>

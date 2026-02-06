@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { useRouter, useParams } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth";
@@ -17,16 +17,19 @@ import { extractPostAttachments } from "@/lib/postAttachments";
 import { DashboardNavbar } from "@/components/layout/DashboardNavbar";
 import { PostAttachmentCard } from "@/components/social";
 import {
-  ChevronDown,
   MessageSquare,
   CheckCircle2,
   MoreHorizontal,
   Send,
   Pin,
   Trash2,
-  Edit2,
   Reply,
+  Bot,
+  Sparkles,
+  WandSparkles,
 } from "lucide-react";
+
+const RHO_MENTION_REGEX = /(?:^|\s)@rho\b/i;
 
 function getInitials(name: string) {
   return name
@@ -51,6 +54,22 @@ function formatRelativeTime(iso: string) {
   return new Date(iso).toLocaleDateString();
 }
 
+function highlightMentions(text: string) {
+  const parts = text.split(/(@[A-Za-z0-9._-]+)/g);
+  return parts.map((part, idx) => {
+    if (!part.startsWith("@")) return <span key={`text-${idx}`}>{part}</span>;
+    const isRho = part.toLowerCase() === "@rho";
+    return (
+      <span
+        key={`mention-${idx}`}
+        className={isRho ? "text-cyan-700 font-semibold" : "text-indigo-700 font-medium"}
+      >
+        {part}
+      </span>
+    );
+  });
+}
+
 export default function DiscussionDetailPage() {
   const { user, isLoading: authLoading } = useAuth();
   const router = useRouter();
@@ -65,6 +84,7 @@ export default function DiscussionDetailPage() {
   const [submitting, setSubmitting] = useState(false);
   const [replyTo, setReplyTo] = useState<string | null>(null);
   const [showMenu, setShowMenu] = useState(false);
+  const [rhoPending, setRhoPending] = useState(false);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -79,7 +99,7 @@ export default function DiscussionDetailPage() {
     try {
       const [discussionData, commentsData] = await Promise.all([
         getDiscussion(discussionId),
-        getComments(discussionId, { limit: 100 }),
+        getComments(discussionId, { limit: 200 }),
       ]);
       setDiscussion(discussionData);
       setComments(commentsData.comments);
@@ -95,23 +115,44 @@ export default function DiscussionDetailPage() {
     loadData();
   }, [loadData]);
 
+  const appendRhoMention = () => {
+    setNewComment((prev) => {
+      const trimmed = prev.trimEnd();
+      if (!trimmed) return "@rho ";
+      if (RHO_MENTION_REGEX.test(trimmed)) return prev;
+      return `${trimmed} @rho `;
+    });
+  };
+
   const handleSubmitComment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newComment.trim() || !discussion) return;
 
+    const content = newComment.trim();
+    const triggersRho = RHO_MENTION_REGEX.test(content);
+
     setSubmitting(true);
+    if (triggersRho) setRhoPending(true);
+
     try {
       const comment = await createComment(discussion.id, {
-        content: newComment.trim(),
+        content,
         parent_id: replyTo || undefined,
       });
       setComments((prev) => [...prev, comment]);
       setNewComment("");
       setReplyTo(null);
+
+      // The backend auto-posts Rho as a threaded reply when @rho is present.
+      if (triggersRho) {
+        const latest = await getComments(discussion.id, { limit: 200 });
+        setComments(latest.comments);
+      }
     } catch (err) {
       console.error("Failed to submit comment", err);
     } finally {
       setSubmitting(false);
+      setRhoPending(false);
     }
   };
 
@@ -153,13 +194,12 @@ export default function DiscussionDetailPage() {
 
   const isAuthor = user && discussion && user.id === discussion.author.id;
 
-  // Build comment tree
-  const rootComments = comments.filter((c) => !c.parent_id);
-  const getChildren = (parentId: string) => comments.filter((c) => c.parent_id === parentId);
+  const rootComments = useMemo(() => comments.filter((c) => !c.parent_id), [comments]);
+  const getChildren = useCallback((parentId: string) => comments.filter((c) => c.parent_id === parentId), [comments]);
 
   if (authLoading || loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-neutral-50">
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-neutral-100 to-white">
         <div className="animate-spin rounded-full h-6 w-6 border-2 border-neutral-900 border-t-transparent" />
       </div>
     );
@@ -169,9 +209,9 @@ export default function DiscussionDetailPage() {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-neutral-50">
         <h1 className="text-xl font-bold text-neutral-900 mb-2">Discussion not found</h1>
-        <p className="text-neutral-500 mb-4">This discussion doesn&apos;t exist or was deleted.</p>
+        <p className="text-neutral-500 mb-4">This discussion does not exist or was deleted.</p>
         <Link href="/discussions" className="text-indigo-600 hover:text-indigo-700 font-medium">
-          ← Back to Discussions
+          Back to Discussions
         </Link>
       </div>
     );
@@ -183,12 +223,13 @@ export default function DiscussionDetailPage() {
     discussion.content
   );
 
-  const renderComment = (comment: Comment, depth: number = 0) => {
+  const renderComment = (comment: Comment, depth = 0) => {
     const children = getChildren(comment.id);
     const isReplying = replyTo === comment.id;
+    const isRho = comment.author.username.toLowerCase() === "rho";
 
     return (
-      <div key={comment.id} className={depth > 0 ? "ml-8 border-l-2 border-neutral-100 pl-4" : ""}>
+      <div key={comment.id} className={depth > 0 ? "ml-6 md:ml-10 border-l border-cyan-100 pl-4" : ""}>
         <div className="py-4">
           <div className="flex items-start gap-3">
             {comment.author.avatar_url ? (
@@ -198,27 +239,38 @@ export default function DiscussionDetailPage() {
                 className="w-8 h-8 rounded-full object-cover flex-shrink-0 border border-neutral-200"
               />
             ) : (
-              <div className="w-8 h-8 rounded-full bg-neutral-100 flex items-center justify-center text-[10px] font-bold text-neutral-600 flex-shrink-0">
-                {getInitials(comment.author.username)}
+              <div
+                className={`w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0 ${
+                  isRho ? "bg-cyan-100 text-cyan-800 border border-cyan-200" : "bg-neutral-100 text-neutral-600"
+                }`}
+              >
+                {isRho ? <Bot className="w-4 h-4" /> : getInitials(comment.author.username)}
               </div>
             )}
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 mb-1">
-                <span className="text-sm font-semibold text-neutral-900">
-                  {comment.author.username}
-                </span>
-                <span className="text-xs text-neutral-400">
-                  {formatRelativeTime(comment.created_at)}
-                </span>
+
+            <div className={`flex-1 min-w-0 rounded-2xl border p-3 ${isRho ? "bg-cyan-50/70 border-cyan-200" : "bg-white border-neutral-200"}`}>
+              <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+                <span className="text-sm font-semibold text-neutral-900">{comment.author.username}</span>
+                {isRho && (
+                  <span className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-cyan-100 text-cyan-800 border border-cyan-200">
+                    <Sparkles className="w-3 h-3" />
+                    AI
+                  </span>
+                )}
+                <span className="text-xs text-neutral-400">{formatRelativeTime(comment.created_at)}</span>
               </div>
-              <p className="text-sm text-neutral-700 whitespace-pre-wrap">{comment.content}</p>
-              <button
-                onClick={() => setReplyTo(isReplying ? null : comment.id)}
-                className="mt-2 text-xs text-neutral-500 hover:text-indigo-600 flex items-center gap-1"
-              >
-                <Reply className="w-3 h-3" />
-                Reply
-              </button>
+
+              <p className="text-sm text-neutral-700 whitespace-pre-wrap">{highlightMentions(comment.content)}</p>
+
+              {!isRho && (
+                <button
+                  onClick={() => setReplyTo(isReplying ? null : comment.id)}
+                  className="mt-2 text-xs text-neutral-500 hover:text-indigo-600 flex items-center gap-1"
+                >
+                  <Reply className="w-3 h-3" />
+                  Reply
+                </button>
+              )}
 
               {isReplying && (
                 <form onSubmit={handleSubmitComment} className="mt-3">
@@ -227,7 +279,7 @@ export default function DiscussionDetailPage() {
                       type="text"
                       value={newComment}
                       onChange={(e) => setNewComment(e.target.value)}
-                      placeholder={`Reply to ${comment.author.username}...`}
+                      placeholder={`Reply to ${comment.author.username}... (mention @rho for AI check)`}
                       className="flex-1 rounded-lg border border-neutral-200 px-3 py-2 text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 bg-white text-neutral-900"
                       autoFocus
                     />
@@ -254,34 +306,34 @@ export default function DiscussionDetailPage() {
             </div>
           </div>
         </div>
+
         {children.map((child) => renderComment(child, depth + 1))}
       </div>
     );
   };
 
   return (
-    <div className="min-h-screen bg-neutral-50 text-neutral-900 flex flex-col">
+    <div className="min-h-screen bg-[radial-gradient(circle_at_top,_#f0f9ff_0%,_#f8fafc_40%,_#ffffff_90%)] text-neutral-900 flex flex-col">
       <DashboardNavbar />
 
-      <div className="flex-1 max-w-3xl mx-auto w-full px-4 py-8">
-        {/* Discussion */}
-        <article className="bg-white rounded-xl border border-neutral-200 overflow-hidden mb-8">
-          <div className="p-6">
-            {/* Header */}
+      <div className="flex-1 max-w-4xl mx-auto w-full px-4 py-8">
+        <article className="bg-white/90 backdrop-blur rounded-2xl border border-neutral-200 overflow-hidden mb-8 shadow-[0_20px_60px_-40px_rgba(0,0,0,0.35)]">
+          <div className="p-6 md:p-7">
             <div className="flex items-start justify-between mb-4">
               <div className="flex items-center gap-2 flex-wrap">
                 {discussion.is_pinned && (
-                  <span className="text-[10px] font-medium px-2 py-0.5 bg-amber-100 text-amber-700 rounded">
+                  <span className="text-[10px] font-medium px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full border border-amber-200">
                     Pinned
                   </span>
                 )}
                 {discussion.is_resolved && (
-                  <span className="flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded">
+                  <span className="flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-full border border-emerald-200">
                     <CheckCircle2 className="w-3 h-3" />
                     Resolved
                   </span>
                 )}
               </div>
+
               {isAuthor && (
                 <div className="relative">
                   <button
@@ -320,10 +372,8 @@ export default function DiscussionDetailPage() {
               )}
             </div>
 
-            {/* Title */}
-            <h1 className="text-xl font-bold text-neutral-900 mb-4">{discussion.title}</h1>
+            <h1 className="text-2xl md:text-3xl font-bold text-neutral-900 mb-4">{discussion.title}</h1>
 
-            {/* Author & Date */}
             <div className="flex items-center gap-3 mb-6">
               {discussion.author.avatar_url ? (
                 <img
@@ -337,16 +387,11 @@ export default function DiscussionDetailPage() {
                 </div>
               )}
               <div>
-                <div className="text-sm font-semibold text-neutral-900">
-                  {discussion.author.username}
-                </div>
-                <div className="text-xs text-neutral-500">
-                  Posted {formatRelativeTime(discussion.created_at)}
-                </div>
+                <div className="text-sm font-semibold text-neutral-900">{discussion.author.username}</div>
+                <div className="text-xs text-neutral-500">Posted {formatRelativeTime(discussion.created_at)}</div>
               </div>
             </div>
 
-            {/* Content */}
             <div className="prose prose-sm max-w-none text-neutral-700 space-y-3">
               {discussionContent && <p className="whitespace-pre-wrap">{discussionContent}</p>}
               {discussionAttachments.length > 0 && (
@@ -364,15 +409,17 @@ export default function DiscussionDetailPage() {
           </div>
         </article>
 
-        {/* Comments Section */}
         <section>
-          <h2 className="text-sm font-semibold text-neutral-900 mb-4">
-            Comments ({comments.length})
-          </h2>
+          <div className="flex items-center justify-between mb-4 gap-4 flex-wrap">
+            <h2 className="text-sm font-semibold text-neutral-900">Comments ({comments.length})</h2>
+            <div className="inline-flex items-center gap-2 rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1.5 text-xs text-cyan-800">
+              <WandSparkles className="w-3.5 h-3.5" />
+              Mention <span className="font-semibold">@rho</span> to ask for an AI truth-check.
+            </div>
+          </div>
 
-          {/* New Comment Form */}
           {!replyTo && (
-            <form onSubmit={handleSubmitComment} className="mb-6">
+            <form onSubmit={handleSubmitComment} className="mb-6 rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm">
               <div className="flex gap-3">
                 {user.avatar_url ? (
                   <img
@@ -385,15 +432,25 @@ export default function DiscussionDetailPage() {
                     {getInitials(user.username)}
                   </div>
                 )}
+
                 <div className="flex-1">
                   <textarea
                     value={newComment}
                     onChange={(e) => setNewComment(e.target.value)}
-                    placeholder="Write a comment..."
+                    placeholder="Write a comment, proof idea, or question..."
                     rows={3}
-                    className="w-full rounded-lg border border-neutral-200 px-3 py-2 text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 resize-none bg-white text-neutral-900"
+                    className="w-full rounded-xl border border-neutral-200 px-3 py-2 text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 resize-none bg-white text-neutral-900"
                   />
-                  <div className="flex justify-end mt-2">
+                  <div className="mt-2 flex items-center justify-between gap-2">
+                    <button
+                      type="button"
+                      onClick={appendRhoMention}
+                      className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border border-cyan-200 bg-cyan-50 text-cyan-800 hover:bg-cyan-100"
+                    >
+                      <Bot className="w-3.5 h-3.5" />
+                      Call @rho
+                    </button>
+
                     <button
                       type="submit"
                       disabled={submitting || !newComment.trim()}
@@ -408,15 +465,21 @@ export default function DiscussionDetailPage() {
             </form>
           )}
 
-          {/* Comments List */}
+          {rhoPending && (
+            <div className="mb-4 rounded-xl border border-cyan-200 bg-cyan-50 px-3 py-2 text-xs text-cyan-800 inline-flex items-center gap-2">
+              <Sparkles className="w-3.5 h-3.5 animate-pulse" />
+              Rho is preparing a reply...
+            </div>
+          )}
+
           {comments.length === 0 ? (
             <div className="bg-white rounded-xl border border-neutral-200 p-8 text-center">
               <MessageSquare className="w-8 h-8 text-neutral-300 mx-auto mb-3" />
-              <p className="text-sm text-neutral-500">No comments yet. Be the first to reply!</p>
+              <p className="text-sm text-neutral-500">No comments yet. Be the first to reply.</p>
             </div>
           ) : (
-            <div className="bg-white rounded-xl border border-neutral-200 divide-y divide-neutral-100">
-              <div className="px-6">{rootComments.map((comment) => renderComment(comment))}</div>
+            <div className="bg-white rounded-2xl border border-neutral-200 divide-y divide-neutral-100 px-4 md:px-6">
+              {rootComments.map((comment) => renderComment(comment))}
             </div>
           )}
         </section>

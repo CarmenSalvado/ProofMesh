@@ -1,6 +1,6 @@
 """
 Story Generator Agent - Generates structured paper stories with templates.
-Based on Idea2Paper's StoryGenerator with Gemini 3.
+Based on Idea2Paper's StoryGenerator with Rho.
 
 The StoryGeneratorAgent creates complete paper narratives from research ideas
 using proven writing templates and patterns. It ensures the user's idea remains

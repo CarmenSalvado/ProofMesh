@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import Link from "next/link";
+import { Logo } from "@/components/Logo";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
 import { getSocialUsers, SocialUser } from "@/lib/api";
@@ -127,9 +128,7 @@ export function DashboardNavbar({ showSearch = true }: DashboardNavbarProps) {
         {/* Logo & Nav Links */}
         <div className="flex items-center gap-6">
           <Link href="/dashboard" className="flex items-center gap-2 group">
-            <div className="w-6 h-6 bg-neutral-900 rounded-md flex items-center justify-center text-white group-hover:bg-indigo-600 transition-colors">
-              <span className="font-[var(--font-math)] italic text-[12px] leading-none logo-rho">&rho;</span>
-            </div>
+            <Logo size={24} className="group-hover:opacity-80 transition-opacity" />
             <span className="text-sm font-bold tracking-tight">ProofMesh</span>
           </Link>
 

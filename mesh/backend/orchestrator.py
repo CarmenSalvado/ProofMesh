@@ -342,7 +342,7 @@ class Orchestrator:
     ) -> Dict:
         """
         Generate a structured paper story from user idea and pattern.
-        Integrates Idea2Paper logic with Gemini 3.
+        Integrates Idea2Paper logic with Rho.
 
         Args:
             user_idea: User's research idea
@@ -418,7 +418,7 @@ class Orchestrator:
     ) -> Dict:
         """
         Review story using enhanced anchored multi-agent critic.
-        Integrates Idea2Paper's anchored review system with Gemini 3.
+        Integrates Idea2Paper's anchored review system with Rho.
 
         Args:
             story: Story dict to review

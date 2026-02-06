@@ -21,6 +21,7 @@ export enum LibraryItemKind {
 	RESOURCE = "resource",
 	IDEA = "idea",
 	CONTENT = "content",
+	FORMAL_TEST = "formal_test",
 	LEMMA = "lemma",
 	CLAIM = "claim",
 	DEFINITION = "definition",

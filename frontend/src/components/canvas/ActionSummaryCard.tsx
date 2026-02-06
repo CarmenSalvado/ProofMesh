@@ -62,6 +62,8 @@ function NodeBadge({ node, onClick }: { node: NodeCreatedSummary; onClick?: () =
     THEOREM: "bg-purple-100 text-purple-700 border-purple-200",
     DEFINITION: "bg-emerald-100 text-emerald-700 border-emerald-200",
     CLAIM: "bg-amber-100 text-amber-700 border-amber-200",
+    COMPUTATION: "bg-violet-100 text-violet-700 border-violet-200",
+    FORMAL_TEST: "bg-sky-100 text-sky-700 border-sky-200",
     NOTE: "bg-neutral-100 text-neutral-600 border-neutral-200",
     RESOURCE: "bg-pink-100 text-pink-700 border-pink-200",
   };

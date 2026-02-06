@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import sys
 import uuid
 from typing import Optional, AsyncGenerator
@@ -66,6 +67,15 @@ class FullPipelineRequest(BaseModel):
     auto_publish: bool = False
 
 
+class CanvasIdeaRouterRequest(BaseModel):
+    problem_id: UUID
+    prompt: str = ""
+    context: str = ""
+    max_iterations: int = Field(default=3, ge=1, le=8)
+    include_critique: bool = True
+    include_formalization: bool = True
+
+
 class ProposalResponse(BaseModel):
     id: str
     content: str
@@ -81,6 +91,28 @@ class ExploreResponse(BaseModel):
     proposals: list[ProposalResponse]
     best_score: float
     total_iterations: int
+
+
+class CanvasIdeaNodeBlueprint(BaseModel):
+    kind: str
+    title: str
+    content: str
+    formula: Optional[str] = None
+    lean_code: Optional[str] = None
+    status: str = "PROPOSED"
+
+
+class CanvasIdeaRouterResponse(BaseModel):
+    run_id: str
+    status: str
+    route: str
+    insight: str
+    agents_used: list[str]
+    proposals: list[ProposalResponse]
+    node_blueprints: list[CanvasIdeaNodeBlueprint]
+    best_score: float
+    total_iterations: int
+    trace: list[str]
 
 
 class FormalizeResponse(BaseModel):
@@ -155,6 +187,114 @@ def get_orchestrator():
         return None
 
 
+def _normalize_space(value: str) -> str:
+    return re.sub(r"\s+", " ", (value or "")).strip()
+
+
+def _truncate(value: str, limit: int) -> str:
+    text = (value or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[: max(limit - 3, 0)].rstrip() + "..."
+
+
+def _infer_canvas_route(prompt: str, context: str) -> str:
+    text = f"{prompt}\n{context}".lower()
+    compute_keywords = (
+        "python",
+        "compute",
+        "calcula",
+        "calculation",
+        "script",
+        "ejecuta",
+        "run code",
+    )
+    lean_keywords = (
+        "lean",
+        "formalize",
+        "formaliza",
+        "verify",
+        "verifica",
+        "teorema formal",
+        "formal test",
+    )
+    critique_keywords = (
+        "critique",
+        "critica",
+        "review",
+        "revisa",
+        "weakness",
+        "fallo",
+        "counterexample",
+    )
+
+    if any(keyword in text for keyword in compute_keywords):
+        return "compute"
+    if any(keyword in text for keyword in lean_keywords):
+        return "formalize_verify"
+    if any(keyword in text for keyword in critique_keywords):
+        return "critique"
+    return "explore"
+
+
+def _infer_kind_from_text(text: str) -> str:
+    value = (text or "").lower()
+    if any(token in value for token in ("definition", "definicion", "define")):
+        return "DEFINITION"
+    if "theorem" in value or "teorema" in value:
+        return "THEOREM"
+    if "lemma" in value or "lema" in value:
+        return "LEMMA"
+    if "claim" in value or "afirma" in value:
+        return "CLAIM"
+    if "counterexample" in value or "contraejemplo" in value:
+        return "COUNTEREXAMPLE"
+    if "computation" in value or "calculation" in value:
+        return "COMPUTATION"
+    return "NOTE"
+
+
+def _derive_title(text: str, fallback: str) -> str:
+    cleaned = _normalize_space(text)
+    if not cleaned:
+        return fallback
+    sentence = re.split(r"[.!?]", cleaned)[0].strip()
+    words = sentence.split()[:8]
+    if not words:
+        return fallback
+    candidate = " ".join(words)
+    if len(candidate) < len(sentence):
+        candidate += "..."
+    return candidate
+
+
+def _build_python_stub(prompt: str, context: str) -> str:
+    source = _normalize_space(prompt or context)
+    expression_match = re.search(r"([0-9a-zA-Z_().+\-*/\s]{3,})", source)
+    expression = expression_match.group(1).strip() if expression_match else ""
+
+    if expression and re.search(r"[+\-*/()]", expression):
+        return f"result = {expression}\nprint(result)"
+
+    return (
+        "# Computation generated from canvas request\n"
+        f"# Goal: {_truncate(source, 120) or 'describe the calculation'}\n"
+        "result = None\n"
+        "print(result)"
+    )
+
+
+def _proposal_to_blueprint(proposal: ProposalResponse) -> CanvasIdeaNodeBlueprint:
+    kind = _infer_kind_from_text(f"{proposal.content}\n{proposal.reasoning}")
+    title = _derive_title(proposal.content, "Idea")
+    return CanvasIdeaNodeBlueprint(
+        kind=kind,
+        title=title,
+        content=_truncate(proposal.content, 900),
+        status="PROPOSED",
+    )
+
+
 # ============ Endpoints ============
 
 @router.post("/explore", response_model=ExploreResponse)
@@ -215,6 +355,285 @@ async def explore(
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Exploration failed: {str(e)}")
+
+
+@router.post("/canvas-router", response_model=CanvasIdeaRouterResponse)
+async def route_canvas_ideas(
+    data: CanvasIdeaRouterRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Intelligent router for canvas idea generation.
+
+    Decides which agent path to run (explore, formalize+verify, compute, critique)
+    and returns structured proposals/blueprints ready for node creation.
+    """
+    await verify_problem_access(data.problem_id, db, current_user)
+
+    orchestrator = get_orchestrator()
+    if not orchestrator:
+        raise HTTPException(
+            status_code=503,
+            detail="AI orchestrator not available. Check GEMINI_API_KEY.",
+        )
+
+    prompt = (data.prompt or "").strip()
+    context = (data.context or "").strip()
+    combined_context = "\n\n".join(part for part in [context, prompt] if part).strip()
+    route = _infer_canvas_route(prompt, context)
+    if route == "formalize_verify" and not data.include_formalization:
+        route = "explore"
+    run_id = str(uuid.uuid4())
+    trace: list[str] = [f"route={route}"]
+    agents_used: list[str] = []
+    proposals: list[ProposalResponse] = []
+    blueprints: list[CanvasIdeaNodeBlueprint] = []
+    best_score = 0.0
+    total_iterations = 0
+    insight = ""
+
+    if not combined_context:
+        raise HTTPException(status_code=400, detail="Prompt or context is required")
+
+    try:
+        if route == "compute":
+            code = _build_python_stub(prompt, context)
+            agents_used = ["router", "python_executor"]
+            trace.append("generated_python_stub")
+
+            diagram = {
+                "nodes": [
+                    {
+                        "id": "idea",
+                        "type": "IDEA",
+                        "title": _derive_title(prompt or context, "Computation goal"),
+                        "content": _truncate(prompt or context, 220),
+                    },
+                    {
+                        "id": "compute",
+                        "type": "COMPUTATION",
+                        "title": "Python computation",
+                        "content": code,
+                    },
+                ],
+                "edges": [
+                    {"from": "idea", "to": "compute", "type": "implies", "label": "implement"},
+                ],
+            }
+
+            proposals = [
+                ProposalResponse(
+                    id=f"router-{run_id[:8]}",
+                    content=_truncate(prompt or context, 260),
+                    reasoning="Prepared an executable computation node for this request.",
+                    diagram=diagram,
+                    score=0.74,
+                    iteration=1,
+                )
+            ]
+            blueprints = [
+                CanvasIdeaNodeBlueprint(
+                    kind="COMPUTATION",
+                    title="Python computation",
+                    content=code,
+                    status="PROPOSED",
+                ),
+                CanvasIdeaNodeBlueprint(
+                    kind="NOTE",
+                    title="Computation goal",
+                    content=_truncate(prompt or context, 260),
+                    status="PROPOSED",
+                ),
+            ]
+            best_score = proposals[0].score
+            total_iterations = 1
+            insight = "Generated a computation-ready path: one code node plus one explanation node."
+
+        elif route == "formalize_verify":
+            agents_used = ["formalizer"]
+            trace.append("formalize_start")
+            formalization = await orchestrator.formalize(combined_context)
+            lean_code = formalization.lean_code or ""
+            trace.append(f"formalized_confidence={formalization.confidence:.2f}")
+
+            verification_log = ""
+            verification_ok = False
+            if lean_code.strip():
+                agents_used.append("lean_runner")
+                trace.append("verify_start")
+                verification = await orchestrator.verify(lean_code)
+                verification_ok = bool(verification.success)
+                verification_log = verification.log or verification.error or ""
+                trace.append(f"verify_success={verification_ok}")
+            else:
+                trace.append("verify_skipped_empty_code")
+
+            critique_feedback = ""
+            critique_score = 0.0
+            if data.include_critique:
+                try:
+                    agents_used.append("critic")
+                    critique = await orchestrator.critique(combined_context)
+                    critique_feedback = critique.feedback
+                    critique_score = critique.score
+                    trace.append(f"critique_score={critique_score:.2f}")
+                except Exception as critique_error:
+                    trace.append(f"critique_error={str(critique_error)}")
+
+            summary_note = (
+                f"Formalization confidence: {formalization.confidence:.2f}. "
+                f"Lean verification: {'pass' if verification_ok else 'pending/fail'}."
+            )
+            if critique_feedback:
+                summary_note += f" Critic: {_truncate(critique_feedback, 180)}"
+
+            diagram_nodes = [
+                {
+                    "id": "goal",
+                    "type": "CLAIM",
+                    "title": _derive_title(prompt or context, "Formal goal"),
+                    "content": _truncate(prompt or context, 240),
+                },
+                {
+                    "id": "formal",
+                    "type": "FORMAL_TEST",
+                    "title": "Lean formalization",
+                    "content": f"```lean\n{lean_code}\n```" if lean_code else "No Lean code generated.",
+                    "lean_code": lean_code,
+                },
+                {
+                    "id": "verify",
+                    "type": "NOTE",
+                    "title": "Verification summary",
+                    "content": _truncate(
+                        summary_note + (f"\n\n{verification_log}" if verification_log else ""),
+                        1000,
+                    ),
+                },
+            ]
+
+            proposals = [
+                ProposalResponse(
+                    id=f"router-{run_id[:8]}",
+                    content=_truncate(prompt or context, 260),
+                    reasoning=summary_note,
+                    diagram={
+                        "nodes": diagram_nodes,
+                        "edges": [
+                            {"from": "goal", "to": "formal", "type": "implies", "label": "formalize"},
+                            {"from": "formal", "to": "verify", "type": "uses", "label": "verify"},
+                        ],
+                    },
+                    score=min(1.0, max(formalization.confidence, 0.45)),
+                    iteration=1,
+                )
+            ]
+            blueprints = [
+                CanvasIdeaNodeBlueprint(
+                    kind="FORMAL_TEST",
+                    title="Lean formalization",
+                    content=lean_code or "No Lean code generated",
+                    lean_code=lean_code or None,
+                    status="VERIFIED" if verification_ok else "PROPOSED",
+                ),
+                CanvasIdeaNodeBlueprint(
+                    kind="NOTE",
+                    title="Verification summary",
+                    content=_truncate(summary_note + (f"\n\n{verification_log}" if verification_log else ""), 1000),
+                    status="VERIFIED" if verification_ok else "PROPOSED",
+                ),
+            ]
+            best_score = proposals[0].score
+            total_iterations = 1
+            insight = (
+                "Generated a formalization path with Lean code and verification status ready for canvas nodes."
+            )
+
+        else:
+            # "explore" and "critique" both start from explorer output.
+            agents_used = ["explorer"]
+            block_id = orchestrator.canvas.create(combined_context)
+            trace.append("explore_start")
+            exploration = await orchestrator.explore(block_id, max_iterations=data.max_iterations)
+            total_iterations = exploration.total_iterations
+            valid_proposals = [
+                p for p in exploration.proposals if p.is_valid()
+            ][: max(1, min(6, data.max_iterations + 2))]
+
+            if not valid_proposals:
+                return CanvasIdeaRouterResponse(
+                    run_id=run_id,
+                    status="failed",
+                    route=route,
+                    insight="No valid ideas generated. Try adding more context.",
+                    agents_used=agents_used,
+                    proposals=[],
+                    node_blueprints=[],
+                    best_score=0.0,
+                    total_iterations=total_iterations,
+                    trace=trace,
+                )
+
+            critique_results = {}
+            if data.include_critique:
+                agents_used.append("critic")
+                async def _run_critique(content: str):
+                    return await orchestrator.critique(content, context=context or None, goal=prompt or None)
+
+                for proposal in valid_proposals[:3]:
+                    try:
+                        critique = await _run_critique(proposal.content or "")
+                        critique_results[proposal.id] = critique
+                        trace.append(f"critique[{proposal.id}]={critique.score:.2f}")
+                    except Exception as critique_error:
+                        trace.append(f"critique_error[{proposal.id}]={str(critique_error)}")
+
+            for proposal in valid_proposals:
+                base_reasoning = proposal.reasoning or ""
+                score = proposal.score
+                critique = critique_results.get(proposal.id)
+                if critique:
+                    score = min(1.0, max(0.0, (proposal.score * 0.65) + (critique.score * 0.35)))
+                    base_reasoning = _truncate(f"{base_reasoning}\nCritic: {critique.feedback}", 700)
+
+                proposals.append(
+                    ProposalResponse(
+                        id=proposal.id,
+                        content=proposal.content or "",
+                        reasoning=base_reasoning,
+                        diagram=proposal.diagram,
+                        score=score,
+                        iteration=proposal.iteration,
+                    )
+                )
+
+            proposals.sort(key=lambda p: p.score, reverse=True)
+            blueprints = [_proposal_to_blueprint(p) for p in proposals[:4]]
+            best_score = proposals[0].score if proposals else 0.0
+
+            if route == "critique":
+                insight = "Generated ideas and attached critic feedback to rank the strongest next canvas nodes."
+            else:
+                insight = "Generated ranked idea candidates with short reasoning diagrams for direct canvas insertion."
+
+        # Deduplicate while preserving order.
+        agents_used = list(dict.fromkeys(agents_used))
+
+        return CanvasIdeaRouterResponse(
+            run_id=run_id,
+            status="completed",
+            route=route,
+            insight=insight,
+            agents_used=agents_used,
+            proposals=proposals,
+            node_blueprints=blueprints,
+            best_score=best_score,
+            total_iterations=total_iterations,
+            trace=trace,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Canvas routing failed: {str(e)}")
 
 
 @router.post("/formalize", response_model=FormalizeResponse)

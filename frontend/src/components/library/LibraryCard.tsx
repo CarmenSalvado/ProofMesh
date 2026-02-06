@@ -6,6 +6,7 @@ type LibraryItemKind =
 	| "resource"
 	| "idea"
 	| "content"
+	| "formal_test"
 	| "lemma"
 	| "claim"
 	| "definition"
@@ -33,6 +34,7 @@ const kindConfig: Record<LibraryItemKind, { label: string; color: string; bg: st
 	resource: { label: "RES", color: "text-slate-700", bg: "bg-slate-100" },
 	idea: { label: "IDEA", color: "text-fuchsia-700", bg: "bg-fuchsia-50" },
 	content: { label: "CONTENT", color: "text-cyan-700", bg: "bg-cyan-50" },
+	formal_test: { label: "LEAN", color: "text-sky-700", bg: "bg-sky-50" },
 	lemma: { label: "LEMMA", color: "text-emerald-700", bg: "bg-emerald-50" },
 	claim: { label: "CLAIM", color: "text-blue-700", bg: "bg-blue-50" },
 	definition: { label: "DEF", color: "text-indigo-700", bg: "bg-indigo-50" },

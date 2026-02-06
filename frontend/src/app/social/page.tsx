@@ -16,7 +16,6 @@ import {
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import {
-  getSocialUsers,
   getSocialConnections,
   getSocialFeed,
   getSocialContributions,
@@ -192,7 +191,6 @@ function isSameDay(a: Date, b: Date) {
 export default function SocialPage() {
   const { user, isLoading: authLoading } = useAuth();
   const router = useRouter();
-  const [users, setUsers] = useState<SocialUser[]>([]);
   const [followers, setFollowers] = useState<SocialUser[]>([]);
   const [following, setFollowing] = useState<SocialUser[]>([]);
   const [feedItems, setFeedItems] = useState<SocialFeedItem[]>([]);
@@ -215,15 +213,13 @@ export default function SocialPage() {
   const loadAll = useCallback(async () => {
     try {
       setLoading(true);
-      const [connections, directory, feed, contribs] = await Promise.all([
+      const [connections, feed, contribs] = await Promise.all([
         getSocialConnections(),
-        getSocialUsers({ limit: 30 }),
         getSocialFeed({ scope: feedScope, limit: 60 }),
         getSocialContributions(),
       ]);
       setFollowers(connections.followers);
       setFollowing(connections.following);
-      setUsers(directory.users);
       setFeedItems(feed.items);
       setContributions(contribs.problems);
     } catch (err) {
@@ -297,19 +293,6 @@ export default function SocialPage() {
 
   const selectedItem = filteredFeed.find((item) => item.id === selectedItemId) || null;
 
-  const handleFollow = async (target: SocialUser) => {
-    try {
-      if (target.is_following) {
-        await unfollowUser(target.id);
-      } else {
-        await followUser(target.id);
-      }
-      await loadAll();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to update follow");
-    }
-  };
-
   const handleFollowActor = async () => {
     if (!selectedItem || !user) return;
     const actorId = selectedItem.actor.id;
@@ -360,15 +343,35 @@ export default function SocialPage() {
   if (!user) return null;
 
   return (
-    <div className="min-h-screen bg-white">
+    <div className="min-h-screen bg-[radial-gradient(circle_at_top,_#f0f9ff_0%,_#f8fafc_42%,_#ffffff_92%)]">
       <DashboardNavbar />
-      <main className="max-w-[1400px] mx-auto px-4 py-6">
-        <div className="flex items-start justify-between mb-6">
-          <div>
-            <h1 className="text-xl font-semibold text-neutral-900">Reasoning Stream</h1>
-            <p className="text-xs text-neutral-500">
-              Collaboration signals, approvals, and research momentum.
-            </p>
+      <main className="max-w-[1440px] mx-auto px-4 py-6 md:py-8">
+        <div className="rounded-3xl border border-neutral-200 bg-gradient-to-r from-cyan-50 via-sky-50 to-indigo-50 px-5 py-5 md:px-7 md:py-6 mb-6 shadow-[0_25px_60px_-45px_rgba(0,0,0,0.35)]">
+          <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
+            <div>
+              <div className="inline-flex items-center gap-2 rounded-full border border-cyan-200 bg-white/70 px-3 py-1 text-[11px] font-medium text-cyan-800 mb-3">
+                <Sparkles size={14} />
+                Social Graph for Mathematical Work
+              </div>
+              <h1 className="text-2xl md:text-3xl font-semibold text-neutral-900">Reasoning Stream</h1>
+              <p className="text-xs md:text-sm text-neutral-600 mt-1">
+                Collaboration signals, approvals, and research momentum.
+              </p>
+            </div>
+            <div className="grid grid-cols-3 gap-2 md:gap-3 w-full md:w-auto">
+              <div className="rounded-xl border border-white/70 bg-white/70 px-3 py-2">
+                <div className="text-[10px] text-neutral-500 uppercase tracking-wide">Following</div>
+                <div className="text-sm md:text-base font-semibold text-neutral-900">{following.length}</div>
+              </div>
+              <div className="rounded-xl border border-white/70 bg-white/70 px-3 py-2">
+                <div className="text-[10px] text-neutral-500 uppercase tracking-wide">Feed Items</div>
+                <div className="text-sm md:text-base font-semibold text-neutral-900">{filteredFeed.length}</div>
+              </div>
+              <div className="rounded-xl border border-white/70 bg-white/70 px-3 py-2">
+                <div className="text-[10px] text-neutral-500 uppercase tracking-wide">Active Proofs</div>
+                <div className="text-sm md:text-base font-semibold text-neutral-900">{contributions.length}</div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -383,9 +386,9 @@ export default function SocialPage() {
                 <div className="animate-spin rounded-full h-6 w-6 border-2 border-neutral-900 border-t-transparent" />
               </div>
             ) : (
-              <div className="grid lg:grid-cols-[240px_minmax(0,1fr)_320px] gap-6">
-                <aside className="space-y-6 hidden lg:block">
-                  <div className="border border-neutral-100 rounded-lg bg-neutral-50/60 p-4">
+              <div className="grid lg:grid-cols-[255px_minmax(0,1fr)_340px] gap-6">
+                <aside className="space-y-6 hidden lg:block lg:sticky lg:top-20 h-fit">
+                  <div className="border border-neutral-200 rounded-2xl bg-white/80 backdrop-blur p-4">
                     <div className="text-[10px] font-medium text-neutral-400 uppercase tracking-wider mb-3">
                       Workspace
                     </div>
@@ -411,7 +414,7 @@ export default function SocialPage() {
                     </div>
                   </div>
 
-                  <div className="border border-neutral-100 rounded-lg bg-white p-4">
+                  <div className="border border-neutral-200 rounded-2xl bg-white p-4">
                     <div className="flex items-center justify-between mb-3">
                       <span className="text-[10px] font-medium text-neutral-400 uppercase tracking-wider">
                         Active Proofs
@@ -435,7 +438,7 @@ export default function SocialPage() {
                     </div>
                   </div>
 
-                  <div className="border border-neutral-100 rounded-lg bg-white p-4">
+                  <div className="border border-neutral-200 rounded-2xl bg-white p-4">
                     <div className="flex items-center justify-between mb-3">
                       <span className="text-[10px] font-medium text-neutral-400 uppercase tracking-wider">
                         Connections
@@ -456,7 +459,7 @@ export default function SocialPage() {
                   </div>
                 </aside>
 
-                <section className="border border-neutral-100 rounded-lg bg-white overflow-hidden">
+                <section className="border border-neutral-200 rounded-2xl bg-white overflow-hidden shadow-[0_30px_70px_-55px_rgba(0,0,0,0.4)]">
                   <header className="h-14 border-b border-neutral-100 flex items-center justify-between px-4 bg-white">
                     <div className="flex items-center gap-4">
                       <h2 className="text-xs font-semibold text-neutral-900">Stream</h2>
@@ -593,7 +596,7 @@ export default function SocialPage() {
                   </div>
                 </section>
 
-                <aside className="border border-neutral-100 rounded-lg bg-white flex flex-col overflow-hidden">
+                <aside className="border border-neutral-200 rounded-2xl bg-white flex flex-col overflow-hidden lg:sticky lg:top-20 h-fit max-h-[calc(100vh-6rem)]">
                   <div className="h-14 border-b border-neutral-100 flex items-center justify-between px-4">
                     <span className="text-xs font-semibold text-neutral-900">Context Panel</span>
                   </div>
@@ -761,7 +764,7 @@ export default function SocialPage() {
                     )}
                   </div>
 
-                  <div className="h-36 border-t border-neutral-100 bg-neutral-50/50 p-4 relative overflow-hidden">
+                  <div className="h-36 border-t border-neutral-100 bg-gradient-to-r from-neutral-50 to-cyan-50/40 p-4 relative overflow-hidden">
                     <div className="absolute top-2 left-2 text-[10px] font-semibold text-neutral-400 uppercase">
                       Local Graph
                     </div>

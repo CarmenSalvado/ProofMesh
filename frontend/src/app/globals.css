@@ -173,7 +173,7 @@ body {
 }
 
 .font-mono {
-  font-family: var(--font-mono), 'JetBrains Mono', ui-monospace, monospace;
+  font-family: var(--font-mono), 'Geist Mono', ui-monospace, monospace;
 }
 
 /* Selection */
@@ -696,7 +696,7 @@ body {
 
 .pm-proposed-file {
   color: #707070;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-family: var(--font-mono), 'Geist Mono', ui-monospace, monospace;
 }
 
 .pm-proposed-summary {
@@ -1278,7 +1278,7 @@ textarea:not([class*="placeholder:"])::placeholder {
 .terminal {
   background: #09090b;
   color: #a1a1aa;
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-family: var(--font-mono), 'Geist Mono', ui-monospace, monospace;
   font-size: 0.6875rem;
   line-height: 1.4rem;
 }

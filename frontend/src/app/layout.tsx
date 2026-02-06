@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Inter, JetBrains_Mono, Newsreader } from "next/font/google";
+import { Geist_Mono, Inter, Newsreader } from "next/font/google";
 import "./globals.css";
 import { AuthProvider } from "@/lib/auth";
 
@@ -9,7 +9,7 @@ const inter = Inter({
   weight: ["300", "400", "500", "600"],
 });
 
-const jetbrainsMono = JetBrains_Mono({
+const geistMono = Geist_Mono({
   variable: "--font-mono",
   subsets: ["latin"],
 });
@@ -43,7 +43,7 @@ export default function RootLayout({
         />
       </head>
       <body
-        className={`${inter.variable} ${jetbrainsMono.variable} ${newsreader.variable} font-sans`}
+        className={`${inter.variable} ${geistMono.variable} ${newsreader.variable} font-sans`}
       >
         <AuthProvider>{children}</AuthProvider>
       </body>

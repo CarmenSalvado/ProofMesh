@@ -8,6 +8,7 @@ class LibraryItemKind(str, Enum):
     RESOURCE = "RESOURCE"
     IDEA = "IDEA"
     CONTENT = "CONTENT"
+    FORMAL_TEST = "FORMAL_TEST"
     LEMMA = "LEMMA"
     CLAIM = "CLAIM"
     DEFINITION = "DEFINITION"

@@ -29,7 +29,7 @@ export interface LibraryItem {
 	id: string;
 	problem_id: string;
 	title: string;
-	kind: "RESOURCE" | "IDEA" | "CONTENT" | "LEMMA" | "CLAIM" | "DEFINITION" | "THEOREM" | "COUNTEREXAMPLE" | "COMPUTATION" | "NOTE";
+	kind: "RESOURCE" | "IDEA" | "CONTENT" | "FORMAL_TEST" | "LEMMA" | "CLAIM" | "DEFINITION" | "THEOREM" | "COUNTEREXAMPLE" | "COMPUTATION" | "NOTE";
 	content: string;
 	formula: string | null;
 	lean_code: string | null;
@@ -42,6 +42,16 @@ export interface LibraryItem {
 	verification: { method: string; logs: string; status: string } | null;
 	created_at: string;
 	updated_at: string;
+}
+
+export interface ComputationExecutionResult {
+	success: boolean;
+	stdout: string;
+	stderr: string;
+	error: string | null;
+	exit_code: number | null;
+	duration_ms: number;
+	executed_code: string;
 }
 
 export interface AgentProposal {
@@ -772,6 +782,8 @@ export async function createLibraryItem(
 		content: string;
 		formula?: string;
 		lean_code?: string;
+		x?: number;
+		y?: number;
 		authors?: Array<{ type: "human" | "agent"; id: string; name?: string }>;
 		source?: { file_path?: string; cell_id?: string; agent_run_id?: string };
 		dependencies?: string[];
@@ -801,6 +813,17 @@ export async function updateLibraryItem(
 	return apiFetch(`/problems/${problemId}/library/${itemId}`, {
 		method: "PATCH",
 		body: JSON.stringify(data),
+	});
+}
+
+export async function executeComputationNode(
+	problemId: string,
+	itemId: string,
+	data?: { code?: string; timeout_seconds?: number }
+): Promise<ComputationExecutionResult> {
+	return apiFetch(`/problems/${problemId}/library/${itemId}/execute`, {
+		method: "POST",
+		body: JSON.stringify(data || {}),
 	});
 }
 
@@ -1421,6 +1444,28 @@ export interface ExploreResponse {
 	total_iterations: number;
 }
 
+export interface CanvasIdeaNodeBlueprint {
+	kind: string;
+	title: string;
+	content: string;
+	formula?: string | null;
+	lean_code?: string | null;
+	status: "PROPOSED" | "VERIFIED" | "REJECTED" | string;
+}
+
+export interface CanvasIdeaRouterResponse {
+	run_id: string;
+	status: string;
+	route: "explore" | "formalize_verify" | "compute" | "critique" | string;
+	insight: string;
+	agents_used: string[];
+	proposals: OrchestrationProposal[];
+	node_blueprints: CanvasIdeaNodeBlueprint[];
+	best_score: number;
+	total_iterations: number;
+	trace: string[];
+}
+
 export interface FormalizeResponse {
 	run_id: string;
 	status: string;
@@ -1484,6 +1529,20 @@ export async function exploreContext(data: {
 	max_iterations?: number;
 }): Promise<ExploreResponse> {
 	return apiFetch("/orchestration/explore", {
+		method: "POST",
+		body: JSON.stringify(data),
+	});
+}
+
+export async function routeCanvasIdeas(data: {
+	problem_id: string;
+	prompt?: string;
+	context?: string;
+	max_iterations?: number;
+	include_critique?: boolean;
+	include_formalization?: boolean;
+}): Promise<CanvasIdeaRouterResponse> {
+	return apiFetch("/orchestration/canvas-router", {
 		method: "POST",
 		body: JSON.stringify(data),
 	});

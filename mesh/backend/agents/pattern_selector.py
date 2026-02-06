@@ -65,7 +65,7 @@ class PatternSelectorAgent:
     """
     Agent for selecting and scoring research patterns using multi-dimensional LLM evaluation.
 
-    Uses Gemini 3 for LLM-based pattern scoring with fallback to rule-based scoring.
+    Uses Rho for LLM-based pattern scoring with fallback to rule-based scoring.
     """
 
     def __init__(

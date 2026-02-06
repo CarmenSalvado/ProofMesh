@@ -1,9 +1,10 @@
 from uuid import UUID
+import re
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from datetime import datetime
 
 from app.database import get_db
@@ -14,6 +15,10 @@ from app.models.discussion import Discussion
 from app.models.comment import Comment
 from app.models.user import User
 from app.api.deps import get_current_user, get_current_user_optional, verify_problem_access
+from app.services.python_executor import (
+    PythonExecutionError,
+    execute_python_code,
+)
 from app.schemas.library_item import (
     LibraryItemCreate,
     LibraryItemUpdate,
@@ -25,6 +30,38 @@ from app.schemas.library_item import (
 )
 
 router = APIRouter(prefix="/api/problems/{problem_id}/library", tags=["library"])
+
+
+class ComputationExecutionRequest(BaseModel):
+    code: str | None = None
+    timeout_seconds: float | None = Field(default=None, ge=0.5, le=20.0)
+
+
+class ComputationExecutionResponse(BaseModel):
+    success: bool
+    stdout: str
+    stderr: str
+    error: str | None = None
+    exit_code: int | None = None
+    duration_ms: int
+    executed_code: str
+
+
+def extract_python_source(content: str) -> str:
+    """Extract python source from markdown code fences when present."""
+    text = (content or "").strip()
+    if not text:
+        return ""
+
+    fenced_python = re.search(r"```(?:python|py)\s*\n([\s\S]*?)```", text, flags=re.IGNORECASE)
+    if fenced_python and fenced_python.group(1):
+        return fenced_python.group(1).strip()
+
+    generic_fence = re.search(r"```[a-zA-Z0-9_-]*\s*\n([\s\S]*?)```", text, flags=re.IGNORECASE)
+    if generic_fence and generic_fence.group(1):
+        return generic_fence.group(1).strip()
+
+    return text
 
 
 async def enrich_authors_with_avatars(
@@ -288,6 +325,130 @@ async def update_library_item(
     await db.commit()
     await db.refresh(item)
     return await item_to_response(item, db)
+
+
+@router.post("/{item_id}/execute", response_model=ComputationExecutionResponse)
+async def execute_computation_node(
+    problem_id: UUID,
+    item_id: UUID,
+    data: ComputationExecutionRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Execute Python code for a COMPUTATION node.
+    The executed source is either `data.code` or the node content.
+    """
+    problem = await verify_problem_access(problem_id, db, current_user, require_owner=False)
+
+    result = await db.execute(
+        select(LibraryItem).where(
+            LibraryItem.id == item_id, LibraryItem.problem_id == problem_id
+        )
+    )
+    item = result.scalar_one_or_none()
+    if not item:
+        raise HTTPException(status_code=404, detail="Library item not found")
+    if item.kind != LibraryItemKind.COMPUTATION:
+        raise HTTPException(
+            status_code=400,
+            detail="Only COMPUTATION nodes can execute Python",
+        )
+
+    source_code = (
+        (data.code or "").strip()
+        if data.code is not None
+        else extract_python_source(item.content or "")
+    )
+    if not source_code:
+        raise HTTPException(status_code=400, detail="No code to execute")
+
+    try:
+        execution = await execute_python_code(
+            source_code, timeout_seconds=data.timeout_seconds
+        )
+    except PythonExecutionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to execute computation: {exc}",
+        ) from exc
+
+    verification_status = (
+        "pass" if execution.success else ("error" if execution.exit_code is None else "fail")
+    )
+    combined_logs = "\n\n".join(
+        segment for segment in [execution.stdout, execution.stderr, execution.error or ""] if segment
+    ).strip()
+    now_iso = datetime.utcnow().isoformat() + "Z"
+    run_entry = {
+        "timestamp": now_iso,
+        "status": verification_status,
+        "stdout": execution.stdout,
+        "stderr": execution.stderr,
+        "error": execution.error,
+        "logs": combined_logs,
+        "exit_code": execution.exit_code,
+        "duration_ms": execution.duration_ms,
+    }
+
+    previous_verification = item.verification if isinstance(item.verification, dict) else {}
+    previous_history = previous_verification.get("history", [])
+    history = [entry for entry in previous_history if isinstance(entry, dict)]
+    history.append(run_entry)
+    history = history[-20:]
+
+    item.verification = {
+        "method": "python",
+        "status": verification_status,
+        "logs": combined_logs,
+        "stdout": execution.stdout,
+        "stderr": execution.stderr,
+        "error": execution.error,
+        "exit_code": execution.exit_code,
+        "duration_ms": execution.duration_ms,
+        "executed_code": execution.executed_code,
+        "last_run_at": now_iso,
+        "run_count": len(history),
+        "history": history,
+    }
+    if execution.success:
+        item.status = LibraryItemStatus.VERIFIED
+    elif item.status == LibraryItemStatus.VERIFIED:
+        item.status = LibraryItemStatus.PROPOSED
+
+    activity_type = (
+        ActivityType.VERIFIED_LIBRARY if execution.success else ActivityType.UPDATED_LIBRARY
+    )
+    db.add(
+        Activity(
+            user_id=current_user.id,
+            type=activity_type,
+            target_id=item.id,
+            extra_data={
+                "problem_id": str(problem_id),
+                "problem_title": problem.title,
+                "item_title": item.title,
+                "execution_success": execution.success,
+                "exit_code": execution.exit_code,
+                "duration_ms": execution.duration_ms,
+                "changes": ["execution"],
+            },
+        )
+    )
+
+    await db.commit()
+
+    return ComputationExecutionResponse(
+        success=execution.success,
+        stdout=execution.stdout,
+        stderr=execution.stderr,
+        error=execution.error,
+        exit_code=execution.exit_code,
+        duration_ms=execution.duration_ms,
+        executed_code=execution.executed_code,
+    )
 
 
 @router.delete("/{item_id}", status_code=204)

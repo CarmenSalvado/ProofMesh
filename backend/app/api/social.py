@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import re
 from datetime import datetime
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -57,6 +59,91 @@ from app.schemas.social import (
 from app.services.auth import get_password_hash
 
 router = APIRouter(prefix="/api/social", tags=["social"])
+
+RHO_USERNAME = "rho"
+RHO_EMAIL = "rho@proofmesh.ai"
+RHO_MENTION_PATTERN = re.compile(r"(?:^|\s)@rho\b", flags=re.IGNORECASE)
+
+
+def has_rho_mention(content: str) -> bool:
+    return bool(RHO_MENTION_PATTERN.search(content or ""))
+
+
+async def get_or_create_rho_user(db: AsyncSession) -> User:
+    result = await db.execute(select(User).where(User.username == RHO_USERNAME))
+    rho_user = result.scalar_one_or_none()
+    if rho_user:
+        return rho_user
+
+    result = await db.execute(select(User).where(User.email == RHO_EMAIL))
+    rho_user = result.scalar_one_or_none()
+    if rho_user:
+        return rho_user
+
+    rho_user = User(
+        email=RHO_EMAIL,
+        username=RHO_USERNAME,
+        password_hash=get_password_hash(f"rho-{datetime.utcnow().isoformat()}"),
+        bio="AI mathematical assistant (Gemini-backed)",
+    )
+    db.add(rho_user)
+    await db.flush()
+    return rho_user
+
+
+async def generate_rho_reply(
+    *,
+    discussion: Discussion,
+    question: str,
+    recent_comments: list[Comment],
+) -> str:
+    api_key = (
+        os.environ.get("GEMINI_API_KEY")
+        or os.environ.get("GOOGLE_GENERATIVE_AI_API_KEY")
+    )
+    if not api_key:
+        return (
+            "Rho: I can help critique this, but Gemini is not configured yet. "
+            "Set GEMINI_API_KEY and mention @rho again."
+        )
+
+    try:
+        from google import genai
+        from google.genai import types
+
+        history_lines = []
+        for item in recent_comments[-6:]:
+            history_lines.append(f"{item.author.username}: {item.content}")
+        history_text = "\n".join(history_lines) if history_lines else "No prior comments."
+
+        prompt = (
+            "You are Rho, an AI mathematical collaborator inside ProofMesh.\n"
+            "Give a concise reply (max 6 lines) focused on truth-checking and mathematical rigor.\n"
+            "If uncertain, say what should be verified next.\n\n"
+            f"Discussion title: {discussion.title}\n"
+            f"Discussion content: {discussion.content[:1200]}\n\n"
+            f"Recent thread:\n{history_text}\n\n"
+            f"User mention: {question}\n"
+        )
+
+        client = genai.Client(api_key=api_key)
+        response = await client.aio.models.generate_content(
+            model="gemini-3-flash-preview",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                temperature=0.3,
+                max_output_tokens=420,
+            ),
+        )
+        text = (response.text or "").strip()
+        if not text:
+            return "Rho: I could not produce a reliable answer. Please share more details or equations."
+        return f"Rho: {text[:1800]}"
+    except Exception:
+        return (
+            "Rho: I could not run a full verification right now. "
+            "Please provide the exact claim and assumptions, and I will check it step by step."
+        )
 
 
 async def get_follow_sets(db: AsyncSession, user_id: UUID):
@@ -875,6 +962,7 @@ async def create_comment(
         parent_id=data.parent_id,
     )
     db.add(comment)
+    await db.flush()
     
     # Create notification for discussion author (if not self)
     if discussion.author_id != current_user.id:
@@ -888,6 +976,30 @@ async def create_comment(
             target_id=discussion_id,
         )
         db.add(notification)
+
+    if has_rho_mention(data.content):
+        recent_result = await db.execute(
+            select(Comment)
+            .options(selectinload(Comment.author))
+            .where(Comment.discussion_id == discussion_id)
+            .order_by(Comment.created_at.desc())
+            .limit(8)
+        )
+        recent_comments = list(reversed(recent_result.scalars().all()))
+        rho_user = await get_or_create_rho_user(db)
+        rho_reply = await generate_rho_reply(
+            discussion=discussion,
+            question=data.content,
+            recent_comments=recent_comments,
+        )
+        db.add(
+            Comment(
+                content=rho_reply,
+                author_id=rho_user.id,
+                discussion_id=discussion_id,
+                parent_id=comment.id,
+            )
+        )
     
     await db.commit()
     await db.refresh(comment)

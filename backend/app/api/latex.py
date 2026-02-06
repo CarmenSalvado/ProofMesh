@@ -195,6 +195,10 @@ async def rename_path(
     to_path = normalize_path(payload.to_path)
     if not from_path or not to_path:
         raise HTTPException(status_code=400, detail="Paths required")
+    if from_path == to_path:
+        return {"status": "unchanged"}
+    if to_path.startswith(f"{from_path}/"):
+        raise HTTPException(status_code=400, detail="Cannot move a path into itself")
 
     base_prefix = latex_prefix(problem_id)
     from_key = f"{base_prefix}/{from_path}"
@@ -217,7 +221,8 @@ async def rename_path(
             suffix = key[len(dir_prefix):]
             dest_key = f"{base_prefix}/{to_path}/{suffix}"
             await copy_object(key, dest_key)
-            await delete_object(key)
+        # Ensure source prefix is removed even if object-by-object deletes are skipped/fail.
+        await delete_prefix(dir_prefix)
         if file_exists:
             await delete_object(from_key)
         return {"status": "renamed", "count": len(objects)}

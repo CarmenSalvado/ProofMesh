@@ -1,4 +1,4 @@
-"""Agents module - Uses Gemini 3 for reasoning."""
+"""Agents module - Uses Rho for reasoning."""
 
 from .base import Agent, LoopAgent, StreamingChunk
 from .explorer import ExplorerAgent, explorer_agent

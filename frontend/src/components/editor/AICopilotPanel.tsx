@@ -68,7 +68,7 @@ export function AICopilotPanel({
     {
       id: "welcome",
       role: "system",
-      content: "I'm your AI mathematical assistant. I can help you explore proofs, formalize statements into Lean 4, and suggest improvements. Ask me anything or use the quick actions below!",
+      content: "I'm Rho, your mathematical assistant. I can help you explore proofs, formalize statements into Lean 4, and suggest improvements. Ask me anything or use the quick actions below.",
       timestamp: new Date(),
     },
   ]);
@@ -216,7 +216,7 @@ export function AICopilotPanel({
     setMessages([{
       id: "welcome",
       role: "system",
-      content: "Chat history cleared. How can I help you?",
+      content: "Chat history cleared. Rho is ready.",
       timestamp: new Date(),
     }]);
   }, []);
@@ -233,7 +233,7 @@ export function AICopilotPanel({
       <button
         onClick={onToggle}
         className="fixed right-4 bottom-4 bg-indigo-600 text-white rounded-full p-4 shadow-lg hover:bg-indigo-700 transition-colors z-50"
-        title="Open AI Copilot"
+        title="Open Rho Copilot"
       >
         <Bot className="w-6 h-6" />
         {isLoading && (
@@ -253,7 +253,7 @@ export function AICopilotPanel({
               <Bot className="w-5 h-5 text-indigo-600" />
             </div>
             <div>
-              <h3 className="font-semibold text-neutral-900">AI Copilot</h3>
+              <h3 className="font-semibold text-neutral-900">Rho Copilot</h3>
               <p className="text-xs text-neutral-500">
                 {isAvailable ? "Ready to assist" : "Unavailable"}
               </p>
@@ -281,7 +281,7 @@ export function AICopilotPanel({
           <div className="mt-3 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg">
             <div className="flex items-center gap-2 text-xs text-amber-700">
               <AlertTriangle className="w-3.5 h-3.5" />
-              <span>Configure GEMINI_API_KEY to enable AI</span>
+              <span>Configure GEMINI_API_KEY to enable Rho</span>
             </div>
           </div>
         )}

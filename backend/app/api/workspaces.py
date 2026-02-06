@@ -416,7 +416,7 @@ async def generate_story_endpoint(
 ):
     """
     Generate a structured paper story from user idea.
-    Uses Idea2Paper logic integrated with ProofMesh and Gemini 3.
+    Uses Idea2Paper logic integrated with ProofMesh and Rho.
 
     Request body:
     {

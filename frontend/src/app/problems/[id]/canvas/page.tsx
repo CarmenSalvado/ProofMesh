@@ -46,26 +46,103 @@ import { useCanvasAIAnimations } from "@/hooks/useCanvasAIAnimations";
 // Store positions locally (keyed by item id)
 type PositionMap = Record<string, { x: number; y: number }>;
 
-const POSITIONS_STORAGE_KEY = "proofmesh_canvas_positions";
 const BLOCKS_STORAGE_KEY = "proofmesh_canvas_blocks";
 
-function loadPositions(problemId: string): PositionMap {
-  if (typeof window === "undefined") return {};
-  try {
-    const stored = localStorage.getItem(`${POSITIONS_STORAGE_KEY}_${problemId}`);
-    return stored ? JSON.parse(stored) : {};
-  } catch {
-    return {};
-  }
+function buildPositionsFromItems(items: LibraryItem[]): PositionMap {
+  const out: PositionMap = {};
+  items.forEach((item, index) => {
+    if (item.x !== null && item.y !== null) {
+      out[item.id] = { x: item.x, y: item.y };
+      return;
+    }
+    out[item.id] = {
+      x: 150 + (index % 4) * 280,
+      y: 100 + Math.floor(index / 4) * 200,
+    };
+  });
+  return out;
 }
 
-function savePositions(problemId: string, positions: PositionMap) {
-  if (typeof window === "undefined") return;
-  try {
-    localStorage.setItem(`${POSITIONS_STORAGE_KEY}_${problemId}`, JSON.stringify(positions));
-  } catch {
-    // Ignore storage errors
+function extractCodeFence(content: string, language: string): string {
+  const regex = new RegExp("```" + language + "\\n([\\s\\S]*?)```", "i");
+  const match = (content || "").match(regex);
+  return match && match[1] ? match[1].trim() : "";
+}
+
+function looksLikePythonCode(value: string): boolean {
+  const text = (value || "").trim();
+  if (!text) return false;
+  const pythonKeywordRegex = /(^|\b)(def|class|for|while|if|elif|else|try|except|import|from|return|with|print|lambda)(\b|$)/m;
+  const assignmentRegex = /^\s*[a-zA-Z_][a-zA-Z0-9_]*\s*=/m;
+  const callRegex = /\b[a-zA-Z_][a-zA-Z0-9_]*\s*\(/;
+  const newlineIndentRegex = /\n\s{2,}\S/;
+  return (
+    pythonKeywordRegex.test(text) ||
+    assignmentRegex.test(text) ||
+    callRegex.test(text) ||
+    newlineIndentRegex.test(text)
+  );
+}
+
+function normalizeComputationCode(rawContent: string): string | null {
+  const extracted = extractCodeFence(rawContent, "python")
+    || extractCodeFence(rawContent, "py")
+    || rawContent;
+  const code = (extracted || "").trim();
+
+  if (!code) return "# TODO: write python code";
+  if (looksLikePythonCode(code)) return code;
+
+  const safeExpr = code
+    .replace(/\s+/g, " ")
+    .trim();
+  const expressionLike = /^[a-zA-Z0-9_+\-*/().,\s]+$/.test(safeExpr) && /[+\-*/()]/.test(safeExpr);
+  if (expressionLike) {
+    return safeExpr;
   }
+
+  return null;
+}
+
+function normalizeNodePayload(data: {
+  type: string;
+  content?: string;
+  formula?: string;
+  leanCode?: string;
+}) {
+  const nodeType = (data.type || "NOTE").toUpperCase();
+  const rawContent = (data.content || "").trim();
+  let content = rawContent;
+  let formula = data.formula;
+  let leanCode = data.leanCode;
+
+  if (nodeType === "COMPUTATION") {
+    const normalizedCode = normalizeComputationCode(rawContent);
+    if (normalizedCode) {
+      content = normalizedCode;
+    } else {
+      // If there is no executable Python, store as NOTE instead of fake computation.
+      return {
+        type: "NOTE",
+        content: rawContent || "Computation note",
+        formula: undefined,
+        leanCode: undefined,
+      };
+    }
+    formula = undefined;
+    leanCode = undefined;
+  } else if (nodeType === "FORMAL_TEST") {
+    const extractedLean = extractCodeFence(rawContent, "lean");
+    leanCode = (leanCode || extractedLean || "").trim() || undefined;
+    content = rawContent || "Formal Lean test";
+  }
+
+  return {
+    type: nodeType,
+    content,
+    formula,
+    leanCode,
+  };
 }
 
 function loadBlocks(problemId: string): CanvasBlock[] {
@@ -113,18 +190,20 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
   const [detailPanelNodeId, setDetailPanelNodeId] = useState<string | null>(null);
   const [newNodePosition, setNewNodePosition] = useState({ x: 200, y: 200 });
   const [lastCreatedNodeId, setLastCreatedNodeId] = useState<string | null>(null);
+  const [lastCompletedAiRunId, setLastCompletedAiRunId] = useState<string | null>(null);
   const positionUpdateTimeout = useRef<NodeJS.Timeout | null>(null);
   const canvasRef = useRef<ProofCanvasHandle | null>(null);
 
   // AI animation states for nodes - stable callbacks
   const handleNodeCreated = useCallback((node: Record<string, unknown>) => {
-    // Refresh library items when AI creates a new node
     console.log("[CanvasPage] AI created node:", node);
-    // TODO: Reload library items or add optimistically
   }, []);
 
   const handleRunCompleted = useCallback((runId: string, status: string) => {
     console.log("[CanvasPage] AI run completed:", runId, status);
+    if (status === "completed") {
+      setLastCompletedAiRunId(runId);
+    }
   }, []);
 
   const { nodeAnimationStatesForCanvas, isConnected: aiWebSocketConnected } = useCanvasAIAnimations({
@@ -162,6 +241,7 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
         content: item.content,
         formula: item.formula || undefined,
         leanCode: item.lean_code || undefined,
+        verification: item.verification || null,
         x: backendPos?.x ?? defaultX,
         y: backendPos?.y ?? defaultY,
         width: 260,
@@ -214,6 +294,7 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
       ]);
       setProblem(problemData);
       setLibraryItems(libraryData.items);
+      setPositions(buildPositionsFromItems(libraryData.items));
       // Convert API blocks to local format
       setBlocks(blocksData.map(b => ({
         id: b.id,
@@ -296,6 +377,11 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    if (!lastCompletedAiRunId) return;
+    loadData();
+  }, [lastCompletedAiRunId, loadData]);
 
   // Register collaboration handlers for receiving real-time updates from other users
   useEffect(() => {
@@ -609,6 +695,7 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
       setLibraryItems(prev =>
         prev.map(item => item.id === nodeId ? { ...item, x, y } : item)
       );
+      setPositions((prev) => ({ ...prev, [nodeId]: { x, y } }));
 
       // Debounce saving to backend
       if (positionUpdateTimeout.current) {
@@ -651,6 +738,7 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
         return item;
       });
       setLibraryItems(updatedItems);
+      setPositions((prev) => ({ ...prev, ...positionsUpdate }));
 
       // Debounce saving to backend
       if (positionUpdateTimeout.current) {
@@ -698,13 +786,21 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
           : lastCreatedNodeId
             ? [lastCreatedNodeId]
             : [];
+      const normalized = normalizeNodePayload({
+        type: data.type,
+        content: data.content,
+        formula: data.formula,
+        leanCode: data.leanCode,
+      });
 
       const newItem = await createLibraryItem(problemId, {
         title: data.title,
-        kind: data.type as LibraryItem["kind"],
-        content: data.content,
-        formula: data.formula,
-        lean_code: data.leanCode,
+        kind: normalized.type as LibraryItem["kind"],
+        content: normalized.content,
+        formula: normalized.formula,
+        lean_code: normalized.leanCode,
+        x: nodePosition.x,
+        y: nodePosition.y,
         dependencies: resolvedDependencies,
         authors: data.authors,
         source: data.source,
@@ -717,7 +813,11 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
       recordCreate(beforeItems, afterItems, positions, newPositions, newItem.title);
 
       // Add to local state
-      setLibraryItems(afterItems);
+      setLibraryItems((prev) => {
+        if (prev.some((item) => item.id === newItem.id)) return prev;
+        return [{ ...newItem, x: nodePosition.x, y: nodePosition.y }, ...prev];
+      });
+      setPositions((prev) => ({ ...prev, [newItem.id]: nodePosition }));
 
       // Broadcast to collaborators
       collaboration?.sendNodeCreate?.({
@@ -767,13 +867,21 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
             : lastCreatedNodeId
               ? [lastCreatedNodeId]
               : [];
+        const normalized = normalizeNodePayload({
+          type: nodeData.type?.toUpperCase() || "NOTE",
+          content: nodeData.content,
+          formula: nodeData.formula,
+          leanCode: nodeData.leanCode,
+        });
 
         const newItem = await createLibraryItem(problemId, {
           title: nodeData.title,
-          kind: (nodeData.type?.toUpperCase() || "NOTE") as LibraryItem["kind"],
-          content: nodeData.content || "",
-          formula: nodeData.formula,
-          lean_code: nodeData.leanCode,
+          kind: normalized.type as LibraryItem["kind"],
+          content: normalized.content,
+          formula: normalized.formula,
+          lean_code: normalized.leanCode,
+          x: nodeData.x || 300,
+          y: nodeData.y || 200,
           dependencies: resolvedDependencies,
         });
 
@@ -785,7 +893,11 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
         const newPositions = { ...positions, [newItem.id]: pos };
         recordCreate(beforeItems, afterItems, positions, newPositions, newItem.title);
         
-        setLibraryItems(afterItems);
+        setLibraryItems((prev) => {
+          if (prev.some((item) => item.id === newItem.id)) return prev;
+          return [{ ...newItem, x: pos.x, y: pos.y }, ...prev];
+        });
+        setPositions((prev) => ({ ...prev, [newItem.id]: pos }));
 
         collaboration?.sendNodeCreate?.({
           id: newItem.id,
@@ -809,7 +921,7 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
 
   // Handle quick update from context menu (type/status changes)
   const handleQuickUpdateNode = useCallback(
-    async (nodeId: string, updates: Partial<CanvasNode> & { verification?: { method: string; logs: string; status: string } }) => {
+    async (nodeId: string, updates: Partial<CanvasNode>) => {
       try {
         const updateData: Parameters<typeof updateLibraryItem>[2] = {};
 
@@ -829,8 +941,23 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
         if (updates.leanCode !== undefined) {
           updateData.lean_code = updates.leanCode;
         }
-        if (updates.verification !== undefined) {
-          updateData.verification = updates.verification;
+        if (updates.verification && typeof updates.verification === "object") {
+          const verification = updates.verification as {
+            method?: string;
+            logs?: string;
+            status?: string;
+          };
+          if (
+            typeof verification.method === "string" &&
+            typeof verification.logs === "string" &&
+            typeof verification.status === "string"
+          ) {
+            updateData.verification = {
+              method: verification.method,
+              logs: verification.logs,
+              status: verification.status,
+            };
+          }
         }
         if (updates.dependencies !== undefined) {
           updateData.dependencies = updates.dependencies;
@@ -926,6 +1053,7 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
       }
       
       setLibraryItems(afterItems);
+      setPositions(afterPositions);
 
       // Clear selection
       setSelectedNodeId(null);
@@ -957,6 +1085,7 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
       recordMultiDelete(beforeItems, afterItems, beforePositions, afterPositions, nodeIds.length);
       
       setLibraryItems(afterItems);
+      setPositions(afterPositions);
 
       // Clear selection
       setSelectedNodeId(null);
@@ -976,6 +1105,7 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
         return pos ? { ...item, x: pos.x, y: pos.y } : item;
       })
     );
+    setPositions(nextPositions);
   }, []);
 
   const handleUndo = useCallback(async () => {
@@ -1010,6 +1140,9 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
           kind: item.kind,
           content: item.content,
           formula: item.formula || undefined,
+          lean_code: item.lean_code || undefined,
+          x: item.x ?? undefined,
+          y: item.y ?? undefined,
           dependencies: item.dependencies || [],
         });
       } catch (err) {
@@ -1053,6 +1186,9 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
           kind: item.kind,
           content: item.content,
           formula: item.formula || undefined,
+          lean_code: item.lean_code || undefined,
+          x: item.x ?? undefined,
+          y: item.y ?? undefined,
           dependencies: item.dependencies || [],
         });
       } catch (err) {
@@ -1320,6 +1456,7 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
           problemId={problemId}
           selectedNode={selectedNode}
           selectedNodes={Array.from(selectedNodeIds).map(id => nodes.find(n => n.id === id)).filter(Boolean) as CanvasNode[]}
+          allNodes={nodes}
           isVisible={aiBarVisible}
           onToggle={() => setAiBarVisible(!aiBarVisible)}
           onCreateNode={(data: { type: string; title: string; content: string; formula?: string; x?: number; y?: number; dependencies?: string[]; authors?: Array<{ type: "human" | "agent"; id: string; name?: string }>; source?: { file_path?: string; cell_id?: string; agent_run_id?: string } }) => handleCreateNode({ ...data, dependencies: data.dependencies || [] })}

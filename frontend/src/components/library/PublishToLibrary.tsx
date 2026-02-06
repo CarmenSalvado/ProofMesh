@@ -35,6 +35,7 @@ const KIND_OPTIONS: { value: LibraryItemKind; label: string; icon: React.ReactNo
   { value: "CLAIM", label: "Claim", icon: <Check className="w-4 h-4" />, description: "An assertion to prove" },
   { value: "NOTE", label: "Note", icon: <Lightbulb className="w-4 h-4" />, description: "A general note" },
   { value: "COMPUTATION", label: "Computation", icon: <Code className="w-4 h-4" />, description: "A calculation or computation" },
+  { value: "FORMAL_TEST", label: "Formal Test", icon: <Code className="w-4 h-4" />, description: "Lean-focused verification artifact" },
 ];
 
 export function PublishToLibraryModal({

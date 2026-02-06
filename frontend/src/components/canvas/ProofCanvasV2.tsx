@@ -243,6 +243,18 @@ const readFileAsDataUrl = (file: File) => new Promise<string>((resolve, reject) 
   reader.readAsDataURL(file);
 });
 
+const isEditableTarget = (target: EventTarget | null): boolean => {
+  const element = target instanceof HTMLElement ? target : null;
+  if (!element) return false;
+  if (element.closest('[data-no-shortcuts="true"]')) return true;
+  if (element.closest(".monaco-editor")) return true;
+  if (element.isContentEditable) return true;
+  const tagName = element.tagName;
+  if (tagName === "INPUT" || tagName === "TEXTAREA" || tagName === "SELECT") return true;
+  const role = element.getAttribute("role");
+  return role === "textbox" || role === "combobox";
+};
+
 export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(function ProofCanvasV2({
   nodes,
   edges,
@@ -788,9 +800,8 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
         return;
       }
 
-      // Don't handle if typing in input
-      if ((e.target as HTMLElement).tagName === "INPUT" ||
-          (e.target as HTMLElement).tagName === "TEXTAREA") return;
+      // Ignore canvas shortcuts while typing in inputs/editors.
+      if (isEditableTarget(e.target)) return;
 
       if (e.key === "Delete" || e.key === "Backspace") {
         if (!readOnly) {
@@ -917,8 +928,7 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
   useEffect(() => {
     const handlePaste = (e: ClipboardEvent) => {
       if (readOnly || !onNodeCreate) return;
-      const target = e.target as HTMLElement | null;
-      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
+      if (isEditableTarget(e.target)) {
         return;
       }
       const items = Array.from(e.clipboardData?.items || []);

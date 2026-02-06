@@ -87,7 +87,7 @@ export function AuthorAvatar({
           ? getAgentGradient()
           : "bg-gradient-to-br from-indigo-100 to-indigo-200"
       } ${className}`}
-      title={showTooltip ? author.name || (isAgent ? "AI Agent" : "Unknown") : undefined}
+      title={showTooltip ? author.name || (isAgent ? "Rho Personality" : "Unknown") : undefined}
     >
       {isAgent ? (
         <Bot className={`${sizeClasses.icon} text-white`} />

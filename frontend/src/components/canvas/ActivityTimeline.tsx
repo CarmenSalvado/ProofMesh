@@ -119,6 +119,74 @@ function formatFullDate(timestamp: string): string {
   });
 }
 
+// Format metadata into human-readable description
+function formatMetadata(metadata: Record<string, unknown>): React.ReactNode {
+  const parts: React.ReactNode[] = [];
+  
+  // Handle changes array
+  if (metadata.changes && Array.isArray(metadata.changes)) {
+    const changes = metadata.changes as string[];
+    if (changes.length > 0) {
+      parts.push(
+        <span key="changes" className="text-neutral-600">
+          Changed: {changes.map(c => c.charAt(0).toUpperCase() + c.slice(1)).join(", ")}
+        </span>
+      );
+    }
+  }
+  
+  // Handle item/problem title
+  if (metadata.item_title && metadata.problem_title) {
+    parts.push(
+      <span key="location" className="text-neutral-500">
+        {metadata.item_title} • {metadata.problem_title}
+      </span>
+    );
+  } else if (metadata.item_title) {
+    parts.push(
+      <span key="item" className="text-neutral-500">{metadata.item_title}</span>
+    );
+  } else if (metadata.problem_title) {
+    parts.push(
+      <span key="problem" className="text-neutral-500">{metadata.problem_title}</span>
+    );
+  }
+  
+  // Handle verification method
+  if (metadata.method) {
+    parts.push(
+      <span key="method" className="text-emerald-600">
+        Method: {metadata.method}
+      </span>
+    );
+  }
+  
+  // Handle status
+  if (metadata.status) {
+    parts.push(
+      <span key="status" className="text-blue-600">
+        Status: {metadata.status}
+      </span>
+    );
+  }
+  
+  if (parts.length === 0) {
+    // Fallback: show minimal info from any other fields
+    const simplePairs = Object.entries(metadata)
+      .filter(([key]) => !key.includes("_id"))
+      .slice(0, 3);
+    if (simplePairs.length > 0) {
+      return simplePairs.map(([key, value]) => (
+        <span key={key} className="text-neutral-500">
+          {key}: {String(value)}
+        </span>
+      ));
+    }
+  }
+  
+  return parts.length > 0 ? parts : null;
+}
+
 export function ActivityTimeline({
   activities,
   isLoading = false,
@@ -227,7 +295,7 @@ export function ActivityTimeline({
                                 />
                                 <span className="text-xs text-neutral-500">
                                   {activity.user.name ||
-                                    (activity.user.type === "agent" ? "AI Agent" : "Unknown")}
+                                    (activity.user.type === "agent" ? "Rho Personality" : "Unknown")}
                                 </span>
                               </>
                             )}
@@ -263,9 +331,9 @@ export function ActivityTimeline({
                             className="overflow-hidden"
                           >
                             <div className="mt-2 pt-2 border-t border-neutral-100">
-                              <pre className="text-xs text-neutral-500 overflow-x-auto">
-                                {JSON.stringify(activity.metadata, null, 2)}
-                              </pre>
+                              <div className="flex flex-col gap-1 text-xs">
+                                {formatMetadata(activity.metadata!)}
+                              </div>
                             </div>
                           </motion.div>
                         )}

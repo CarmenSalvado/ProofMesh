@@ -14,6 +14,7 @@ export interface CanvasNode {
   content?: string;
   formula?: string;
   leanCode?: string;
+  verification?: Record<string, unknown> | null;
   x: number;
   y: number;
   width?: number;
@@ -140,6 +141,12 @@ const NODE_TYPES_BASE: Record<string, NodeTypeStyle> = {
     color: "text-cyan-700",
     bgColor: "bg-cyan-50",
     borderColor: "border-cyan-200",
+  },
+  FORMAL_TEST: {
+    label: "Formal Test",
+    color: "text-sky-700",
+    bgColor: "bg-sky-50",
+    borderColor: "border-sky-200",
   },
 };
 

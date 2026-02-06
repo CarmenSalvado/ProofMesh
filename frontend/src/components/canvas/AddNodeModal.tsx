@@ -43,6 +43,7 @@ const NODE_TYPES = [
   { value: "NOTE", label: "Note", icon: FileText },
   { value: "COUNTEREXAMPLE", label: "Counterexample", icon: AlertCircle },
   { value: "COMPUTATION", label: "Computation", icon: FileCode },
+  { value: "FORMAL_TEST", label: "Formal Test", icon: FileCode },
   { value: "IDEA", label: "Idea", icon: Lightbulb },
   { value: "RESOURCE", label: "Resource", icon: FileText },
 ];

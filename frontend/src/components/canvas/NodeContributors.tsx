@@ -115,7 +115,7 @@ export function NodeContributors({
                 <AuthorAvatar author={author} size="sm" />
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-violet-800 truncate">
-                    {author.name || "AI Agent"}
+                    {author.name || "Rho Personality"}
                   </p>
                   <p className="text-xs text-violet-400">
                     Generated content
