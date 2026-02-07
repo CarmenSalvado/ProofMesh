@@ -5,6 +5,7 @@ import { LandingLatexPanel } from "@/components/landing/LandingLatexPanel";
 import { LandingSocialPanel } from "@/components/landing/LandingSocialPanel";
 
 const HACKATHON_DEMO_VIDEO_URL = "https://www.youtube.com/watch?v=YOUR_DEMO_VIDEO_ID";
+const IDEA2STORY_PAPER_URL = "https://arxiv.org/abs/2601.20833";
 
 const RHO_MODE_ROUTING = [
   { mode: "Explorer", purpose: "Rapid discovery, brainstorming, and scoping", model: "Gemini 3 Flash", agents: "Explorer personality + retrieval", tone: "blue" },
@@ -82,19 +83,28 @@ export default function LandingPage() {
               </div>
             </div>
             <span className="text-[10px] font-medium text-neutral-500">
-              Gemini Hackathon demo for collaborative theorem proving
+              Built for collaborative mathematical research and theorem proving
             </span>
           </div>
 
           <h1 className="text-5xl md:text-7xl font-semibold tracking-tight text-neutral-900 mb-6 leading-[1.1]">
-            Explore deeply.
+            Do serious mathematics.
             <br />
-            <span className="text-neutral-400">Verify together.</span>
+            <span className="text-neutral-400">Prove together, verify fast.</span>
           </h1>
           <p className="text-lg text-neutral-500 max-w-2xl mx-auto mb-10 font-light leading-relaxed">
-            A social-first theorem workspace built for the Gemini Hackathon: Rho powers
-            chat reasoning and critique, while Idea2Story embeddings retrieve shared context for
-            rigorous exploration.
+            ProofMesh is a collaborative workspace for mathematical proofs: teams explore ideas in shared threads,
+            challenge assumptions in context, and validate results with{" "}
+            <span className="rho-mention">@Rho</span>.{" "}
+            <a
+              href={IDEA2STORY_PAPER_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="text-indigo-600 underline decoration-indigo-300 underline-offset-2"
+            >
+              Idea2Story
+            </a>{" "}
+            embeddings keep every suggestion grounded in the right theorem context.
           </p>
 
           <div className="flex flex-col md:flex-row items-center justify-center gap-4">
@@ -115,7 +125,7 @@ export default function LandingPage() {
                   d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z"
                 />
               </svg>
-              Start Collaborative Workspace
+              Start Proving Together
             </Link>
             <a
               href={HACKATHON_DEMO_VIDEO_URL}
@@ -141,7 +151,7 @@ export default function LandingPage() {
                   d="M15.91 11.672a.375.375 0 010 .656l-5.603 3.113a.375.375 0 01-.557-.328V8.887c0-.286.307-.466.557-.327l5.603 3.112z"
                 />
               </svg>
-              Watch a video
+              Watch Demo
             </a>
           </div>
         </div>
@@ -189,10 +199,10 @@ export default function LandingPage() {
       <section className="max-w-[1320px] mx-auto px-4 pb-24">
         <div className="text-center mb-8">
           <h2 className="text-3xl font-semibold tracking-tight text-neutral-900 mb-2">
-            Collaborative LaTeX with rigorous review loop
+            Collaborative LaTeX, built for proof teams
           </h2>
           <p className="text-neutral-500">
-            Co-author proofs, pull shared context, and keep the compiled document aligned with peer-reviewed edits.
+            Write together, review in context, and keep every compiled revision aligned with formal reasoning.
           </p>
         </div>
         <LandingLatexPanel />
@@ -204,10 +214,10 @@ export default function LandingPage() {
       <section id="methodology" className="max-w-6xl mx-auto px-4 py-20">
         <div className="text-center mb-16">
           <h2 className="text-3xl font-semibold tracking-tight text-neutral-900 mb-3">
-            Built for social exploration and formal rigor
+            One workflow from conjecture to verified proof
           </h2>
           <p className="text-neutral-500">
-            From brainstorming conjectures to verifying proofs, every step is collaborative and auditable.
+            Brainstorm, branch, critique, and verify in one auditable workspace for mathematics.
           </p>
         </div>
 
@@ -221,7 +231,7 @@ export default function LandingPage() {
             </div>
             <h3 className="text-sm font-semibold text-neutral-900 mb-2">Real-time Co-Exploration</h3>
             <p className="text-xs text-neutral-500 leading-relaxed">
-              See your team&apos;s cursors and intent live while you map ideas in parallel on the same proof graph.
+              Collaborate live on the same proof graph, with shared intent and clear ownership of each step.
             </p>
           </div>
 
@@ -234,7 +244,7 @@ export default function LandingPage() {
             </div>
             <h3 className="text-sm font-semibold text-neutral-900 mb-2">Exploration Branches</h3>
             <p className="text-xs text-neutral-500 leading-relaxed">
-              Try bold proof paths in branches, compare alternatives, and merge only the lines that survive review and verification.
+              Test bold lines of attack in branches, compare alternatives, and merge only what survives verification.
             </p>
           </div>
 
@@ -247,7 +257,7 @@ export default function LandingPage() {
             </div>
             <h3 className="text-sm font-semibold text-neutral-900 mb-2">Contextual Social Review</h3>
             <p className="text-xs text-neutral-500 leading-relaxed">
-              Discuss assumptions directly on nodes and edges, resolve threads in context, and keep an explicit reasoning trail.
+              Debate assumptions directly on nodes and edges, resolve threads in context, and preserve the reasoning trail.
             </p>
           </div>
         </div>
@@ -264,30 +274,62 @@ export default function LandingPage() {
               Rho Stack
             </div>
             <h2 className="text-3xl font-semibold tracking-tight text-neutral-900 mb-3">
-              Rho personalities for exploration, collaboration, and rigor
+              Meet <span className="rho-mention">@Rho</span>, your proof copilot
             </h2>
             <p className="text-neutral-500 max-w-2xl mx-auto">
-              Rho drives chat-side reasoning across the workspace, and Idea2Story embeddings
-              ground every suggestion in relevant nodes, discussions, and library context before
-              formal verification.
+              Ask for critique, formalization, or verification without breaking the flow of mathematical discussion.
+            </p>
+          </div>
+
+          <div className="rounded-2xl border border-indigo-200 bg-gradient-to-br from-indigo-50 to-cyan-50 p-5 md:p-6 mb-6 shadow-sm">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-6 h-6 rounded-md bg-indigo-100 text-indigo-700 flex items-center justify-center text-[11px] font-semibold">@</div>
+              <h3 className="text-base font-semibold text-neutral-900">What is Rho?</h3>
+            </div>
+            <p className="text-sm text-neutral-700 mb-3">
+              Rho is the orchestration layer that keeps mathematical context intact while helping your team think,
+              formalize, and verify in one place.
+            </p>
+            <div className="flex flex-wrap gap-2 text-[11px]">
+              <span className="rounded-full border border-indigo-200 bg-white/80 px-2.5 py-1 text-indigo-700">plays skeptic on demand</span>
+              <span className="rounded-full border border-indigo-200 bg-white/80 px-2.5 py-1 text-indigo-700">keeps theorem context loaded</span>
+              <span className="rounded-full border border-indigo-200 bg-white/80 px-2.5 py-1 text-indigo-700">bridges chat to formal checks</span>
+            </div>
+          </div>
+
+          <div className="text-center mb-6">
+            <h3 className="text-xl font-semibold tracking-tight text-neutral-900 mb-2">
+              Technical routing behind Rho
+            </h3>
+            <p className="text-neutral-500 max-w-2xl mx-auto">
+              Rho routes each request through the right model and toolchain, while{" "}
+              <a
+                href={IDEA2STORY_PAPER_URL}
+                target="_blank"
+                rel="noreferrer"
+                className="text-indigo-600 underline decoration-indigo-300 underline-offset-2"
+              >
+                Idea2Story
+              </a>{" "}
+              embeddings supply grounding context from nodes, discussions, and library items before formal checks run.
             </p>
           </div>
 
           <div className="rounded-2xl border border-neutral-200 bg-white p-5 md:p-6 mb-8 shadow-sm">
             <div className="flex items-center gap-2 mb-3">
               <div className="w-6 h-6 rounded-md bg-cyan-100 text-cyan-700 flex items-center justify-center text-[11px] font-semibold">ρ</div>
-              <h3 className="text-base font-semibold text-neutral-900">What is Rho?</h3>
+              <h3 className="text-base font-semibold text-neutral-900">How Rho works</h3>
             </div>
             <p className="text-sm text-neutral-600 mb-4">
-              Rho is the AI orchestration layer in ProofMesh. It routes each mode to the right personality pipeline,
-              retrieves grounding context through embeddings, and chooses between Gemini 3 Flash and Gemini 3 Pro.
+              Rho selects the right reasoning mode, retrieves relevant context, and balances Gemini 3 Flash and Gemini 3 Pro
+              for speed or depth based on the task.
             </p>
 
             <div className="rounded-xl border border-neutral-200 bg-neutral-50 p-4 mb-4">
               <div className="grid gap-2 md:grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr] text-xs">
                 <div className="rounded-lg border border-neutral-200 bg-white p-2.5 font-medium text-neutral-800">Mode</div>
                 <div className="hidden md:flex items-center justify-center text-neutral-400">→</div>
-                <div className="rounded-lg border border-neutral-200 bg-white p-2.5 font-medium text-neutral-800">Rho</div>
+                <div className="rounded-lg border border-neutral-200 bg-white p-2.5 font-medium text-neutral-800">Router</div>
                 <div className="hidden md:flex items-center justify-center text-neutral-400">→</div>
                 <div className="rounded-lg border border-neutral-200 bg-white p-2.5 font-medium text-neutral-800">Gemini 3 Flash/Pro</div>
                 <div className="hidden md:flex items-center justify-center text-neutral-400">→</div>
@@ -322,7 +364,7 @@ export default function LandingPage() {
 
             <div className="mt-4 rounded-xl border border-neutral-200 bg-neutral-50 p-3 text-xs text-neutral-600">
               <span className="font-semibold text-neutral-800">Personalities:</span> Explorer, Verifier, Archivist, Skeptic.
-              Rho combines them depending on mode and context.
+              Rho composes them dynamically for each step of the proof.
             </div>
           </div>
         </div>
@@ -342,8 +384,8 @@ export default function LandingPage() {
               &quot;A research conversation, not a file exchange.&quot;
             </h3>
             <p className="text-neutral-500 text-sm leading-relaxed">
-              Our group moved from fragmented drafts to one shared proof graph. Every assumption,
-              critique, and verification step is visible, discussable, and recoverable by the whole team.
+              We moved from scattered drafts to one shared proof graph. Every assumption, critique, and verification
+              step is visible, discussable, and recoverable by the full team.
             </p>
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 bg-gradient-to-br from-indigo-100 to-purple-100 rounded-full flex items-center justify-center text-sm font-bold text-indigo-700">
@@ -399,18 +441,18 @@ export default function LandingPage() {
       <section className="py-32 px-6 text-center bg-neutral-900 text-white">
         <div className="max-w-2xl mx-auto">
           <h2 className="text-3xl font-semibold tracking-tight mb-6">
-            Build rigorous mathematics, socially.
+            Build mathematics with rigor and momentum.
           </h2>
           <p className="text-neutral-400 mb-10 font-light">
-            Join teams using ProofMesh to explore conjectures, collaborate in public reasoning, and
-            ship formally verified results with confidence.
+            Join teams using ProofMesh to explore conjectures, collaborate in shared reasoning, and ship formally
+            verified results with confidence.
           </p>
           <div className="flex flex-col sm:flex-row gap-3 justify-center">
             <Link
               href="/register"
               className="bg-white text-neutral-900 px-8 py-3 rounded-full text-sm font-medium hover:bg-neutral-100 transition-colors inline-flex items-center gap-2 justify-center"
             >
-              Start Team Proving
+              Start Proving
               <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M17 8l4 4m0 0l-4 4m4-4H3" />
               </svg>
@@ -419,7 +461,7 @@ export default function LandingPage() {
               href="/library"
               className="border border-neutral-700 text-white px-8 py-3 rounded-full text-sm font-medium hover:border-neutral-500 transition-colors"
             >
-              Explore Shared Library
+              Explore Theorem Library
             </Link>
           </div>
         </div>

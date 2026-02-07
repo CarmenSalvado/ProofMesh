@@ -1,5 +1,7 @@
 import { CheckCircle2, Flame, GitBranch, MessageSquare, Users } from "lucide-react";
 
+const IDEA2STORY_PAPER_URL = "https://arxiv.org/abs/2601.20833";
+
 const FEED_ITEMS = [
   {
     user: "ER",
@@ -32,11 +34,20 @@ export function LandingSocialPanel() {
     <section id="community" className="max-w-[1320px] mx-auto px-4 pb-24">
       <div className="text-center mb-8">
         <h2 className="text-3xl font-semibold tracking-tight text-neutral-900 mb-2">
-          Social proof workflow for rigorous teams
+          Social workflow for mathematical proof teams
         </h2>
         <p className="text-neutral-500">
-          Shared feed, threaded critique, and branch history where Rho chat assistance and
-          Idea2Story embedding retrieval keep exploration and rigor connected.
+          Shared feed, threaded critique, and branch history where Rho assistance and
+          {" "}
+          <a
+            href={IDEA2STORY_PAPER_URL}
+            target="_blank"
+            rel="noreferrer"
+            className="text-indigo-600 underline decoration-indigo-300 underline-offset-2"
+          >
+            Idea2Story embedding retrieval
+          </a>{" "}
+          keep exploration and formal rigor connected.
         </p>
       </div>
 
@@ -45,7 +56,7 @@ export function LandingSocialPanel() {
           <div className="mb-3 flex items-center justify-between">
             <div className="flex items-center gap-2 text-sm font-semibold text-neutral-900">
               <Flame className="h-4 w-4 text-amber-500" />
-              Live collaboration feed
+              Live theorem activity
             </div>
             <span className="rounded-full border border-neutral-200 bg-neutral-50 px-2 py-1 text-[10px] text-neutral-600">
               Rho Hackathon flow
@@ -86,7 +97,7 @@ export function LandingSocialPanel() {
           <div className="rounded-2xl border border-neutral-200 bg-white p-4 shadow-[0_20px_50px_-28px_rgba(0,0,0,0.35)]">
             <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-neutral-900">
               <MessageSquare className="h-4 w-4 text-indigo-500" />
-              Peer-review thread
+              Proof review thread
             </div>
             <div className="space-y-2">
               <div className="rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2 text-[12px] text-neutral-700">
@@ -98,7 +109,7 @@ export function LandingSocialPanel() {
               </div>
               <div className="flex items-center gap-1 text-[11px] text-emerald-600">
                 <CheckCircle2 className="h-3.5 w-3.5" />
-                Thread resolved after formal verification.
+                Thread resolved after formal verification pass.
               </div>
             </div>
           </div>
@@ -106,7 +117,7 @@ export function LandingSocialPanel() {
           <div className="rounded-2xl border border-neutral-200 bg-white p-4 shadow-[0_20px_50px_-28px_rgba(0,0,0,0.35)]">
             <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-neutral-900">
               <GitBranch className="h-4 w-4 text-emerald-500" />
-              Exploration + rigor snapshot
+              Exploration + verification snapshot
             </div>
             <div className="grid grid-cols-2 gap-2 text-[11px]">
               <div className="rounded-lg border border-neutral-200 bg-neutral-50 px-2.5 py-2">

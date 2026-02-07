@@ -1,13 +1,10 @@
 import type { Metadata } from "next";
-import { Geist_Mono, Inter, Newsreader } from "next/font/google";
+import { Geist_Mono, Newsreader } from "next/font/google";
+import { GeistPixelSquare } from "geist/font/pixel";
 import "./globals.css";
 import { AuthProvider } from "@/lib/auth";
 
-const inter = Inter({
-  variable: "--font-inter",
-  subsets: ["latin"],
-  weight: ["300", "400", "500", "600"],
-});
+const geistPixelSquare = GeistPixelSquare;
 
 const geistMono = Geist_Mono({
   variable: "--font-mono",
@@ -32,7 +29,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="antialiased" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning>
       <head>
         {/* KaTeX CDN for Firefox font compatibility */}
         <link
@@ -43,7 +40,7 @@ export default function RootLayout({
         />
       </head>
       <body
-        className={`${inter.variable} ${geistMono.variable} ${newsreader.variable} font-sans`}
+        className={`${geistPixelSquare.className} ${geistPixelSquare.variable} ${geistMono.variable} ${newsreader.variable}`}
       >
         <AuthProvider>{children}</AuthProvider>
       </body>

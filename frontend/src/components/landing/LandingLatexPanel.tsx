@@ -26,6 +26,8 @@ if (typeof window !== "undefined") {
   gsap.registerPlugin(ScrollTrigger);
 }
 
+const IDEA2STORY_PAPER_URL = "https://arxiv.org/abs/2601.20833";
+
 type LeftTab = "files" | "chats" | "knowledge";
 
 const MOCK_KNOWLEDGE_NODES = [
@@ -467,7 +469,16 @@ export function LandingLatexPanel() {
                     <div className="flex items-start gap-2">
                       <Sparkles className="mt-0.5 h-3.5 w-3.5 text-amber-400" />
                       <div className="rounded-xl rounded-tl-sm border border-neutral-800 bg-neutral-900/60 px-3 py-2 text-xs text-neutral-300">
-                        Rho is integrating Idea2Story embedding context and tightening the final contradiction steps.
+                        Rho is integrating{" "}
+                        <a
+                          href={IDEA2STORY_PAPER_URL}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-sky-300 underline decoration-sky-700/60 underline-offset-2"
+                        >
+                          Idea2Story
+                        </a>{" "}
+                        embedding context and tightening the final contradiction steps.
                         <div className="mt-2 space-y-1.5">
                           <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-500">
                             Rigor Chain
@@ -649,7 +660,14 @@ export function LandingLatexPanel() {
           </span>
           <span className="rounded-full border border-neutral-700/70 bg-neutral-900/40 px-3 py-1.5 text-xs text-neutral-200">
             <BookOpen className="mr-1 inline h-3.5 w-3.5 text-sky-400" />
-            Idea2Story embeddings retrieval
+            <a
+              href={IDEA2STORY_PAPER_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="text-sky-300 underline decoration-sky-700/60 underline-offset-2"
+            >
+              Idea2Story embeddings retrieval
+            </a>
           </span>
           <span className="rounded-full border border-neutral-700/70 bg-neutral-900/40 px-3 py-1.5 text-xs text-neutral-200">
             <FileText className="mr-1 inline h-3.5 w-3.5 text-emerald-400" />
