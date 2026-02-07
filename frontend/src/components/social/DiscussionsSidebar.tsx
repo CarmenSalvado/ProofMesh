@@ -90,7 +90,12 @@ export function DiscussionsSidebar({ className = "", problemId }: DiscussionsSid
                   )}
                 </div>
                 <div className="flex items-center gap-2 text-[10px] text-neutral-400 mt-1">
-                  <span className="font-medium">{discussion.author.username}</span>
+                  <Link
+                    href={`/users/${discussion.author.username}`}
+                    className="font-medium hover:text-indigo-600 hover:underline"
+                  >
+                    {discussion.author.username}
+                  </Link>
                   <span>·</span>
                   <MessageSquare className="w-3 h-3" />
                   <span>{discussion.comment_count}</span>

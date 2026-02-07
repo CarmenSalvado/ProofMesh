@@ -1,12 +1,13 @@
 import uuid
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select, inspect
+from sqlalchemy import select, inspect, func
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.problem import Problem, ProblemVisibility, ProblemDifficulty
+from app.models.star import Star, StarTargetType
 from app.models.activity import Activity, ActivityType
 from app.models.library_item import LibraryItem
 from app.models.canvas_block import CanvasBlock
@@ -40,7 +41,7 @@ def build_workspace_markdown(title: str, description: str | None = None) -> str:
 """
 
 
-def problem_to_response(problem: Problem) -> ProblemResponse:
+def problem_to_response(problem: Problem, star_count: int = 0) -> ProblemResponse:
     """Convert Problem model to response with counts"""
     state = inspect(problem)
     library_count = 0
@@ -61,6 +62,7 @@ def problem_to_response(problem: Problem) -> ProblemResponse:
             avatar_url=problem.author.avatar_url,
         ),
         library_item_count=library_count,
+        star_count=star_count,
     )
 
 
@@ -94,9 +96,22 @@ async def list_problems(
     query = query.order_by(Problem.updated_at.desc())
     result = await db.execute(query)
     problems = result.scalars().all()
+
+    star_counts: dict[UUID, int] = {}
+    problem_ids = [p.id for p in problems]
+    if problem_ids:
+        stars_result = await db.execute(
+            select(Star.target_id, func.count(Star.id))
+            .where(
+                Star.target_type == StarTargetType.PROBLEM,
+                Star.target_id.in_(problem_ids),
+            )
+            .group_by(Star.target_id)
+        )
+        star_counts = {target_id: count for target_id, count in stars_result.all()}
     
     return ProblemListResponse(
-        problems=[problem_to_response(p) for p in problems],
+        problems=[problem_to_response(p, star_counts.get(p.id, 0)) for p in problems],
         total=len(problems)
     )
 
@@ -366,7 +381,14 @@ async def get_problem(
         if not current_user or problem.author_id != current_user.id:
             raise HTTPException(status_code=404, detail="Problem not found")
     
-    return problem_to_response(problem)
+    stars_result = await db.execute(
+        select(func.count(Star.id)).where(
+            Star.target_type == StarTargetType.PROBLEM,
+            Star.target_id == problem.id,
+        )
+    )
+    star_count = stars_result.scalar() or 0
+    return problem_to_response(problem, star_count)
 
 
 @router.patch("/{problem_id}", response_model=ProblemResponse)

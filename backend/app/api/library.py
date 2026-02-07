@@ -200,20 +200,6 @@ async def create_library_item(
         dependencies=data.dependencies,
     )
     db.add(item)
-    await db.flush()
-    db.add(
-        Activity(
-            user_id=current_user.id,
-            type=ActivityType.PUBLISHED_LIBRARY,
-            target_id=item.id,
-            extra_data={
-                "problem_id": str(problem_id),
-                "problem_title": problem.title,
-                "item_title": item.title,
-                "item_kind": item.kind.value if item.kind else None,
-            },
-        )
-    )
     await db.commit()
     await db.refresh(item)
     
@@ -290,28 +276,28 @@ async def update_library_item(
         item.status = data.status
         changes.append("status")
     if data.verification is not None:
-        item.verification = data.verification.model_dump(mode="json")
-        changes.append("verification")
+        new_verification = data.verification.model_dump(mode="json")
+        if new_verification != (item.verification or {}):
+            item.verification = new_verification
+            changes.append("verification")
     if data.dependencies is not None:
-        item.dependencies = [str(dep) for dep in data.dependencies]
-        changes.append("dependencies")
+        current_dependencies = list(item.dependencies or [])
+        new_dependencies = list(data.dependencies)
+        if new_dependencies != current_dependencies:
+            item.dependencies = new_dependencies
+            changes.append("dependencies")
     if data.x is not None:
         item.x = data.x
     if data.y is not None:
         item.y = data.y
     
-    # Log activity for significant changes
-    if changes:
-        # Determine activity type based on changes
-        if data.status == LibraryItemStatus.VERIFIED and old_status != LibraryItemStatus.VERIFIED:
-            activity_type = ActivityType.VERIFIED_LIBRARY
-        else:
-            activity_type = ActivityType.UPDATED_LIBRARY
-        
+    # Avoid feed spam from iterative canvas edits.
+    # Emit activity only on explicit verification transition.
+    if data.status == LibraryItemStatus.VERIFIED and old_status != LibraryItemStatus.VERIFIED:
         db.add(
             Activity(
                 user_id=current_user.id,
-                type=activity_type,
+                type=ActivityType.VERIFIED_LIBRARY,
                 target_id=item.id,
                 extra_data={
                     "problem_id": str(problem_id),
@@ -418,25 +404,23 @@ async def execute_computation_node(
     elif item.status == LibraryItemStatus.VERIFIED:
         item.status = LibraryItemStatus.PROPOSED
 
-    activity_type = (
-        ActivityType.VERIFIED_LIBRARY if execution.success else ActivityType.UPDATED_LIBRARY
-    )
-    db.add(
-        Activity(
-            user_id=current_user.id,
-            type=activity_type,
-            target_id=item.id,
-            extra_data={
-                "problem_id": str(problem_id),
-                "problem_title": problem.title,
-                "item_title": item.title,
-                "execution_success": execution.success,
-                "exit_code": execution.exit_code,
-                "duration_ms": execution.duration_ms,
-                "changes": ["execution"],
-            },
+    if execution.success:
+        db.add(
+            Activity(
+                user_id=current_user.id,
+                type=ActivityType.VERIFIED_LIBRARY,
+                target_id=item.id,
+                extra_data={
+                    "problem_id": str(problem_id),
+                    "problem_title": problem.title,
+                    "item_title": item.title,
+                    "execution_success": execution.success,
+                    "exit_code": execution.exit_code,
+                    "duration_ms": execution.duration_ms,
+                    "changes": ["execution"],
+                },
+            )
         )
-    )
 
     await db.commit()
 

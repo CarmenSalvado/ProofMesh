@@ -1,645 +1,245 @@
 # ProofMesh
 
-**Human-controlled reasoning workspace for mathematics.**
+ProofMesh is a collaborative workspace for mathematical writing, exploration, and formalization.
 
-ProofMesh is a collaborative platform for mathematical exploration and proof development. It combines:
-- 📝 **Latex workspaces** for formal mathematical writing
-- 🎨 **Visual canvas** for proof exploration and diagram generation
-- 🤖 **AI agents** for mathematical assistance (exploration, formalization, critique)
-- 📚 **Knowledge library** for theorems, lemmas, and definitions
-- 🔗 **Social features** for collaboration and discussion
-- ⚡ **Lean 4 integration** for formal verification
+It combines a LaTeX lab, a visual proof canvas, a knowledge library, and AI-assisted workflows, with Lean 4 and TeX compilation isolated in dedicated services.
 
----
+## What This Repository Contains
 
-## 🚀 Quick Start
+- `frontend/`: Next.js 16 application (TypeScript, Tailwind CSS 4).
+- `backend/`: FastAPI API server (SQLAlchemy async, PostgreSQL, Redis, MinIO).
+- `mesh/`: internal AI orchestration/agent package imported by backend.
+- `lean-runner/`: isolated Lean 4 execution service.
+- `latex-compiler/`: isolated TeXLive compilation + SyncTeX lookup service.
+- `docker-compose.yml`: local development stack.
+- `Makefile`: common development commands.
 
-### Prerequisites
-- Docker & Docker Compose
-- Make (optional, for convenience commands)
+## Architecture at a Glance
 
-### Start Development Environment
+Runtime services in local development:
+
+- `frontend` (`http://localhost:3000`)
+- `backend` (`http://localhost:8080`, docs at `/docs`)
+- `postgres` (`localhost:5432`)
+- `redis` (`localhost:6379`)
+- `minio` (`http://localhost:9000`, console `http://localhost:9001`)
+- `lean-runner` (`localhost:9008`)
+- `texlive-compiler` (internal service, used by backend)
+- `canvas-ai-worker` (background jobs)
+
+Core flow:
+
+1. User actions go through `frontend` into `backend`.
+2. Backend persists metadata in PostgreSQL and files/artifacts in MinIO.
+3. Long-running AI canvas jobs are processed by `canvas-ai-worker` via Redis.
+4. Lean verification is delegated to `lean-runner`.
+5. LaTeX compile and SyncTeX mapping are delegated to `texlive-compiler`.
+
+## Gemini 3 (Hackathon)
+
+This project is explicitly wired to Gemini 3 for assistant workflows in LaTeX and canvas exploration.
+
+### Where Gemini 3 Is Used
+
+- LaTeX AI chat/edit/autocomplete (frontend server routes):
+  - `frontend/src/app/api/latex-ai/chat/route.ts`
+  - `frontend/src/app/api/latex-ai/edit/route.ts`
+  - `frontend/src/app/api/latex-ai/autocomplete/route.ts`
+- Canvas AI routes:
+  - `frontend/src/app/api/canvas-ai/explore/route.ts`
+  - `frontend/src/app/api/canvas-ai/formalize/route.ts`
+  - `frontend/src/app/api/canvas-ai/critique/route.ts`
+- Backend orchestration + worker path:
+  - `backend/app/api/orchestration.py`
+  - `backend/app/workers/canvas_ai_worker.py`
+  - `mesh/backend/agents/`
+
+### Gemini 3 Models Configured in Repo
+
+- `gemini-3-flash-preview`
+- `gemini-3-flash-preview-thinking`
+- `gemini-3-pro-preview`
+
+Current usage defaults in UI:
+
+- LaTeX Lab mode selector maps to:
+  - `flash` -> `gemini-3-flash-preview`
+  - `thinking` -> `gemini-3-flash-preview-thinking`
+
+Reference:
+
+- `frontend/src/app/problems/[id]/lab/page.tsx`
+
+### Required Environment Variables
+
+Set at least one of:
+
+- `GEMINI_API_KEY`
+- `GOOGLE_GENERATIVE_AI_API_KEY`
+
+In Docker flow, define them in `.env` before `make dev`.
+
+### Minimal Gemini 3 Demo Flow
+
+1. Start stack with `make dev`.
+2. Open `http://localhost:3000/problems/<problem_id>/lab`.
+3. In LaTeX Lab AI panel, run one prompt in `Flash` mode and one in `Thinking` mode.
+4. Open `/problems/<problem_id>/canvas` and trigger explore/formalize/critique.
+5. Verify responses stream and state transitions complete without API errors.
+
+### Verification Checklist (Hackathon)
+
+- API key is present in container env.
+- `backend` logs do not show `GEMINI_API_KEY not found`.
+- LaTeX AI routes return content, not fallback errors.
+- Canvas AI endpoints produce generated output.
+- No 401/403 from frontend server routes using Gemini.
+
+## Prerequisites
+
+- Docker Engine with Compose plugin
+- GNU Make
+
+## Quick Start (Recommended)
 
 ```bash
-# Clone the repository
-git clone https://github.com/yourusername/ProofMesh.git
-cd ProofMesh
-
-# Start all services (backend, frontend, PostgreSQL, Redis, MinIO)
+cp .env.example .env
 make dev
-
-# View logs
-make logs                 # All services
-make logs-backend         # Backend only
-make logs-frontend        # Frontend only
 ```
 
-**Service URLs:**
-- 🌐 Frontend: http://localhost:3000
-- 🔌 Backend API: http://localhost:8080
-- 📖 API Documentation: http://localhost:8080/docs
-- 📦 MinIO Console: http://localhost:9001
+Then open:
 
-### Seed Demo Data
+- Frontend: `http://localhost:3000`
+- Backend API: `http://localhost:8080`
+- API docs: `http://localhost:8080/docs`
+- MinIO Console: `http://localhost:9001`
+
+## Common Commands
 
 ```bash
-# Populate database with demo users, problems, and library items
-docker compose exec backend python backend/scripts/seed_platform.py
+# lifecycle
+make dev
+make down
+make logs
+make logs-backend
+make logs-frontend
+
+# database
+make migrate
+make migrate-status
+make migration
+
+# shells
+make shell-backend
+make shell-frontend
+make shell-db
+
+# data seeding
+make seed
+make seed-clean
+make seed-custom
+
+# cleanup / rebuild
+make clean
+make rebuild
 ```
 
----
+## Development Notes
 
-## 🏗️ Architecture
+- Backend and frontend run with source mounts for hot reload.
+- Backend startup runs migrations via container entrypoint.
+- `mesh/` is a Python package mounted into backend; it is not a separate HTTP service.
+- LaTeX artifacts are stored under MinIO object prefixes (e.g. `latex/<problem_id>/.output/*`).
 
-### Tech Stack
+## Manual Setup (Without Docker)
 
-**Backend:**
-- FastAPI (Python 3.12)
-- PostgreSQL (async with SQLAlchemy 2.0)
-- Redis (job queues)
-- MinIO (S3-compatible object storage)
-- Google Gemini API (AI agents)
-
-**Frontend:**
-- Next.js 16 (React, TypeScript)
-- Tailwind CSS 4
-- Milkdown Crepe (markdown editor)
-- Monaco Editor (code editor)
-- KaTeX (LaTeX rendering)
-- PDF.js (document viewing)
-
-**Isolated Services:**
-- `lean-runner`: Lean 4 code execution (sandboxed)
-- `latex-compiler`: TeXLive PDF compilation
-
-### Project Structure
-
-```
-ProofMesh/
-├── backend/                    # FastAPI backend
-│   ├── app/
-│   │   ├── api/                # REST API routes
-│   │   │   ├── auth.py         # Authentication (JWT)
-│   │   │   ├── problems.py     # Problem management
-│   │   │   ├── workspaces.py   # File workspace
-│   │   │   ├── library.py      # Knowledge library
-│   │   │   ├── canvas_blocks.py # Canvas blocks
-│   │   │   ├── canvas_ai.py    # Canvas AI operations
-│   │   │   ├── agents.py       # Agent orchestration
-│   │   │   ├── social/         # Social features
-│   │   │   └── documents.py    # Document management
-│   │   ├── models/             # SQLAlchemy ORM models
-│   │   ├── schemas/            # Pydantic request/response schemas
-│   │   ├── services/           # Business logic
-│   │   └── workers/            # Background job processors
-│   ├── alembic/                # Database migrations
-│   └── scripts/                # Utility scripts
-├── frontend/                   # Next.js frontend
-│   └── src/
-│       ├── app/                # Next.js pages (App Router)
-│       ├── components/         # React components
-│       │   ├── canvas/         # Canvas visualization
-│       │   ├── editor/         # Markdown/code editors
-│       │   └── ui/             # Reusable UI components
-│       └── lib/                # API client, types, utilities
-├── mesh/                       # AI agents module
-│   └── backend/
-│       ├── agents/             # Agent implementations
-│       │   ├── explorer.py     # Proposes mathematical results
-│       │   ├── formalizer.py   # Converts to Lean 4
-│       │   ├── critic.py       # Evaluates proposals
-│       │   └── latex_assistant.py # LaTeX generation
-│       ├── tools/              # Agent tools
-│       │   ├── lean_runner.py  # Lean 4 execution
-│       │   ├── fact_store.py   # Knowledge persistence
-│       │   └── embeddings.py   # Vector embeddings
-│       ├── orchestrator.py     # Main agent orchestrator
-│       └── adk_runtime.py      # Agent runtime
-├── lean-runner/                # Isolated Lean 4 execution
-└── latex-compiler/             # Isolated LaTeX compilation
-```
-
-### Key Concepts
-
-**Problem**: A mathematical problem or question with metadata (title, description, difficulty, tags)
-
-**Workspace**: File-based workspace for informal mathematical writing (markdown, Lean code, etc.)
-
-**Library**: Collection of knowledge items (theorems, lemmas, definitions, claims, axioms)
-
-**Canvas**: Visual proof exploration interface with blocks for diagrams, LaTeX, and AI-generated content
-
-**Agent**: AI assistant for mathematical reasoning (explorer, formalizer, critic, LaTeX assistant)
-
----
-
-## 🔧 Development
-
-### Docker Development (Recommended)
-
-Docker setup uses **volume mounts** for instant hot-reload:
-- Edit `backend/app/**` → Backend reloads automatically
-- Edit `frontend/src/**` → Frontend reloads with Fast Refresh
-
-**No need to rebuild containers for code changes!**
-
-```bash
-# Core commands
-make dev              # Start all services
-make down             # Stop containers
-make logs             # View all logs
-make restart          # Restart all services
-
-# Database
-make migrate          # Run database migrations
-make migrate-status   # Check migration status
-make migration        # Create new migration (prompts for name)
-make shell-db         # Access PostgreSQL shell (psql)
-
-# Container access
-make shell-backend    # Bash shell in backend container
-make shell-frontend   # Bash shell in frontend container
-
-# Cleanup
-make clean            # Remove everything including volumes
-make rebuild          # Rebuild containers without cache
-```
-
-### Manual Backend Setup (without Docker)
+### Backend
 
 ```bash
 cd backend
-
-# Create virtual environment
 python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install dependencies
+source venv/bin/activate
 pip install -r requirements.txt
-
-# Configure environment
 cp .env.example .env
-# Edit .env with your credentials
-
-# Run migrations
 alembic upgrade head
-
-# Start development server
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8080
 ```
 
-### Manual Frontend Setup
+### Frontend
 
 ```bash
 cd frontend
-
-# Install dependencies
 npm install
-
-# Start development server
 npm run dev
-
-# Other commands
-npm run build         # Production build
-npm run lint          # ESLint
 ```
 
-### Environment Variables
+### Auxiliary Services
 
-Key environment variables (see `.env.example`):
+Manual mode still requires PostgreSQL, Redis, MinIO, Lean runner, and LaTeX compiler reachable through the URLs configured in `.env`.
+
+## Environment Configuration
+
+Use `.env.example` as the baseline. Important groups:
+
+- Database/queue/storage:
+  - `DATABASE_URL`
+  - `REDIS_URL`
+  - `S3_ENDPOINT`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_BUCKET`, `S3_REGION`, `S3_SECURE`
+- External/aux services:
+  - `LATEX_COMPILER_URL`
+  - `LATEX_COMPILE_TIMEOUT`
+  - `LEAN_RUNNER_URL`
+  - `LEAN_TIMEOUT`
+- AI keys:
+  - `GEMINI_API_KEY`
+  - `GOOGLE_GENERATIVE_AI_API_KEY`
+- Frontend:
+  - `NEXT_PUBLIC_API_URL`
+  - `NEXT_PUBLIC_WS_URL`
+
+## Repository Layout
+
+```text
+backend/
+  app/
+    api/
+    models/
+    schemas/
+    services/
+    workers/
+  alembic/
+  scripts/
+frontend/
+  src/
+mesh/
+lean-runner/
+latex-compiler/
+```
+
+## Known Scope and Limitations
+
+- Test coverage is currently limited; changes are validated mostly through local runtime checks.
+- This repository is optimized for local development and iteration speed over production-hardening defaults.
+
+## Troubleshooting
+
+- Service not updating after code changes (especially `texlive-compiler`, `lean-runner`):
 
 ```bash
-# Database
-DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/proofmesh
-
-# Redis
-REDIS_URL=redis://localhost:6379/0
-
-# MinIO (S3-compatible storage)
-S3_ENDPOINT=http://localhost:9000
-S3_ACCESS_KEY=minioadmin
-S3_SECRET_KEY=minioadmin
-S3_BUCKET=proofmesh
-
-# AI Agents
-GEMINI_API_KEY=your-gemini-api-key
-
-# Services
-LEAN_RUNNER_URL=http://lean-runner:8000
-LATEX_COMPILER_URL=http://latex-compiler:8000
-LEAN_TIMEOUT=60
-
-# Frontend
-NEXT_PUBLIC_API_URL=http://localhost:8080
-NEXT_PUBLIC_WS_URL=ws://localhost:8080/ws
+make rebuild
 ```
 
----
-
-## 🗄️ Database
-
-### Migrations
-
-ProofMesh uses Alembic for database migrations:
-
-```bash
-# Run all pending migrations (also runs automatically on backend startup)
-make migrate
-
-# Create new migration
-make migration
-# Enter migration name when prompted
-
-# Check migration status
-make migrate-status
-
-# Manual Alembic commands (in backend container or venv)
-alembic revision --autogenerate -m "Add new table"
-alembic upgrade head
-alembic downgrade -1
-alembic history
-```
-
-### Core Data Models
-
-| Model | Description |
-|-------|-------------|
-| `User` | User accounts with authentication |
-| `Problem` | Mathematical problems/questions |
-| `LibraryItem` | Knowledge items (theorem, lemma, definition, claim, axiom) |
-| `WorkspaceFile` | Files in problem workspaces |
-| `CanvasBlock` | Blocks on visual canvas |
-| `Discussion` | Discussion threads |
-| `Comment` | Comments on discussions |
-| `Team` | Collaboration teams |
-| `Star` | User stars (favorites) |
-| `Follow` | User follow relationships |
-
----
-
-## 🔌 API Reference
-
-### Main Endpoints
-
-**Authentication** (`/api/auth`)
-- `POST /register` - Create new user account
-- `POST /login` - Login with credentials (returns JWT)
-- `POST /refresh` - Refresh access token
-- `GET /me` - Get current user info
-
-**Problems** (`/api/problems`)
-- `GET /` - List problems (with filters)
-- `POST /` - Create new problem
-- `GET /{id}` - Get problem details
-- `PUT /{id}` - Update problem
-- `DELETE /{id}` - Delete problem
-
-**Workspaces** (`/api/workspaces`)
-- `GET /{problem_id}/files` - List workspace files
-- `POST /{problem_id}/files` - Create file
-- `GET /{problem_id}/files/{file_id}` - Get file content
-- `PUT /{problem_id}/files/{file_id}` - Update file
-- `DELETE /{problem_id}/files/{file_id}` - Delete file
-
-**Library** (`/api/library`)
-- `GET /` - List library items (theorems, lemmas, etc.)
-- `POST /` - Create library item
-- `GET /{id}` - Get item details
-- `PUT /{id}` - Update item
-- `DELETE /{id}` - Delete item
-
-**Canvas** (`/api/canvas-blocks`, `/api/canvas-ai`)
-- `GET /problems/{problem_id}/blocks` - Get canvas blocks
-- `POST /problems/{problem_id}/blocks` - Create block
-- `PUT /blocks/{id}` - Update block
-- `DELETE /blocks/{id}` - Delete block
-- `POST /canvas-ai/explore` - AI exploration task
-- `POST /canvas-ai/formalize` - Formalize to Lean 4
-- `POST /canvas-ai/critique` - Critique proposal
-
-**Social** (`/api/social/*`)
-- `GET /users` - List users
-- `GET /users/{id}` - User profile
-- `POST /users/{id}/follow` - Follow user
-- `GET /discussions` - List discussions
-- `POST /discussions` - Create discussion
-- `GET /teams` - List teams
-
-**Documents** (`/api/documents`)
-- `POST /upload` - Upload PDF document
-- `GET /{id}` - Get document metadata
-- `GET /{id}/download` - Download document
-
-**WebSocket** (`/ws`)
-- Real-time updates for canvas, discussions, and notifications
-
-📖 **Full API Documentation**: http://localhost:8080/docs
-
----
-
-## 🤖 AI Agents
-
-ProofMesh includes AI agents powered by Google Gemini for mathematical assistance.
-
-### Available Agents
-
-| Agent | Purpose | Usage |
-|-------|---------|-------|
-| **Explorer** | Proposes new mathematical results based on context | Canvas "Explore" button |
-| **Formalizer** | Converts informal math to Lean 4 code | Canvas "Formalize" button |
-| **Critic** | Evaluates mathematical proposals for correctness | Canvas "Critique" button |
-| **LaTeX Assistant** | Generates LaTeX for mathematical expressions | Canvas "LaTeX" block |
-
-### Agent Architecture
-
-Agents use the **Orchestrator** pattern (NOT REST API - it's a Python library):
-
-```python
-from mesh.backend.orchestrator import Orchestrator
-
-orch = Orchestrator()
-
-# Explore mathematical concepts
-proposals = await orch.explore(block_id)
-
-# Formalize to Lean 4
-lean_code = await orch.formalize(text)
-
-# Verify with Lean runner
-result = await orch.verify(lean_code)
-
-# Critique proposal
-critique = await orch.critique(proposal)
-```
-
-**Key Points:**
-- ⚠️ **ADK (Agent Development Kit) is a runtime library, NOT a backend API**
-- Agents are Python classes in `mesh/backend/agents/`
-- Backend imports mesh as a Python module (via Docker volume mount)
-- Agents use Gemini Flash 3 model (`gemini-3-flash-preview`)
-- Canvas AI operations run asynchronously via Redis queue
-
-📖 **Agent Development Guide**: See [AGENTS.md](AGENTS.md) for detailed agent development documentation.
-
----
-
-## 🛠️ Common Tasks
-
-### Adding a New API Endpoint
-
-1. **Create route handler** in `backend/app/api/`:
-   ```python
-   # backend/app/api/my_feature.py
-   from fastapi import APIRouter, Depends
-   from sqlalchemy.ext.asyncio import AsyncSession
-   from app.database import get_db
-   
-   router = APIRouter(prefix="/api/my-feature", tags=["My Feature"])
-   
-   @router.get("/")
-   async def list_items(db: AsyncSession = Depends(get_db)):
-       # Your logic here
-       return {"items": []}
-   ```
-
-2. **Add schemas** in `backend/app/schemas/` if needed:
-   ```python
-   # backend/app/schemas/my_feature.py
-   from pydantic import BaseModel
-   
-   class MyItemCreate(BaseModel):
-       name: str
-       value: int
-   ```
-
-3. **Register router** in `backend/app/main.py`:
-   ```python
-   from app.api import my_feature
-   
-   app.include_router(my_feature.router)
-   ```
-
-4. **Add frontend API client** in `frontend/src/lib/api.ts`:
-   ```typescript
-   export const myFeatureApi = {
-     list: () => api.get('/api/my-feature/'),
-     create: (data: MyItemCreate) => api.post('/api/my-feature/', data),
-   };
-   ```
-
-### Creating a Database Migration
-
-```bash
-# Auto-generate migration from model changes
-make migration
-# Enter description: "Add my_table"
-
-# Review generated migration in backend/alembic/versions/
-# Edit if needed
-
-# Apply migration
-make migrate
-```
-
-### Adding a New Agent
-
-1. **Create agent class** in `mesh/backend/agents/`:
-   ```python
-   # mesh/backend/agents/my_agent.py
-   from mesh.backend.agents.base import Agent
-   
-   class MyAgent(Agent):
-       async def process(self, input_data: str) -> str:
-           # Your agent logic
-           return await self.call_llm(prompt=f"Process: {input_data}")
-   ```
-
-2. **Register in orchestrator** `mesh/backend/orchestrator.py`:
-   ```python
-   from mesh.backend.agents.my_agent import MyAgent
-   
-   class Orchestrator:
-       def __init__(self):
-           self.my_agent = MyAgent()
-   ```
-
-3. **Use in backend API** `backend/app/api/agents.py`:
-   ```python
-   from mesh.backend.orchestrator import Orchestrator
-   
-   orch = Orchestrator()
-   result = await orch.my_agent.process(input_data)
-   ```
-
-### Running Lean 4 Code
-
-```python
-from mesh.backend.tools.lean_runner import run_lean_code
-
-result = await run_lean_code(
-    code='#eval 2 + 2',
-    timeout=60
-)
-
-if result['success']:
-    print(result['output'])
-else:
-    print(result['error'])
-```
-
----
-
-## 🧪 Testing
-
-### Running Tests
-
-```bash
-# Backend tests
-docker compose exec backend pytest
-
-# Frontend tests
-docker compose exec frontend npm test
-
-# Specific test file
-docker compose exec backend pytest app/tests/test_auth.py
-```
-
-### Agent Testing
-
-```bash
-# Test agents directly
-python mesh/test_agents.py
-```
-
----
-
-## 🐛 Troubleshooting
-
-### Backend won't start
-
-**Problem**: `sqlalchemy.exc.OperationalError: could not connect to server`
-
-**Solution**: Wait for PostgreSQL to fully initialize (30 seconds on first run)
-
-```bash
-make logs-backend  # Check if waiting for database
-make logs-db       # Check database logs
-```
-
----
-
-### Frontend shows "Network Error"
-
-**Problem**: Frontend can't reach backend API
-
-**Solution**: Verify backend is running and accessible:
-```bash
-curl http://localhost:8080/health
-# Should return: {"status":"ok"}
-```
-
-Check `NEXT_PUBLIC_API_URL` in frontend environment.
-
----
-
-### Migration conflicts
-
-**Problem**: `alembic.util.exc.CommandError: Multiple head revisions are present`
-
-**Solution**: Merge migration heads:
-```bash
-docker compose exec backend alembic merge heads -m "Merge migrations"
-make migrate
-```
-
----
-
-### Lean runner timeout
-
-**Problem**: Lean code execution times out
-
-**Solution**: Increase timeout in environment:
-```bash
-# .env
-LEAN_TIMEOUT=120  # Increase to 120 seconds
-```
-
-Or optimize Lean code (reduce complexity, add imports).
-
----
-
-### MinIO connection errors
-
-**Problem**: `botocore.exceptions.EndpointConnectionError`
-
-**Solution**: Ensure MinIO is running and bucket exists:
-```bash
-make logs-minio
-docker compose exec backend python -c "from app.services.storage import storage_service; import asyncio; asyncio.run(storage_service.init_bucket())"
-```
-
----
-
-### AI agent API errors
-
-**Problem**: `google.api_core.exceptions.ResourceExhausted: 429 Quota exceeded`
-
-**Solution**: 
-1. Check Gemini API quota at https://aistudio.google.com/
-2. Wait for quota reset (usually 1 minute)
-3. Reduce concurrent requests
-
-**Problem**: `UNAVAILABLE: 503 Service unavailable`
-
-**Solution**: Retry with exponential backoff (already implemented in agents)
-
----
-
-## 📚 Additional Documentation
-
-- **[AGENTS.md](AGENTS.md)** - AI agent development guide (for AI assistants working on this codebase)
-- **API Docs** - http://localhost:8080/docs (interactive OpenAPI documentation)
-
----
-
-## 🤝 Contributing
-
-### Code Style
-
-**Python:**
-- Follow PEP 8
-- Use type hints
-- Async/await for all I/O operations
-- SQLAlchemy 2.0 async syntax
-
-**TypeScript:**
-- Follow ESLint configuration
-- Use functional components with hooks
-- Prefer async/await over promises
-
-### Commit Messages
-
-Use conventional commits:
-- `feat: Add new feature`
-- `fix: Fix bug`
-- `docs: Update documentation`
-- `refactor: Refactor code`
-- `test: Add tests`
-
----
-
-## 📄 License
-
-[Your License Here]
-
----
-
-## 🙏 Acknowledgments
-
-- Google Gemini for AI capabilities
-- Lean 4 community for formal verification tools
-- Open source contributors
-
----
-
-**ProofMesh** - Where human reasoning meets AI assistance for mathematical exploration.
+- Backend cannot access private problem or returns auth errors:
+  - verify `access_token` in frontend session
+  - verify `NEXT_PUBLIC_API_URL` points to the current backend
+
+- Missing PDFs / compile artifacts:
+  - check `make logs-backend`
+  - check `docker logs proofmesh-texlive-compiler`
+  - verify MinIO credentials and bucket from `.env`
+
+## Contributing
+
+1. Create a branch for the change.
+2. Keep changes scoped and include reproduction/validation steps in PR descriptions.
+3. Prefer non-breaking API updates and document any required migrations.

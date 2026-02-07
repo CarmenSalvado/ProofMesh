@@ -1,7 +1,9 @@
 import json
 import os
+import re
 import subprocess
 import time
+from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Iterable
 
@@ -96,6 +98,98 @@ class SynctexResponse(BaseModel):
 
 
 app = FastAPI(title="ProofMesh TeX Compiler", version="0.1.0")
+
+
+def parse_synctex_output(output: str) -> tuple[str | None, int | None, int | None]:
+    input_path = None
+    line_number = None
+    column_number = None
+
+    for line in output.splitlines():
+        input_match = re.match(r"^\s*Input:\s*(?:(\d+):)?\s*(.+)\s*$", line)
+        if input_match:
+            input_path = input_match.group(2).strip()
+            continue
+
+        line_match = re.match(r"^\s*Line:\s*(-?\d+)\s*$", line)
+        if line_match:
+            try:
+                value = int(line_match.group(1))
+                line_number = value if value > 0 else None
+            except ValueError:
+                line_number = None
+            continue
+
+        column_match = re.match(r"^\s*Column:\s*(-?\d+)\s*$", line)
+        if column_match:
+            try:
+                value = int(column_match.group(1))
+                column_number = value if value > 0 else None
+            except ValueError:
+                column_number = None
+
+    return input_path, line_number, column_number
+
+
+def run_synctex_edit(tmpdir: str, pdf_path: str, page: int, x: float, y: float) -> tuple[str | None, int | None, int | None]:
+    # synctex can be picky with fractional coordinates; use rounded points.
+    x_coord = int(round(x))
+    y_coord = int(round(y))
+    cmd = [
+        "synctex",
+        "edit",
+        "-o",
+        f"{page}:{x_coord}:{y_coord}:{pdf_path}",
+    ]
+    result = subprocess.run(
+        cmd,
+        cwd=tmpdir,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    if result.returncode != 0:
+        return None, None, None
+    return parse_synctex_output(result.stdout or "")
+
+
+def resolve_synctex_input_path(tmpdir: str, input_path: str | None) -> str | None:
+    if not input_path:
+        return None
+
+    raw = input_path.strip()
+    if not raw:
+        return None
+
+    # SyncTeX often reports compile-time temp roots: /tmp/tmpxxxx/./main.tex
+    normalized = raw.replace("\\", "/")
+    if "/./" in normalized:
+        tail = normalized.split("/./", 1)[1].lstrip("/")
+        candidate = os.path.normpath(tail)
+        if candidate and not candidate.startswith(".."):
+            return candidate
+
+    # If path points inside current tempdir, keep it relative.
+    try:
+        rel = os.path.relpath(raw, tmpdir)
+        if rel and rel != "." and not rel.startswith(".."):
+            return rel
+    except ValueError:
+        pass
+
+    # Fallback: map by basename against files in the extracted project.
+    base = os.path.basename(normalized)
+    if not base:
+        return None
+    matches: list[str] = []
+    for path in Path(tmpdir).rglob("*"):
+        if path.is_file() and path.name == base:
+            matches.append(path.relative_to(tmpdir).as_posix())
+            if len(matches) > 1:
+                break
+    if len(matches) == 1:
+        return matches[0]
+    return base
 
 
 @app.on_event("startup")
@@ -254,49 +348,42 @@ def synctex_lookup(request: SynctexRequest):
         except ClientError:
             raise HTTPException(status_code=404, detail="Synctex data not available")
 
-        cmd = [
-            "synctex",
-            "edit",
-            "-o",
-            f"{request.page}:{request.x}:{request.y}:{pdf_path}",
-        ]
-
         try:
-            result = subprocess.run(
-                cmd,
-                cwd=tmpdir,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
+            input_path, line_number, column_number = run_synctex_edit(
+                tmpdir=tmpdir,
+                pdf_path=pdf_path,
+                page=request.page,
+                x=request.x,
+                y=request.y,
             )
         except FileNotFoundError as exc:
             raise HTTPException(status_code=500, detail="synctex binary not found") from exc
 
-        if result.returncode != 0:
-            raise HTTPException(status_code=422, detail="Synctex lookup failed")
-
-        input_path = None
-        line_number = None
-        column_number = None
-
-        for line in (result.stdout or "").splitlines():
-            if line.startswith("Input:"):
-                parts = line.split(":", 2)
-                if len(parts) == 3:
-                    input_path = parts[2].strip()
-            elif line.startswith("Line:"):
-                try:
-                    line_number = int(line.split(":", 1)[1].strip())
-                except ValueError:
-                    line_number = None
-            elif line.startswith("Column:"):
-                try:
-                    column_number = int(line.split(":", 1)[1].strip())
-                except ValueError:
-                    column_number = None
+        # Fallback: search nearby points when exact click lands on whitespace/non-mapped PDF objects.
+        if not input_path or line_number is None:
+            for radius in (8, 16, 24, 36):
+                found = False
+                for dx, dy in (
+                    (-radius, 0), (radius, 0), (0, -radius), (0, radius),
+                    (-radius, -radius), (-radius, radius), (radius, -radius), (radius, radius),
+                ):
+                    candidate = run_synctex_edit(
+                        tmpdir=tmpdir,
+                        pdf_path=pdf_path,
+                        page=request.page,
+                        x=request.x + dx,
+                        y=request.y + dy,
+                    )
+                    if candidate[0] and candidate[1] is not None:
+                        input_path, line_number, column_number = candidate
+                        found = True
+                        break
+                if found:
+                    break
 
         if not input_path or line_number is None:
             raise HTTPException(status_code=404, detail="Source location not found")
-
-        rel_path = os.path.relpath(input_path, tmpdir)
+        rel_path = resolve_synctex_input_path(tmpdir, input_path)
+        if not rel_path:
+            raise HTTPException(status_code=404, detail="Source location not found")
         return SynctexResponse(path=rel_path, line=line_number, column=column_number)

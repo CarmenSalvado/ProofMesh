@@ -269,7 +269,15 @@ async def get_output_pdf(
     data = await get_object_bytes(key)
     if data is None:
         raise HTTPException(status_code=404, detail="PDF not found")
-    return Response(content=data, media_type="application/pdf")
+    return Response(
+        content=data,
+        media_type="application/pdf",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
 
 
 @router.get("/{problem_id}/output.log")
@@ -283,7 +291,15 @@ async def get_output_log(
     data = await get_object_bytes(key)
     if data is None:
         raise HTTPException(status_code=404, detail="Log not found")
-    return Response(content=data, media_type="text/plain")
+    return Response(
+        content=data,
+        media_type="text/plain",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
 
 
 @router.post("/{problem_id}/synctex", response_model=LatexSynctexResponse)

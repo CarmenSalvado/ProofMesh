@@ -52,6 +52,7 @@ class ProblemResponse(BaseModel):
     updated_at: datetime
     author: AuthorInfo
     library_item_count: int = 0
+    star_count: int = 0
 
 
 class ProblemListResponse(BaseModel):

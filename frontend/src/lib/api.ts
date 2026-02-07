@@ -23,6 +23,7 @@ export interface Problem {
 	updated_at: string;
 	author: AuthorInfo;
 	library_item_count: number;
+	star_count?: number;
 }
 
 export interface LibraryItem {
@@ -166,6 +167,7 @@ export interface Comment {
 	content: string;
 	author: SocialUser;
 	discussion_id: string;
+	discussion_title?: string | null;
 	parent_id?: string | null;
 	reply_count: number;
 	created_at: string;
@@ -180,6 +182,14 @@ export interface CommentListResponse {
 export interface CommentCreate {
 	content: string;
 	parent_id?: string;
+}
+
+export interface UserActivityResponse {
+	user: SocialUser;
+	discussions: Discussion[];
+	comments: Comment[];
+	total_discussions: number;
+	total_comments: number;
 }
 
 // ============ Star Types ============
@@ -641,7 +651,7 @@ async function apiFetchBlob(endpoint: string): Promise<Blob> {
 		(headers as Record<string, string>)["Authorization"] = authHeaders.Authorization;
 	}
 
-	const response = await fetch(url, { headers });
+	const response = await fetch(url, { headers, cache: "no-store" });
 	if (!response.ok) {
 		const text = await response.text();
 		throw new Error(text || `Failed to fetch blob: ${response.status}`);
@@ -659,7 +669,7 @@ async function apiFetchText(endpoint: string): Promise<string> {
 		(headers as Record<string, string>)["Authorization"] = authHeaders.Authorization;
 	}
 
-	const response = await fetch(url, { headers });
+	const response = await fetch(url, { headers, cache: "no-store" });
 	if (!response.ok) {
 		const text = await response.text();
 		throw new Error(text || `Failed to fetch text: ${response.status}`);
@@ -873,6 +883,17 @@ export async function getSocialConnections(): Promise<SocialConnectionsResponse>
 	return apiFetch("/social/connections");
 }
 
+export async function getUserActivity(
+	username: string,
+	params?: { discussions_limit?: number; comments_limit?: number }
+): Promise<UserActivityResponse> {
+	const searchParams = new URLSearchParams();
+	if (params?.discussions_limit) searchParams.set("discussions_limit", params.discussions_limit.toString());
+	if (params?.comments_limit) searchParams.set("comments_limit", params.comments_limit.toString());
+	const query = searchParams.toString();
+	return apiFetch(`/social/users/${encodeURIComponent(username)}/activity${query ? `?${query}` : ""}`);
+}
+
 export async function followUser(userId: string): Promise<{ status: string }> {
 	return apiFetch(`/social/follow/${userId}`, { method: "POST" });
 }
@@ -1030,12 +1051,14 @@ export async function compileLatexProject(
 	});
 }
 
-export async function fetchLatexOutputPdf(problemId: string): Promise<Blob> {
-	return apiFetchBlob(`/latex/${problemId}/output.pdf`);
+export async function fetchLatexOutputPdf(problemId: string, cacheBust?: string): Promise<Blob> {
+	const query = cacheBust ? `?v=${encodeURIComponent(cacheBust)}` : "";
+	return apiFetchBlob(`/latex/${problemId}/output.pdf${query}`);
 }
 
-export async function fetchLatexOutputLog(problemId: string): Promise<string> {
-	return apiFetchText(`/latex/${problemId}/output.log`);
+export async function fetchLatexOutputLog(problemId: string, cacheBust?: string): Promise<string> {
+	const query = cacheBust ? `?v=${encodeURIComponent(cacheBust)}` : "";
+	return apiFetchText(`/latex/${problemId}/output.log${query}`);
 }
 
 export async function mapLatexPdfToSource(

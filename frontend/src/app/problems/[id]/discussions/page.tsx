@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, Plus, MessageSquare, CheckCircle2, Loader2 } from "lucide-react";
 import { getDiscussions, getProblem, Discussion, Problem } from "@/lib/api";
 
@@ -21,6 +21,7 @@ function formatRelativeTime(iso: string) {
 
 export default function ProblemDiscussionsPage() {
   const params = useParams();
+  const router = useRouter();
   const problemId = params.id as string;
   
   const [problem, setProblem] = useState<Problem | null>(null);
@@ -150,7 +151,17 @@ export default function ProblemDiscussionsPage() {
                       {discussion.content.slice(0, 200)}...
                     </p>
                     <div className="flex items-center gap-4 mt-3 text-xs text-neutral-500">
-                      <span className="font-medium">{discussion.author.username}</span>
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          router.push(`/users/${discussion.author.username}`);
+                        }}
+                        className="font-medium hover:text-indigo-600 hover:underline"
+                      >
+                        {discussion.author.username}
+                      </button>
                       <span>·</span>
                       <span className="flex items-center gap-1">
                         <MessageSquare className="w-3 h-3" />

@@ -231,10 +231,6 @@ async def seed_users(num_users: int = 80):
             
             # Generate bio
             bio = generate_bio(RESEARCH_AREAS)
-            affiliation = f"{title} {first} {last}, {university}".strip()
-            if title == "":
-                affiliation = f"{first} {last}, {university}"
-            
             # Random join date (1-730 days ago = up to 2 years)
             created_at = random_past_time(730, 90)
             
@@ -243,7 +239,6 @@ async def seed_users(num_users: int = 80):
                 username=username,
                 password_hash=get_password_hash("proofmesh123"),  # Default password
                 bio=bio,
-                affiliation=affiliation,
                 created_at=created_at,
             )
             

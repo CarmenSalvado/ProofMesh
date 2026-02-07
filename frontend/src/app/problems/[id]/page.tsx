@@ -237,6 +237,7 @@ export default function ProblemPage({ params }: PageProps) {
               <StarButton
                 targetType="problem"
                 targetId={problemId}
+                starCount={problem.star_count ?? 0}
                 size="md"
                 showCount={true}
               />

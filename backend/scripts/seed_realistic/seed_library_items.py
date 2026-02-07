@@ -10,9 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import async_session_maker
 from app.models.problem import Problem
+from app.models.user import User
 from app.models.library_item import LibraryItem, LibraryItemKind, LibraryItemStatus
 from app.models.canvas_block import CanvasBlock
-from app.models.activity import Activity, ActivityType
 
 
 # Content templates by item kind
@@ -86,6 +86,9 @@ FORMULAS = [
     "\\mathrm{rank}(E) \\cdot c_1(L)",
 ]
 
+NODE_MIN_HORIZONTAL_GAP = 240
+NODE_MIN_VERTICAL_GAP = 170
+
 
 def random_past_time(days_ago_max: int, days_ago_min: int = 0) -> datetime:
     """Generate a random datetime between days_ago_min and days_ago_max days ago."""
@@ -93,6 +96,25 @@ def random_past_time(days_ago_max: int, days_ago_min: int = 0) -> datetime:
     hours = random.randint(0, 23)
     minutes = random.randint(0, 59)
     return datetime.utcnow() - timedelta(days=days, hours=hours, minutes=minutes)
+
+
+def pick_node_position(index: int, occupied_positions: list[tuple[int, int]]) -> tuple[int, int]:
+    """Pick canvas coordinates while avoiding node overlap."""
+    for _ in range(40):
+        row = index // 4
+        col = index % 4
+        x = 120 + col * 330 + random.randint(-20, 20)
+        y = 120 + row * 240 + random.randint(-20, 20)
+        if all(
+            abs(x - ox) >= NODE_MIN_HORIZONTAL_GAP or abs(y - oy) >= NODE_MIN_VERTICAL_GAP
+            for ox, oy in occupied_positions
+        ):
+            return x, y
+
+    fallback_index = len(occupied_positions) + 1
+    fallback_row = fallback_index // 4
+    fallback_col = fallback_index % 4
+    return 120 + fallback_col * 340, 120 + fallback_row * 250
 
 
 def generate_content(kind: LibraryItemKind) -> tuple[str, str | None]:
@@ -106,26 +128,20 @@ def generate_content(kind: LibraryItemKind) -> tuple[str, str | None]:
     elif kind == LibraryItemKind.THEOREM:
         content = random.choice(THEOREM_TEMPLATES).format("manifold", "positive curvature", "volume", "constant")
         formula = random.choice(FORMULAS)
-    elif kind == LibraryItemKind.PROPOSITION:
-        content = random.choice(LEMMA_TEMPLATES).format("assumption", "conclusion", "continuous map", "structure")
-        formula = random.choice(FORMULAS)
-    elif kind == LibraryItemKind.COROLLARY:
-        content = "As an immediate consequence of the main theorem, we obtain the following result. " + random.choice(LEMMA_TEMPLATES).format("hypothesis", "result", "proper", "limit")
-        formula = random.choice(FORMULAS)
-    elif kind == LibraryItemKind.CONJECTURE:
-        content = random.choice(CONJECTURE_TEMPLATES).format("property X", "objects", "condition Y", "expression")
-        formula = random.choice(FORMULAS)
     elif kind == LibraryItemKind.CLAIM:
         content = random.choice(CLAIM_TEMPLATES).format("convergence", "lower bound", "random", "assumption")
         formula = random.choice(FORMULAS)
     elif kind == LibraryItemKind.IDEA:
-        content = random.choice(IDEA_TEMPLATES).format("reduction", "trivial", "approximation", "quantity")
-        formula = None
-    elif kind == LibraryItemKind.EXAMPLE:
+        content = random.choice(CONJECTURE_TEMPLATES).format("property X", "objects", "condition Y", "expression")
+        formula = random.choice(FORMULAS)
+    elif kind == LibraryItemKind.CONTENT:
+        content = "As an immediate consequence of the main theorem, we obtain the following result. " + random.choice(LEMMA_TEMPLATES).format("hypothesis", "result", "proper", "limit")
+        formula = random.choice(FORMULAS)
+    elif kind == LibraryItemKind.COMPUTATION:
         content = random.choice(EXAMPLE_TEMPLATES).format("S^n", "topology", "calculation", "cyclic group", "value")
         formula = random.choice(FORMULAS)
-    elif kind == LibraryItemKind.PROOF:
-        content = random.choice(PROOF_TEMPLATES).format("n=0", "holds for n", "holds for n+1", "technique", "estimate")
+    elif kind == LibraryItemKind.NOTE:
+        content = random.choice(IDEA_TEMPLATES).format("reduction", "trivial", "approximation", "quantity")
         formula = None
     else:
         content = "Mathematical content for this item."
@@ -152,16 +168,6 @@ def generate_title(kind: LibraryItemKind, index: int) -> str:
             "Key Result",
             "Classification Theorem",
         ])
-    elif kind == LibraryItemKind.PROPOSITION:
-        return f"Proposition {index + 1}"
-    elif kind == LibraryItemKind.COROLLARY:
-        return f"Corollary {index + 1}"
-    elif kind == LibraryItemKind.CONJECTURE:
-        return random.choice([
-            "Main Conjecture",
-            f"Conjecture {index + 1}",
-            "Open Question",
-        ])
     elif kind == LibraryItemKind.CLAIM:
         return random.choice([
             f"Claim {index + 1}",
@@ -170,15 +176,22 @@ def generate_title(kind: LibraryItemKind, index: int) -> str:
         ])
     elif kind == LibraryItemKind.IDEA:
         return random.choice([
+            "Main Conjecture",
+            f"Idea {index + 1}",
+            "Open Question",
+        ])
+    elif kind == LibraryItemKind.CONTENT:
+        return f"Corollary {index + 1}"
+    elif kind == LibraryItemKind.COMPUTATION:
+        return f"Example {index + 1}"
+    elif kind == LibraryItemKind.NOTE:
+        return random.choice([
+            f"Note {index + 1}",
             "Proof Strategy",
             "Key Idea",
             "Approach",
             "Reduction Step",
         ])
-    elif kind == LibraryItemKind.EXAMPLE:
-        return f"Example {index + 1}"
-    elif kind == LibraryItemKind.PROOF:
-        return "Proof Sketch"
     else:
         return f"{kind.value.title()} {index + 1}"
 
@@ -196,6 +209,10 @@ async def seed_library_items():
         # Get all problems
         result = await db.execute(select(Problem))
         all_problems = result.scalars().all()
+
+        result = await db.execute(select(User))
+        all_users = result.scalars().all()
+        usernames_by_id = {user.id: user.username for user in all_users}
         
         if len(all_problems) < 10:
             print("⚠ Need problems to create library items. Run seed_problems.py first.")
@@ -215,30 +232,24 @@ async def seed_library_items():
                 [LibraryItemKind.DEFINITION] * 2 +
                 [LibraryItemKind.LEMMA] * 4 +
                 [LibraryItemKind.THEOREM] * 2 +
-                [LibraryItemKind.PROPOSITION] * 2 +
                 [LibraryItemKind.CLAIM] * 2 +
                 [LibraryItemKind.IDEA] * 2 +
-                [LibraryItemKind.EXAMPLE] * 1 +
-                [LibraryItemKind.CONJECTURE] * 1 +
-                [LibraryItemKind.COROLLARY] * 1
+                [LibraryItemKind.CONTENT] * 2 +
+                [LibraryItemKind.COMPUTATION] * 1 +
+                [LibraryItemKind.NOTE] * 1 +
+                [LibraryItemKind.COUNTEREXAMPLE] * 1
             )
             
             problem_items = []
+            occupied_positions: list[tuple[int, int]] = []
             
             for i in range(num_items):
                 kind = random.choice(kinds_pool)
                 title = generate_title(kind, i)
                 content, formula = generate_content(kind)
                 
-                # Position on canvas (arranged in rough grid)
-                row = i // 4
-                col = i % 4
-                x = 100 + col * 350
-                y = 100 + row * 250
-                
-                # Add some randomness to positions
-                x += random.randint(-30, 30)
-                y += random.randint(-30, 30)
+                x, y = pick_node_position(i, occupied_positions)
+                occupied_positions.append((x, y))
                 
                 # Status distribution: mostly verified, some proposed, few rejected
                 status = random.choices(
@@ -257,7 +268,7 @@ async def seed_library_items():
                     authors = [{
                         "type": "human",
                         "id": str(problem.author_id),
-                        "name": problem.author.username if problem.author else "Unknown"
+                        "name": usernames_by_id.get(problem.author_id, "Unknown")
                     }]
                 
                 item = LibraryItem(
@@ -269,7 +280,6 @@ async def seed_library_items():
                     status=status,
                     x=x,
                     y=y,
-                    tags=problem.tags[:2] if problem.tags else [],
                     authors=authors,
                     dependencies=[],  # Will add later
                     created_at=created_at,
@@ -284,20 +294,20 @@ async def seed_library_items():
             
             # Create dependencies between items (theorems depend on lemmas, etc.)
             for item in problem_items:
-                if item.kind in [LibraryItemKind.THEOREM, LibraryItemKind.COROLLARY, LibraryItemKind.PROOF]:
+                if item.kind in [LibraryItemKind.THEOREM, LibraryItemKind.CONTENT]:
                     # These depend on earlier results
                     potential_deps = [
                         it for it in problem_items
                         if it.id != item.id and it.kind in [
                             LibraryItemKind.LEMMA,
-                            LibraryItemKind.PROPOSITION,
+                            LibraryItemKind.CLAIM,
                             LibraryItemKind.DEFINITION
                         ]
                     ]
                     if potential_deps:
                         num_deps = min(random.randint(1, 3), len(potential_deps))
                         deps = random.sample(potential_deps, k=num_deps)
-                        item.dependencies = [str(d.id) for d in deps]
+                        item.dependencies = [d.id for d in deps]
             
             # Create 1-3 canvas blocks to group items
             num_blocks = random.randint(1, 3)
@@ -321,28 +331,13 @@ async def seed_library_items():
                 block = CanvasBlock(
                     problem_id=problem.id,
                     name=block_name,
-                    node_ids=[str(item.id) for item in block_items],
+                    node_ids=[item.id for item in block_items],
                     created_at=random_past_time(150, 10),
                     updated_at=random_past_time(50, 0),
                 )
                 
                 db.add(block)
                 blocks_created += 1
-            
-            # Create activity for adding items
-            if problem_items and random.random() < 0.5:
-                db.add(Activity(
-                    user_id=problem.author_id,
-                    type=ActivityType.UPDATED_PROBLEM,
-                    target_id=problem.id,
-                    extra_data={
-                        "problem_id": str(problem.id),
-                        "problem_title": problem.title,
-                        "action": "added_library_items",
-                        "count": len(problem_items),
-                    },
-                    created_at=random_past_time(100, 5),
-                ))
             
             if (prob_idx + 1) % 10 == 0:
                 print(f"  Processed {prob_idx + 1}/{len(all_problems)} problems...")

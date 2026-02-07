@@ -146,7 +146,7 @@ export function NotificationsDropdown() {
     if (notification.target_type === "team" && notification.extra_data?.team_slug) {
       return `/teams/${notification.extra_data.team_slug}`;
     }
-    if (notification.type === "follow" && notification.actor) {
+    if ((notification.type === "follow" || notification.type === "mention") && notification.actor) {
       return `/users/${notification.actor.username}`;
     }
     return "#";

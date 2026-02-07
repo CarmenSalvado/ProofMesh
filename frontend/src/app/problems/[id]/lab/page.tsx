@@ -209,13 +209,19 @@ const PDF_WORKER_SRC = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pd
 GlobalWorkerOptions.workerSrc = PDF_WORKER_SRC;
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
 function buildDefaultLatex(title: string) {
   return `\\documentclass{article}
 \\usepackage[utf8]{inputenc}
+\\usepackage[a4paper,margin=2.6cm]{geometry}
 \\usepackage{amsmath,amssymb}
 \\usepackage{graphicx}
 \\usepackage{hyperref}
+\\usepackage{setspace}
+\\setstretch{1.12}
+\\setlength{\\parskip}{0.6em}
+\\setlength{\\parindent}{0pt}
 
 \\title{${title}}
 \\author{}
@@ -226,6 +232,12 @@ function buildDefaultLatex(title: string) {
 
 \\section{Introduction}
 Write your notes here.
+
+\\section{Main Ideas}
+- Add definitions, claims, and proof strategy.
+
+\\section{Next Steps}
+- List pending checks and open questions.
 
 \\end{document}
 `;
@@ -338,6 +350,7 @@ export default function LabPage({ params }: PageProps) {
   const [pdfLoading, setPdfLoading] = useState(false);
   const [pdfSyncNotice, setPdfSyncNotice] = useState<string | null>(null);
   const [autoCompileAt, setAutoCompileAt] = useState<number | null>(null);
+  const [autoCompileEnabled, setAutoCompileEnabled] = useState(true);
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
   const [logOpen, setLogOpen] = useState(true);
@@ -717,22 +730,26 @@ export default function LabPage({ params }: PageProps) {
     [problemId]
   );
 
-  const loadPdf = useCallback(async () => {
+  const loadPdf = useCallback(async (cacheBust?: string, preserveOnError = false): Promise<Blob | null> => {
     try {
-      const blob = await fetchLatexOutputPdf(problemId);
+      const blob = await fetchLatexOutputPdf(problemId, cacheBust);
       setPdfBlob(blob);
       const nextUrl = URL.createObjectURL(blob);
       setPdfUrl((prev) => {
         if (prev) URL.revokeObjectURL(prev);
         return nextUrl;
       });
+      return blob;
     } catch (error) {
       console.warn("No PDF yet", error);
-      setPdfBlob(null);
-      setPdfUrl((prev) => {
-        if (prev) URL.revokeObjectURL(prev);
-        return null;
-      });
+      if (!preserveOnError) {
+        setPdfBlob(null);
+        setPdfUrl((prev) => {
+          if (prev) URL.revokeObjectURL(prev);
+          return null;
+        });
+      }
+      return null;
     }
   }, [problemId]);
 
@@ -786,7 +803,15 @@ export default function LabPage({ params }: PageProps) {
         setCompileLog(response.log || "");
         if (response.status === "success") {
           setCompileState("success");
-          await loadPdf();
+          const previousSize = pdfBlob?.size ?? null;
+          const cacheBase = response.pdf_key || `${Date.now()}`;
+          let latestBlob: Blob | null = null;
+          for (let attempt = 0; attempt < 5; attempt += 1) {
+            if (attempt > 0) await sleep(250);
+            latestBlob = await loadPdf(`${cacheBase}-${attempt}`, true);
+            if (!latestBlob) continue;
+            if (previousSize === null || latestBlob.size !== previousSize || attempt === 4) break;
+          }
         } else if (response.status === "timeout") {
           setCompileState("timeout");
         } else {
@@ -800,7 +825,7 @@ export default function LabPage({ params }: PageProps) {
         setCompileLog(error instanceof Error ? error.message : "Failed to compile");
       }
     },
-    [problemId, canEdit, loadPdf, loadLog, activePath]
+    [problemId, canEdit, loadPdf, loadLog, activePath, pdfBlob]
   );
 
   const scheduleSave = useCallback(
@@ -832,7 +857,7 @@ export default function LabPage({ params }: PageProps) {
   );
 
   const scheduleCompile = useCallback(() => {
-    if (!canEdit) return;
+    if (!canEdit || !autoCompileEnabled) return;
     if (compileTimeoutRef.current) {
       window.clearTimeout(compileTimeoutRef.current);
     }
@@ -841,7 +866,7 @@ export default function LabPage({ params }: PageProps) {
     compileTimeoutRef.current = window.setTimeout(() => {
       runCompile("auto");
     }, AUTO_COMPILE_DELAY);
-  }, [runCompile, canEdit]);
+  }, [runCompile, canEdit, autoCompileEnabled]);
 
   const handleEditorChange = useCallback(
     (value: string | undefined) => {
@@ -3182,6 +3207,26 @@ export default function LabPage({ params }: PageProps) {
     setAiChangeIndex((prev) => Math.min(aiChanges.length - 1, prev + 1));
   }, [aiChanges.length]);
 
+  const jumpToEditorLocation = useCallback((line: number, column: number) => {
+    const editor = editorRef.current;
+    const monaco = monacoRef.current;
+    if (!editor) return false;
+    const targetLine = Math.max(1, line || 1);
+    const targetColumn = Math.max(1, column || 1);
+    window.requestAnimationFrame(() => {
+      editor.focus?.();
+      if (monaco?.Range && editor.setSelection) {
+        const range = new monaco.Range(targetLine, targetColumn, targetLine, targetColumn);
+        editor.setSelection(range);
+        editor.revealRangeInCenter?.(range);
+      } else {
+        editor.setPosition?.({ lineNumber: targetLine, column: targetColumn });
+        editor.revealPositionInCenter?.({ lineNumber: targetLine, column: targetColumn });
+      }
+    });
+    return true;
+  }, []);
+
   const handlePdfClick = useCallback(
     async (event: MouseEvent<HTMLCanvasElement>) => {
       if (!pdfDocRef.current || !pdfCanvasRef.current || !pdfViewportRef.current) return;
@@ -3189,8 +3234,13 @@ export default function LabPage({ params }: PageProps) {
       const x = event.clientX - rect.left;
       const y = event.clientY - rect.top;
       if (x < 0 || y < 0 || x > rect.width || y > rect.height) return;
-
-      const [pdfX, pdfY] = pdfViewportRef.current.convertToPdfPoint(x, y);
+      // SyncTeX expects page coordinates measured from top-left in output page units.
+      // Map CSS pixels to rendered viewport units to avoid drift on zoom/DPI scaling.
+      const viewport = pdfViewportRef.current;
+      const scaleX = viewport.width / rect.width;
+      const scaleY = viewport.height / rect.height;
+      const pdfX = x * scaleX;
+      const pdfY = y * scaleY;
       try {
         const mapping = await mapLatexPdfToSource(problemId, pdfPage, pdfX, pdfY);
         setPdfSyncNotice(null);
@@ -3203,16 +3253,19 @@ export default function LabPage({ params }: PageProps) {
         };
         setOpenTabs((prev) => (prev.includes(normalized) ? prev : [...prev, normalized]));
         setActivePath(normalized);
+        if (normalized === activePath && jumpToEditorLocation(mapping.line, mapping.column ?? 1)) {
+          pendingCursorRef.current = null;
+        }
       } catch (error) {
-        const message =
-          error instanceof Error && error.message
-            ? error.message
-            : "Sync unavailable. Compile again.";
+        const rawMessage = error instanceof Error ? error.message : "";
+        const message = rawMessage.includes("Source location not found") || rawMessage.includes("HTTP 404")
+          ? "Source location unavailable at this point. Recompile and try again."
+          : rawMessage || "Sync unavailable. Compile again.";
         setPdfSyncNotice(message);
         console.warn("Synctex mapping failed", error);
       }
     },
-    [problemId, pdfPage]
+    [problemId, pdfPage, activePath, jumpToEditorLocation]
   );
 
   useEffect(() => {
@@ -3325,15 +3378,9 @@ export default function LabPage({ params }: PageProps) {
   useEffect(() => {
     const pending = pendingCursorRef.current;
     if (!pending || pending.path !== activePath) return;
-    const editor = editorRef.current;
-    if (!editor) return;
-    window.requestAnimationFrame(() => {
-      editor.focus?.();
-      editor.setPosition?.({ lineNumber: pending.line, column: pending.column || 1 });
-      editor.revealPositionInCenter?.({ lineNumber: pending.line, column: pending.column || 1 });
-    });
+    if (!jumpToEditorLocation(pending.line, pending.column || 1)) return;
     pendingCursorRef.current = null;
-  }, [activePath, editorValue]);
+  }, [activePath, editorValue, jumpToEditorLocation]);
 
   useEffect(() => {
     if (!activePath) return;
@@ -3345,6 +3392,15 @@ export default function LabPage({ params }: PageProps) {
     loadPdf();
     loadLog();
   }, [workspaceReady, loadPdf, loadLog]);
+
+  useEffect(() => {
+    if (autoCompileEnabled) return;
+    if (compileTimeoutRef.current) {
+      window.clearTimeout(compileTimeoutRef.current);
+      compileTimeoutRef.current = null;
+    }
+    setAutoCompileAt(null);
+  }, [autoCompileEnabled]);
 
   useEffect(() => {
     if (!pdfBlob) {
@@ -3382,7 +3438,7 @@ export default function LabPage({ params }: PageProps) {
     renderPdfPage(pdfPage, pdfZoom).catch((error) => {
       console.error("Failed to render PDF page", error);
     });
-  }, [rightOpen, pdfPage, pdfZoom, pdfPages, renderPdfPage]);
+  }, [rightOpen, pdfPage, pdfZoom, pdfPages, pdfBlob, renderPdfPage]);
 
 
   useEffect(() => {
@@ -3932,11 +3988,15 @@ export default function LabPage({ params }: PageProps) {
           <button
             type="button"
             onClick={() => runCompile("manual")}
-            disabled={!canEdit}
-            className="px-3 py-1.5 rounded-md text-xs font-medium bg-neutral-100 text-black hover:bg-white disabled:opacity-40 flex items-center gap-1.5 transition-colors"
+            disabled={!canEdit || compileState === "running"}
+            className="px-3 py-1.5 rounded-md text-xs font-medium border border-[#2a2a2a] text-neutral-200 hover:text-white hover:border-[#3a3a3a] hover:bg-[#151515] disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5 transition-colors"
           >
-            <Play size={12} fill="currentColor" />
-            Compile
+            {compileState === "running" ? (
+              <Loader size={12} className="animate-spin" />
+            ) : (
+              <Play size={12} />
+            )}
+            {compileState === "running" ? "Compiling..." : "Compile"}
           </button>
           <Link
             href={`/problems/${problemId}/canvas`}
@@ -4407,7 +4467,21 @@ export default function LabPage({ params }: PageProps) {
 
               <div className="p-3 border-t border-[#1a1a1a] flex items-center gap-2 text-[10px]">
                 <span className="uppercase tracking-wider text-neutral-600">Auto-compile</span>
-                {autoCompileAt ? (
+                <button
+                  type="button"
+                  onClick={() => setAutoCompileEnabled((prev) => !prev)}
+                  className={`px-1.5 py-0.5 rounded border transition-colors ${
+                    autoCompileEnabled
+                      ? "border-emerald-700/40 text-emerald-400 bg-emerald-900/20"
+                      : "border-[#2a2a2a] text-neutral-500 bg-[#121212]"
+                  }`}
+                  title={autoCompileEnabled ? "Disable auto-compile" : "Enable auto-compile"}
+                >
+                  {autoCompileEnabled ? "on" : "off"}
+                </button>
+                {!autoCompileEnabled ? (
+                  <span className="text-neutral-600">paused</span>
+                ) : autoCompileAt ? (
                   <span className="text-neutral-400">scheduled</span>
                 ) : (
                   <span className="text-neutral-700">idle</span>

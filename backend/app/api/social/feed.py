@@ -16,6 +16,7 @@ from app.models.problem import Problem, ProblemVisibility
 from app.models.library_item import LibraryItem, LibraryItemKind
 from app.models.workspace_file import WorkspaceFile, WorkspaceFileType
 from app.models.follow import Follow
+from app.models.discussion import Discussion
 from app.api.deps import get_current_user
 from app.schemas.social import (
     FeedResponse,
@@ -54,15 +55,25 @@ async def get_feed(
     activities = result.scalars().all()
 
     problem_ids: set[UUID] = set()
+    discussion_ids: set[UUID] = set()
     library_item_ids: set[UUID] = set()
     for activity in activities:
         data = activity.extra_data or {}
-        raw_id = data.get("problem_id")
-        if raw_id:
+        raw_discussion_id = data.get("discussion_id")
+        if raw_discussion_id:
             try:
-                problem_ids.add(UUID(raw_id))
+                discussion_ids.add(UUID(raw_discussion_id))
             except ValueError:
-                continue
+                pass
+        elif activity.type == ActivityType.CREATED_DISCUSSION and activity.target_id:
+            discussion_ids.add(activity.target_id)
+        elif (
+            activity.type == ActivityType.CREATED_PROBLEM
+            and activity.target_id
+            and (data.get("discussion_title") or data.get("discussion_content"))
+        ):
+            # Backward-compatibility for older discussion events.
+            discussion_ids.add(activity.target_id)
 
         # Capture library item targets to hydrate status/verification state
         if activity.type in {
@@ -71,6 +82,37 @@ async def get_feed(
             ActivityType.VERIFIED_LIBRARY,
         } and activity.target_id:
             library_item_ids.add(activity.target_id)
+
+    discussions = {}
+    if discussion_ids:
+        discussion_result = await db.execute(select(Discussion).where(Discussion.id.in_(discussion_ids)))
+        discussions = {d.id: d for d in discussion_result.scalars().all()}
+
+    for activity in activities:
+        data = activity.extra_data or {}
+        raw_id = data.get("problem_id")
+        if raw_id:
+            try:
+                problem_ids.add(UUID(raw_id))
+            except ValueError:
+                continue
+        discussion = None
+        raw_discussion_id = data.get("discussion_id")
+        if raw_discussion_id:
+            try:
+                discussion = discussions.get(UUID(raw_discussion_id))
+            except ValueError:
+                discussion = None
+        elif activity.type == ActivityType.CREATED_DISCUSSION and activity.target_id:
+            discussion = discussions.get(activity.target_id)
+        elif (
+            activity.type == ActivityType.CREATED_PROBLEM
+            and activity.target_id
+            and (data.get("discussion_title") or data.get("discussion_content"))
+        ):
+            discussion = discussions.get(activity.target_id)
+        if discussion and discussion.problem_id:
+            problem_ids.add(discussion.problem_id)
 
     problems = {}
     if problem_ids:
@@ -85,7 +127,30 @@ async def get_feed(
     items: list[FeedItem] = []
     for activity in activities:
         actor = activity.user
-        data = activity.extra_data or {}
+        data = dict(activity.extra_data or {})
+        discussion = None
+        raw_discussion_id = data.get("discussion_id")
+        if raw_discussion_id:
+            try:
+                discussion = discussions.get(UUID(raw_discussion_id))
+            except ValueError:
+                discussion = None
+        elif activity.type == ActivityType.CREATED_DISCUSSION and activity.target_id:
+            discussion = discussions.get(activity.target_id)
+        elif (
+            activity.type == ActivityType.CREATED_PROBLEM
+            and activity.target_id
+            and (data.get("discussion_title") or data.get("discussion_content"))
+        ):
+            discussion = discussions.get(activity.target_id)
+        if discussion:
+            data.setdefault("discussion_id", str(discussion.id))
+            data.setdefault("discussion_title", discussion.title)
+            if activity.type in {ActivityType.CREATED_DISCUSSION, ActivityType.CREATED_PROBLEM}:
+                data.setdefault("discussion_content", discussion.content)
+            if discussion.problem_id:
+                data.setdefault("problem_id", str(discussion.problem_id))
+
         problem = None
         raw_id = data.get("problem_id")
         if raw_id:
@@ -93,6 +158,7 @@ async def get_feed(
                 pid = UUID(raw_id)
                 p = problems.get(pid)
                 if p:
+                    data.setdefault("problem_title", p.title)
                     problem = FeedProblem(id=p.id, title=p.title, visibility=p.visibility.value)
             except ValueError:
                 pass

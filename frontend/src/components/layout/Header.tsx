@@ -61,10 +61,10 @@ export function Header() {
 								Library
 							</Link>
 							<Link
-								href="/social"
+								href="/dashboard"
 								className="text-xs font-medium text-neutral-500 hover:text-neutral-900 hover:bg-neutral-50 px-3 py-1.5 rounded-md transition-colors"
 							>
-								Network
+								Feed
 							</Link>
 						</nav>
 					)}

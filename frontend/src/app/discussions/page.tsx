@@ -253,7 +253,17 @@ export default function DiscussionsPage() {
                       {discussion.content}
                     </p>
                     <div className="flex items-center gap-4 text-xs text-neutral-500">
-                      <span className="font-medium">{discussion.author.username}</span>
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          router.push(`/users/${discussion.author.username}`);
+                        }}
+                        className="font-medium hover:text-indigo-600 hover:underline"
+                      >
+                        {discussion.author.username}
+                      </button>
                       <span>·</span>
                       <span>{formatRelativeTime(discussion.created_at)}</span>
                       <span>·</span>

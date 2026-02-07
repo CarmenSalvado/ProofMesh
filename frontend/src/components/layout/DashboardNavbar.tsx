@@ -15,7 +15,6 @@ import {
   HelpCircle,
   LogOut,
   BookOpen,
-  Users,
   Home,
   Compass,
 } from "lucide-react";
@@ -153,13 +152,6 @@ export function DashboardNavbar({ showSearch = true }: DashboardNavbarProps) {
             >
               <BookOpen className="w-3.5 h-3.5" />
               Library
-            </Link>
-            <Link
-              href="/social"
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-neutral-500 hover:text-neutral-900 hover:bg-neutral-50 rounded-md transition-colors"
-            >
-              <Users className="w-3.5 h-3.5" />
-              Network
             </Link>
           </div>
         </div>

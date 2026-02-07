@@ -254,7 +254,7 @@ async def seed_problems(num_problems: int = 120):
                 visibility=original.visibility,
                 difficulty=original.difficulty,
                 tags=original.tags,
-                forked_from_id=original.id,
+                fork_of=original.id,
                 created_at=created_at,
                 updated_at=created_at,
             )

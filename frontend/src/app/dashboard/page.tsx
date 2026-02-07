@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth";
@@ -53,6 +53,8 @@ import {
 
 const FEED_META: Record<string, { label: string; color: string }> = {
   CREATED_PROBLEM: { label: "created", color: "text-indigo-600" },
+  CREATED_DISCUSSION: { label: "posted", color: "text-indigo-600" },
+  CREATED_COMMENT: { label: "replied in", color: "text-sky-600" },
   FORKED_PROBLEM: { label: "forked", color: "text-purple-600" },
   PUBLISHED_LIBRARY: { label: "published", color: "text-emerald-600" },
   UPDATED_LIBRARY: { label: "updated", color: "text-emerald-500" },
@@ -133,7 +135,7 @@ export default function DashboardPage() {
   const [connections, setConnections] = useState<SocialConnectionsResponse | null>(null);
   const [showFollowingModal, setShowFollowingModal] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [feedTab, setFeedTab] = useState<"following" | "discover">("following");
+  const [feedTab, setFeedTab] = useState<"following" | "discover">("discover");
   const [repoFilter, setRepoFilter] = useState("");
   const [postContent, setPostContent] = useState("");
   const [posting, setPosting] = useState(false);
@@ -162,6 +164,7 @@ export default function DashboardPage() {
   const [activityOffset, setActivityOffset] = useState(0);
   const [hasMoreActivity, setHasMoreActivity] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const feedLoadSentinelRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -436,7 +439,7 @@ export default function DashboardPage() {
       });
       const optimisticItem: SocialFeedItem = {
         id: `local-${created.id}`,
-        type: "DISCUSSION_POST",
+        type: "CREATED_DISCUSSION",
         actor: {
           id: created.author?.id || user.id,
           username: created.author?.username || user.username,
@@ -477,7 +480,7 @@ export default function DashboardPage() {
 
 
 
-  const handleLoadMore = async () => {
+  const handleLoadMore = useCallback(async () => {
     if (loadingMore || !hasMoreActivity) return;
     setLoadingMore(true);
     try {
@@ -506,7 +509,7 @@ export default function DashboardPage() {
     } finally {
       setLoadingMore(false);
     }
-  };
+  }, [activityOffset, feedTab, hasMoreActivity, loadingMore]);
 
   const filteredProblems = problems.filter((p) =>
     p.title.toLowerCase().includes(repoFilter.toLowerCase())
@@ -538,6 +541,11 @@ export default function DashboardPage() {
   }, [latexLineMax, latexLineStart, latexLineEnd]);
 
   const filteredFeedItems = feedItems.filter((item) => {
+    const isOwnActivityInDiscover =
+      feedTab === "discover" &&
+      item.actor.id === user?.id;
+    if (isOwnActivityInDiscover) return false;
+
     const query = searchQuery.trim().toLowerCase();
     if (!query) return true;
     const extraData = item.extra_data || {};
@@ -554,6 +562,7 @@ export default function DashboardPage() {
       extraData["item_title"],
       extraData["discussion_title"],
       extraData["discussion_content"],
+      extraData["comment_content"],
     ]
       .map((value) => (typeof value === "string" ? value.toLowerCase() : ""))
       .filter(Boolean);
@@ -561,6 +570,27 @@ export default function DashboardPage() {
   });
 
   const canPost = postContent.trim().length > 0 || postAttachments.length > 0;
+
+  useEffect(() => {
+    const sentinel = feedLoadSentinelRef.current;
+    if (!sentinel) return;
+    if (!hasMoreActivity) return;
+    if (loading || loadingMore) return;
+    if (searchQuery.trim()) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const [entry] = entries;
+        if (entry?.isIntersecting) {
+          handleLoadMore();
+        }
+      },
+      { rootMargin: "300px 0px" }
+    );
+
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [handleLoadMore, hasMoreActivity, loading, loadingMore, searchQuery]);
 
   if (authLoading) {
     return (
@@ -810,9 +840,10 @@ export default function DashboardPage() {
           ) : (
             <div className="space-y-4">
               {filteredFeedItems.map((item) => {
-                const isDiscussionPost = Boolean(
-                  item.extra_data?.discussion_content || item.extra_data?.discussion_title
+                const isDiscussionPost = item.type === "CREATED_DISCUSSION" || Boolean(
+                  item.extra_data?.discussion_content
                 );
+                const isCommentActivity = item.type === "CREATED_COMMENT" || Boolean(item.extra_data?.comment_content);
                 const isRecentPost = Boolean(
                   recentPostId &&
                   (item.target_id === recentPostId ||
@@ -828,10 +859,12 @@ export default function DashboardPage() {
                 const kind = (item.item_kind as string | undefined)?.toLowerCase();
                 const discussionTitle = item.extra_data?.discussion_title as string | undefined;
                 const discussionContent = item.extra_data?.discussion_content as string | undefined;
+                const commentContent = item.extra_data?.comment_content as string | undefined;
                 const discussionPayload = extractPostAttachments(discussionContent || "");
                 const discussionCleanContent = discussionPayload.cleanContent;
                 const discussionAttachments = discussionPayload.attachments;
-                const discussionHref = item.target_id ? `/discussions/${item.target_id}` : "#";
+                const discussionId = (item.extra_data?.discussion_id as string | undefined) || (isDiscussionPost ? item.target_id || undefined : undefined);
+                const discussionHref = discussionId ? `/discussions/${discussionId}` : "#";
                 const problemTitle =
                   item.problem?.title ||
                   (item.extra_data?.problem_title as string) ||
@@ -870,16 +903,37 @@ export default function DashboardPage() {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between">
                           <p className="text-sm text-neutral-900">
-                            <span className="font-semibold">{item.actor.username}</span>{" "}
+                            <Link
+                              href={`/users/${item.actor.username}`}
+                              className="font-semibold hover:text-indigo-600 hover:underline"
+                            >
+                              {item.actor.username}
+                            </Link>{" "}
                             <span className={meta.color}>{meta.label}</span>{" "}
                             {item.type === "FOLLOWED_USER" ? (
-                              <span className="font-medium">{targetUser}</span>
+                              targetUser ? (
+                                <Link
+                                  href={`/users/${targetUser}`}
+                                  className="font-medium text-indigo-600 hover:underline"
+                                >
+                                  {targetUser}
+                                </Link>
+                              ) : (
+                                <span className="font-medium">a researcher</span>
+                              )
                             ) : isDiscussionPost ? (
                               <Link
                                 href={discussionHref}
                                 className="font-medium text-indigo-600 hover:underline"
                               >
                                 {discussionTitle || "an update"}
+                              </Link>
+                            ) : isCommentActivity ? (
+                              <Link
+                                href={discussionHref}
+                                className="font-medium text-sky-600 hover:underline"
+                              >
+                                {discussionTitle || "a discussion"}
                               </Link>
                             ) : item.type === "TEAM_INVITE" ? (
                               <span className="font-medium">you to {teamName || "a team"}</span>
@@ -939,6 +993,12 @@ export default function DashboardPage() {
                             ))}
                           </div>
                         )}
+
+                        {isCommentActivity && commentContent && (
+                          <div className="mt-3 rounded-md border border-sky-100 bg-sky-50/60 p-3">
+                            <p className="text-sm text-neutral-700 whitespace-pre-wrap">{commentContent}</p>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -947,16 +1007,10 @@ export default function DashboardPage() {
             </div>
           )}
 
-          {filteredFeedItems.length > 0 && hasMoreActivity && !searchQuery && (
-            <div className="mt-8 text-center">
-              <button
-                onClick={handleLoadMore}
-                disabled={loadingMore}
-                className="text-sm text-indigo-600 font-medium hover:text-indigo-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 mx-auto"
-              >
-                {loadingMore && <div className="animate-spin rounded-full h-3 w-3 border-2 border-current border-t-transparent" />}
-                Load more activity
-              </button>
+          <div ref={feedLoadSentinelRef} className="h-1" />
+          {loadingMore && !searchQuery && (
+            <div className="mt-6 flex items-center justify-center">
+              <div className="animate-spin rounded-full h-5 w-5 border-2 border-neutral-900 border-t-transparent" />
             </div>
           )}
         </main>
@@ -994,7 +1048,11 @@ export default function DashboardPage() {
                         )}
                       </div>
                       <p className="text-xs text-neutral-500 mb-1 truncate">
-                        by {problem.author.username} · {problem.star_count} stars
+                        by{" "}
+                        <Link href={`/users/${problem.author.username}`} className="hover:text-indigo-600 hover:underline">
+                          {problem.author.username}
+                        </Link>{" "}
+                        · {problem.star_count} stars
                       </p>
                       <div className="w-full bg-neutral-100 rounded-full h-1">
                         <div
@@ -1027,9 +1085,12 @@ export default function DashboardPage() {
                     </div>
                   )}
                   <div className="flex-1 min-w-0">
-                    <div className="text-sm font-medium text-neutral-900 truncate">
+                    <Link
+                      href={`/users/${suggested.username}`}
+                      className="text-sm font-medium text-neutral-900 truncate hover:text-indigo-600 hover:underline block"
+                    >
                       {suggested.username}
-                    </div>
+                    </Link>
                     <div className="text-xs text-neutral-500 truncate">
                       {suggested.bio || "Mathematics researcher"}
                     </div>
@@ -1361,7 +1422,7 @@ export default function DashboardPage() {
               {connections && connections.following.length === 0 ? (
                 <div className="text-center py-12">
                   <Users className="w-12 h-12 text-neutral-300 mx-auto mb-3" />
-                  <p className="text-sm text-neutral-500">You're not following anyone yet</p>
+                  <p className="text-sm text-neutral-500">You&apos;re not following anyone yet</p>
                   <p className="text-xs text-neutral-400 mt-1">Discover researchers in the feed below</p>
                 </div>
               ) : (

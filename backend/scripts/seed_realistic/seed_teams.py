@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import async_session_maker
 from app.models.user import User
-from app.models.team import Team, TeamMember, TeamMemberRole
+from app.models.team import Team, TeamMember, TeamRole
 
 
 # Team name patterns by research area
@@ -83,66 +83,102 @@ TEAM_PATTERNS = {
 }
 
 
-def extract_university_short_name(affiliation: str) -> str:
-    """Extract short university name from affiliation."""
-    if not affiliation:
+def extract_university_short_name(value: str) -> str:
+    """Extract short university name from user metadata text (email/domain/name)."""
+    if not value:
         return "Research"
-    
-    if "MIT" in affiliation or "Massachusetts Institute" in affiliation:
+
+    value_lower = value.lower()
+    if "@" in value_lower:
+        domain = value_lower.split("@", 1)[1]
+        domain_map = {
+            "mit.edu": "MIT",
+            "stanford.edu": "Stanford",
+            "ox.ac.uk": "Oxford",
+            "cam.ac.uk": "Cambridge",
+            "ethz.ch": "ETH Zürich",
+            "princeton.edu": "Princeton",
+            "harvard.edu": "Harvard",
+            "berkeley.edu": "Berkeley",
+            "ens.fr": "ENS",
+            "imperial.ac.uk": "Imperial",
+            "u-tokyo.ac.jp": "Tokyo",
+            "technion.ac.il": "Technion",
+            "utoronto.ca": "Toronto",
+            "umich.edu": "Michigan",
+            "cornell.edu": "Cornell",
+            "columbia.edu": "Columbia",
+            "yale.edu": "Yale",
+            "uchicago.edu": "Chicago",
+            "caltech.edu": "Caltech",
+            "cmu.edu": "CMU",
+            "uni-bonn.de": "Bonn",
+            "u-paris.fr": "Paris",
+            "kuleuven.be": "Leuven",
+            "anu.edu.au": "ANU",
+            "tsinghua.edu.cn": "Tsinghua",
+            "iitb.ac.in": "IIT Bombay",
+            "snu.ac.kr": "SNU",
+            "usp.br": "USP",
+        }
+        if domain in domain_map:
+            return domain_map[domain]
+
+    if "MIT" in value or "Massachusetts Institute" in value:
         return "MIT"
-    elif "Stanford" in affiliation:
+    elif "Stanford" in value:
         return "Stanford"
-    elif "Oxford" in affiliation:
+    elif "Oxford" in value:
         return "Oxford"
-    elif "Cambridge" in affiliation and "UK" not in affiliation:
+    elif "Cambridge" in value and "UK" not in value:
         return "Cambridge"
-    elif "ETH" in affiliation:
+    elif "ETH" in value:
         return "ETH Zürich"
-    elif "Princeton" in affiliation:
+    elif "Princeton" in value:
         return "Princeton"
-    elif "Harvard" in affiliation:
+    elif "Harvard" in value:
         return "Harvard"
-    elif "Berkeley" in affiliation:
+    elif "Berkeley" in value:
         return "Berkeley"
-    elif "École Normale" in affiliation or "ENS" in affiliation:
+    elif "École Normale" in value or "ENS" in value:
         return "ENS"
-    elif "Imperial" in affiliation:
+    elif "Imperial" in value:
         return "Imperial"
-    elif "Tokyo" in affiliation:
+    elif "Tokyo" in value:
         return "Tokyo"
-    elif "Technion" in affiliation:
+    elif "Technion" in value:
         return "Technion"
-    elif "Toronto" in affiliation:
+    elif "Toronto" in value:
         return "Toronto"
-    elif "Michigan" in affiliation:
+    elif "Michigan" in value:
         return "Michigan"
-    elif "Cornell" in affiliation:
+    elif "Cornell" in value:
         return "Cornell"
-    elif "Columbia" in affiliation:
+    elif "Columbia" in value:
         return "Columbia"
-    elif "Yale" in affiliation:
+    elif "Yale" in value:
         return "Yale"
-    elif "Chicago" in affiliation:
+    elif "Chicago" in value:
         return "Chicago"
-    elif "Caltech" in affiliation:
+    elif "Caltech" in value:
         return "Caltech"
-    elif "Carnegie Mellon" in affiliation or "CMU" in affiliation:
+    elif "Carnegie Mellon" in value or "CMU" in value:
         return "CMU"
-    elif "Bonn" in affiliation:
+    elif "Bonn" in value:
         return "Bonn"
-    elif "Paris" in affiliation:
+    elif "Paris" in value:
         return "Paris"
-    elif "Leuven" in affiliation:
+    elif "Leuven" in value:
         return "Leuven"
-    elif "Australian National" in affiliation or "ANU" in affiliation:
+    elif "Australian National" in value or "ANU" in value:
         return "ANU"
-    elif "Tsinghua" in affiliation:
+    elif "Tsinghua" in value:
         return "Tsinghua"
-    elif "IIT Bombay" in affiliation:
+    elif "IIT Bombay" in value:
         return "IIT Bombay"
-    elif "Seoul" in affiliation:
+    elif "Seoul" in value:
         return "SNU"
-    elif "São Paulo" in affiliation:
+    elif "São Paulo" in value:
         return "USP"
     else:
         return "Research"
@@ -213,7 +249,7 @@ async def seed_teams(num_teams: int = 25):
         # Group users by university
         users_by_uni = {}
         for user in all_users:
-            uni = extract_university_short_name(user.affiliation or "")
+            uni = extract_university_short_name(user.email or "")
             if uni not in users_by_uni:
                 users_by_uni[uni] = []
             users_by_uni[uni].append(user)
@@ -260,7 +296,6 @@ async def seed_teams(num_teams: int = 25):
                 name=team_name,
                 slug=team_name.lower().replace(" ", "-").replace(".", ""),
                 description=random.choice(descriptions),
-                website=f"https://{uni.lower().replace(' ', '')}.edu/math/{research_area.replace(' ', '-')}",
                 is_public=random.choice([True, True, True, False]),  # 75% public
                 created_at=team_created_at,
                 updated_at=team_created_at,
@@ -273,7 +308,7 @@ async def seed_teams(num_teams: int = 25):
             db.add(TeamMember(
                 team_id=team.id,
                 user_id=owner.id,
-                role=TeamMemberRole.OWNER,
+                role=TeamRole.OWNER,
                 joined_at=team_created_at,
             ))
             
@@ -286,7 +321,7 @@ async def seed_teams(num_teams: int = 25):
                 db.add(TeamMember(
                     team_id=team.id,
                     user_id=admin.id,
-                    role=TeamMemberRole.ADMIN,
+                    role=TeamRole.ADMIN,
                     joined_at=random_past_time(300, 60),
                 ))
             
@@ -299,7 +334,7 @@ async def seed_teams(num_teams: int = 25):
                 db.add(TeamMember(
                     team_id=team.id,
                     user_id=member.id,
-                    role=TeamMemberRole.MEMBER,
+                    role=TeamRole.MEMBER,
                     joined_at=random_past_time(250, 30),
                 ))
             

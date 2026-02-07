@@ -13,6 +13,7 @@ from app.models.user import User
 from app.models.problem import Problem, ProblemVisibility
 from app.models.library_item import LibraryItem, LibraryItemStatus
 from app.models.activity import Activity
+from app.models.star import Star, StarTargetType
 from app.schemas.social import SocialUser, TrendingProblem, TrendingResponse, PlatformStats
 
 router = APIRouter()
@@ -36,7 +37,13 @@ async def get_trending_problems(
     
     problem_scores = []
     for problem in problems:
-        star_count = 0
+        stars_result = await db.execute(
+            select(func.count(Star.id)).where(
+                Star.target_type == StarTargetType.PROBLEM,
+                Star.target_id == problem.id,
+            )
+        )
+        star_count = stars_result.scalar() or 0
         
         activity_result = await db.execute(
             select(func.count(Activity.id)).where(

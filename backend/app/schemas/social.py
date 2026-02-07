@@ -148,6 +148,7 @@ class CommentResponse(CommentBase):
     id: UUID
     author: SocialUser
     discussion_id: UUID
+    discussion_title: str | None = None
     parent_id: UUID | None = None
     reply_count: int = 0
     created_at: datetime
@@ -157,6 +158,14 @@ class CommentResponse(CommentBase):
 class CommentListResponse(BaseModel):
     comments: list[CommentResponse]
     total: int
+
+
+class UserActivityResponse(BaseModel):
+    user: SocialUser
+    discussions: list[DiscussionResponse]
+    comments: list[CommentResponse]
+    total_discussions: int
+    total_comments: int
 
 
 # ========================

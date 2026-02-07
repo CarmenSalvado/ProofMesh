@@ -3,16 +3,40 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { Users, BookOpen, MessageSquare, Star } from "lucide-react";
-import { getSocialUsers, getProblems, SocialUser, Problem } from "@/lib/api";
+import { BookOpen, MessageSquareReply, MessageSquareText } from "lucide-react";
+import {
+  getProblems,
+  getUserActivity,
+  Problem,
+  SocialUser,
+  Discussion,
+  Comment,
+} from "@/lib/api";
 import { DashboardNavbar } from "@/components/layout/DashboardNavbar";
+
+function formatRelativeTime(iso?: string | null) {
+  if (!iso) return "just now";
+  const ts = Date.parse(iso);
+  if (Number.isNaN(ts)) return "just now";
+  const diff = Math.max(0, Date.now() - ts);
+  const minutes = Math.floor(diff / 60000);
+  const hours = Math.floor(diff / 3600000);
+  const days = Math.floor(diff / 86400000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  if (hours < 24) return `${hours}h ago`;
+  return `${days}d ago`;
+}
 
 export default function UserProfilePage() {
   const params = useParams();
   const username = params.username as string;
-  
+  const normalizedUsername = username.toLowerCase();
+
   const [user, setUser] = useState<SocialUser | null>(null);
   const [userProblems, setUserProblems] = useState<Problem[]>([]);
+  const [userDiscussions, setUserDiscussions] = useState<Discussion[]>([]);
+  const [userComments, setUserComments] = useState<Comment[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -20,21 +44,19 @@ export default function UserProfilePage() {
     async function loadUserData() {
       try {
         setLoading(true);
-        // Search for user in social users
-        const usersData = await getSocialUsers({ q: username, limit: 50 });
-        const foundUser = usersData.users.find(u => u.username === username);
-        
-        if (foundUser) {
-          setUser(foundUser);
-        }
-        
-        // Get user's problems
-        const problemsData = await getProblems();
-        // Filter problems by this user (approximation since API doesn't filter by author)
-        const filteredProblems = problemsData.problems.filter(
-          p => p.author.username === username
+        const [activityData, problemsData] = await Promise.all([
+          getUserActivity(username, { discussions_limit: 50, comments_limit: 50 }),
+          getProblems(),
+        ]);
+
+        setUser(activityData.user);
+        setUserDiscussions(activityData.discussions);
+        setUserComments(activityData.comments);
+        setUserProblems(
+          problemsData.problems.filter(
+            (problem) => problem.author.username.toLowerCase() === normalizedUsername
+          )
         );
-        setUserProblems(filteredProblems);
       } catch (err) {
         setError("Failed to load user profile");
         console.error(err);
@@ -46,7 +68,7 @@ export default function UserProfilePage() {
     if (username) {
       loadUserData();
     }
-  }, [username]);
+  }, [username, normalizedUsername]);
 
   if (loading) {
     return (
@@ -74,75 +96,118 @@ export default function UserProfilePage() {
     <div className="min-h-screen bg-white">
       <DashboardNavbar />
 
-      {/* Header */}
       <div className="border-b border-neutral-200">
         <div className="max-w-4xl mx-auto px-4 py-6">
           <div className="flex items-start gap-6">
-            <div className="w-24 h-24 rounded-full bg-gradient-to-br from-indigo-100 to-purple-100 flex items-center justify-center text-3xl font-bold text-indigo-700">
+            <div className="w-24 h-24 rounded-full bg-gradient-to-br from-indigo-100 to-cyan-100 flex items-center justify-center text-3xl font-bold text-indigo-700">
               {username.slice(0, 2).toUpperCase()}
             </div>
             <div className="flex-1">
-              <h1 className="text-2xl font-semibold text-neutral-900">{username}</h1>
-              <p className="text-neutral-500">@{username.toLowerCase()}</p>
-              {user.bio && (
-                <p className="mt-3 text-neutral-700">{user.bio}</p>
-              )}
-              
-              <div className="flex items-center gap-6 mt-4">
-                <div className="flex items-center gap-2 text-sm text-neutral-600">
+              <h1 className="text-2xl font-semibold text-neutral-900">{user.username}</h1>
+              <p className="text-neutral-500">@{user.username.toLowerCase()}</p>
+              {user.bio && <p className="mt-3 text-neutral-700">{user.bio}</p>}
+              <div className="flex items-center gap-6 mt-4 text-sm text-neutral-600">
+                <span className="flex items-center gap-2">
                   <BookOpen className="w-4 h-4" />
-                  <span>{userProblems.length} problems</span>
-                </div>
+                  {userProblems.length} publications
+                </span>
+                <span className="flex items-center gap-2">
+                  <MessageSquareText className="w-4 h-4" />
+                  {userDiscussions.length} posts
+                </span>
+                <span className="flex items-center gap-2">
+                  <MessageSquareReply className="w-4 h-4" />
+                  {userComments.length} replies
+                </span>
               </div>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Content */}
-      <div className="max-w-4xl mx-auto px-4 py-8">
-        <h2 className="text-lg font-semibold text-neutral-900 mb-4">Problems</h2>
-        
-        {userProblems.length === 0 ? (
-          <div className="text-center py-12 bg-neutral-50 rounded-lg">
-            <BookOpen className="w-12 h-12 text-neutral-300 mx-auto mb-3" />
-            <p className="text-neutral-500">No public problems yet</p>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            {userProblems.map((problem) => (
-              <Link
-                key={problem.id}
-                href={`/problems/${problem.id}`}
-                className="block p-4 bg-white border border-neutral-200 rounded-lg hover:border-neutral-300 transition-colors"
-              >
-                <div className="flex items-start justify-between">
-                  <div>
-                    <h3 className="font-medium text-neutral-900">{problem.title}</h3>
-                    <p className="text-sm text-neutral-500 mt-1 line-clamp-2">
-                      {problem.description || "No description"}
-                    </p>
-                    <div className="flex items-center gap-4 mt-3 text-xs text-neutral-500">
-                      <span className="flex items-center gap-1">
-                        <BookOpen className="w-3 h-3" />
-                        {problem.library_item_count} items
-                      </span>
-                    </div>
-                  </div>
-                  {problem.difficulty && (
-                    <span className={`px-2 py-1 text-xs font-medium rounded-full ${
-                      problem.difficulty === "easy" ? "bg-emerald-100 text-emerald-700" :
-                      problem.difficulty === "medium" ? "bg-amber-100 text-amber-700" :
-                      "bg-rose-100 text-rose-700"
-                    }`}>
-                      {problem.difficulty}
+      <div className="max-w-4xl mx-auto px-4 py-8 space-y-8">
+        <section>
+          <h2 className="text-lg font-semibold text-neutral-900 mb-4">Publications</h2>
+          {userProblems.length === 0 ? (
+            <div className="text-center py-10 bg-neutral-50 rounded-lg text-neutral-500">
+              No publications yet
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {userProblems.map((problem) => (
+                <Link
+                  key={problem.id}
+                  href={`/problems/${problem.id}`}
+                  className="block p-4 bg-white border border-neutral-200 rounded-lg hover:border-neutral-300 transition-colors"
+                >
+                  <h3 className="font-medium text-neutral-900">{problem.title}</h3>
+                  <p className="text-sm text-neutral-500 mt-1 line-clamp-2">
+                    {problem.description || "No description"}
+                  </p>
+                </Link>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section>
+          <h2 className="text-lg font-semibold text-neutral-900 mb-4">Posts</h2>
+          {userDiscussions.length === 0 ? (
+            <div className="text-center py-10 bg-neutral-50 rounded-lg text-neutral-500">
+              No posts yet
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {userDiscussions.map((discussion) => (
+                <Link
+                  key={discussion.id}
+                  href={`/discussions/${discussion.id}`}
+                  className="block p-4 bg-white border border-neutral-200 rounded-lg hover:border-neutral-300 transition-colors"
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <h3 className="font-medium text-neutral-900">{discussion.title}</h3>
+                    <span className="text-xs text-neutral-400 whitespace-nowrap">
+                      {formatRelativeTime(discussion.created_at)}
                     </span>
-                  )}
-                </div>
-              </Link>
-            ))}
-          </div>
-        )}
+                  </div>
+                  <p className="text-sm text-neutral-600 mt-1 line-clamp-2">{discussion.content}</p>
+                  <p className="text-xs text-neutral-500 mt-2">
+                    {discussion.comment_count} replies
+                  </p>
+                </Link>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section>
+          <h2 className="text-lg font-semibold text-neutral-900 mb-4">Replies</h2>
+          {userComments.length === 0 ? (
+            <div className="text-center py-10 bg-neutral-50 rounded-lg text-neutral-500">
+              No replies yet
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {userComments.map((comment) => (
+                <Link
+                  key={comment.id}
+                  href={`/discussions/${comment.discussion_id}`}
+                  className="block p-4 bg-white border border-neutral-200 rounded-lg hover:border-neutral-300 transition-colors"
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <p className="text-sm font-medium text-neutral-900">
+                      {comment.discussion_title || "Discussion"}
+                    </p>
+                    <span className="text-xs text-neutral-400 whitespace-nowrap">
+                      {formatRelativeTime(comment.created_at)}
+                    </span>
+                  </div>
+                  <p className="text-sm text-neutral-600 mt-2 line-clamp-3">{comment.content}</p>
+                </Link>
+              ))}
+            </div>
+          )}
+        </section>
       </div>
     </div>
   );

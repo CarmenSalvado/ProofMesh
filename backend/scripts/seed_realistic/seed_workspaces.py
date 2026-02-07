@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import async_session_maker
 from app.models.problem import Problem
+from app.models.user import User
 from app.models.workspace_file import WorkspaceFile, WorkspaceFileType
 
 
@@ -262,7 +263,7 @@ def generate_paper_content(problem_title: str, tags: list[str]) -> str:
 \\maketitle
 
 \\begin{{abstract}}
-We study {} in the context of {area}. Our main result establishes {} under certain conditions.
+We study {{}} in the context of {area}. Our main result establishes {{}} under certain conditions.
 \\textbf{{DRAFT - Abstract needs revision}}
 \\end{{abstract}}
 
@@ -278,7 +279,7 @@ We study {} in the context of {area}. Our main result establishes {} under certa
 
 Several questions remain open:
 \\begin{{enumerate}}
-\\item Does the result hold without the {} assumption?
+\\item Does the result hold without the {{}} assumption?
 \\item Can the bound be improved?
 \\item What happens in higher dimensions?
 \\end{{enumerate}}
@@ -295,7 +296,25 @@ def generate_research_notes(problem_title: str, author_name: str) -> str:
     """Generate research notes."""
     template = random.choice(NOTES_TEMPLATES)
     date = datetime.utcnow().strftime("%Y-%m-%d")
-    return template.format(problem_title, author_name, date, "...")
+    return template.format(
+        problem_title,
+        author_name,
+        date,
+        "...",
+        "...",
+        "...",
+        "...",
+        "...",
+        "...",
+        "...",
+        "...",
+        "...",
+        "...",
+        "...",
+        "...",
+        "...",
+        "...",
+    )
 
 
 def random_past_time(days_ago_max: int, days_ago_min: int = 0) -> datetime:
@@ -321,6 +340,10 @@ async def seed_workspaces():
         # Get all problems
         result = await db.execute(select(Problem))
         all_problems = result.scalars().all()
+
+        result = await db.execute(select(User))
+        all_users = result.scalars().all()
+        usernames_by_id = {user.id: user.username for user in all_users}
         
         if len(all_problems) < 10:
             print("⚠ Need problems to create workspace files. Run seed_problems.py first.")
@@ -377,6 +400,9 @@ async def seed_workspaces():
                 bib_content = BIBLIOGRAPHY_TEMPLATE.format(
                     problem.tags[0] if problem.tags else "mathematics",
                     problem.tags[0] if problem.tags else "Mathematics",
+                    problem.tags[0] if problem.tags else "mathematics",
+                    problem.tags[0] if problem.tags else "mathematics",
+                    problem.tags[0] if problem.tags else "mathematics",
                 )
                 db.add(WorkspaceFile(
                     problem_id=problem.id,
@@ -408,7 +434,7 @@ async def seed_workspaces():
                 
                 notes_content = generate_research_notes(
                     problem.title,
-                    problem.author.username if problem.author else "Unknown"
+                    usernames_by_id.get(problem.author_id, "Unknown")
                 )
                 db.add(WorkspaceFile(
                     problem_id=problem.id,

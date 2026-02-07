@@ -136,7 +136,9 @@ async def seed_stars():
         
         # Each user stars 3-15 problems
         for user in all_users:
-            num_problem_stars = random.randint(3, min(15, len(all_problems)))
+            min_problem_stars = 1 if len(all_problems) < 3 else 3
+            max_problem_stars = min(15, len(all_problems))
+            num_problem_stars = random.randint(min_problem_stars, max_problem_stars)
             starred_problems = random.sample(all_problems, k=num_problem_stars)
             
             for problem in starred_problems:
@@ -205,7 +207,7 @@ async def seed_discussions():
                 problem = random.choice(all_problems)
                 problem_id = problem.id
                 title_template = random.choice(DISCUSSION_TITLES)
-                title = title_template.format(problem.title[:40])
+                title = title_template.format(problem.title[:40], "related topic")
                 content_template = random.choice(DISCUSSION_CONTENTS)
                 content = content_template.format(
                     problem.title[:50],
@@ -241,7 +243,6 @@ async def seed_discussions():
                 author_id=author.id,
                 problem_id=problem_id,
                 is_pinned=is_pinned,
-                is_locked=False,
                 created_at=created_at,
                 updated_at=created_at,
             )
@@ -250,18 +251,6 @@ async def seed_discussions():
             await db.flush()  # Get discussion.id
             
             discussions_created += 1
-            
-            # Add activity
-            db.add(Activity(
-                user_id=author.id,
-                type=ActivityType.CREATED_DISCUSSION,
-                target_id=discussion.id,
-                extra_data={
-                    "discussion_id": str(discussion.id),
-                    "discussion_title": discussion.title,
-                },
-                created_at=created_at,
-            ))
             
             # Add 2-10 comments
             num_comments = random.randint(2, 10)
@@ -305,26 +294,14 @@ async def seed_discussions():
                 # Update discussion updated_at
                 discussion.updated_at = comment_created_at
                 
-                # Add activity
-                db.add(Activity(
-                    user_id=commenter.id,
-                    type=ActivityType.COMMENTED,
-                    target_id=discussion.id,
-                    extra_data={
-                        "discussion_id": str(discussion.id),
-                        "comment_id": str(comment.id),
-                    },
-                    created_at=comment_created_at,
-                ))
-                
                 # Create notification for discussion author (if not self-comment)
                 if commenter.id != author.id:
                     db.add(Notification(
                         user_id=author.id,
-                        type=NotificationType.COMMENT,
+                        type=NotificationType.NEW_COMMENT,
                         title=f"{commenter.username} commented on your discussion",
                         content=comment_text[:200],
-                        from_user_id=commenter.id,
+                        actor_id=commenter.id,
                         target_type="discussion",
                         target_id=discussion.id,
                         extra_data={
@@ -337,7 +314,8 @@ async def seed_discussions():
             
             # Some discussions get starred
             if random.random() < 0.3:
-                starrers = random.sample(all_users, k=random.randint(1, 5))
+                max_starrers = min(5, len(all_users))
+                starrers = random.sample(all_users, k=random.randint(1, max_starrers))
                 for starrer in starrers:
                     db.add(Star(
                         user_id=starrer.id,
@@ -374,26 +352,6 @@ async def seed_additional_activities():
         
         activities_created = 0
         
-        # Starred activities
-        for star in all_stars[:200]:  # Limit to avoid too many
-            if star.target_type == StarTargetType.PROBLEM:
-                result = await db.execute(
-                    select(Problem).where(Problem.id == star.target_id)
-                )
-                problem = result.scalar_one_or_none()
-                if problem:
-                    db.add(Activity(
-                        user_id=star.user_id,
-                        type=ActivityType.STARRED_PROBLEM,
-                        target_id=problem.id,
-                        extra_data={
-                            "problem_id": str(problem.id),
-                            "problem_title": problem.title,
-                        },
-                        created_at=star.created_at,
-                    ))
-                    activities_created += 1
-        
         # Follow activities
         result = await db.execute(select(Follow))
         all_follows = result.scalars().all()
@@ -421,7 +379,7 @@ async def seed_additional_activities():
                     type=NotificationType.FOLLOW,
                     title=f"{follower.username} followed you",
                     content=f"{follower.username} started following you",
-                    from_user_id=follow.follower_id,
+                    actor_id=follow.follower_id,
                     target_type="user",
                     target_id=follow.following_id,
                     is_read=random.random() < 0.7,  # 70% read
