@@ -696,7 +696,7 @@ async def seed_lucia_spotlight():
             random.shuffle(candidate_teams)
 
             for idx, team in enumerate(candidate_teams[:missing_slots]):
-                joined_at = random_past_time(95, 2)
+                joined_at = random_past_time(45, 0)
                 role = TeamRole.ADMIN if idx == 0 else TeamRole.MEMBER
                 db.add(TeamMember(
                     team_id=team.id,
@@ -750,6 +750,101 @@ async def seed_lucia_spotlight():
                         linked += 1
                         if linked >= desired_links:
                             break
+
+        # 3b) Create fresh multi-topic Lucia updates so Discover is not single-thread heavy.
+        team_by_id = {team.id: team for team in all_teams}
+        fresh_discussions_created = 0
+        fresh_comments_created = 0
+        topic_pool = lucia_problems[:] if lucia_problems else all_problems[:]
+        random.shuffle(topic_pool)
+
+        for problem in topic_pool[: min(5, len(topic_pool))]:
+            team_name = None
+            if lucia_team_ids:
+                team = team_by_id.get(random.choice(list(lucia_team_ids)))
+                team_name = team.name if team else None
+
+            discussion_title = f"Lucia weekly checkpoint: {problem.title[:46]}"
+            existing_discussion_result = await db.execute(
+                select(Discussion).where(
+                    Discussion.author_id == lucia.id,
+                    Discussion.title == discussion_title,
+                )
+            )
+            existing_discussion = existing_discussion_result.scalar_one_or_none()
+            if existing_discussion:
+                continue
+
+            created_at = random_past_time(12, 0)
+            peer = random.choice(other_users)
+            team_context = f"Team context: {team_name}." if team_name else "Community context."
+            discussion = Discussion(
+                title=discussion_title,
+                content=(
+                    f"Sharing this iteration for feedback. {user_mention(peer)} could you review assumptions?\n\n"
+                    f"{team_context}\n"
+                    f"Working project: {project_token(problem)}\n\n"
+                    "Main question: which lemma is still too brittle before formalization?"
+                ),
+                author_id=lucia.id,
+                problem_id=problem.id,
+                is_pinned=False,
+                created_at=created_at,
+                updated_at=created_at,
+            )
+            db.add(discussion)
+            await db.flush()
+            db.add(Activity(
+                user_id=lucia.id,
+                type=ActivityType.CREATED_DISCUSSION,
+                target_id=discussion.id,
+                extra_data=discussion_activity_payload(discussion),
+                created_at=created_at,
+            ))
+            fresh_discussions_created += 1
+
+            commenters = random.sample(other_users, k=min(len(other_users), random.randint(2, 4)))
+            for commenter in commenters:
+                comment_created_at = created_at + timedelta(
+                    hours=random.randint(1, 36),
+                    minutes=random.randint(0, 59),
+                )
+                comment_text = build_lucia_reaction_comment(
+                    lucia=lucia,
+                    discussion=discussion,
+                    all_problems=all_problems,
+                )
+                comment = Comment(
+                    discussion_id=discussion.id,
+                    author_id=commenter.id,
+                    content=comment_text,
+                    parent_id=None,
+                    created_at=comment_created_at,
+                    updated_at=comment_created_at,
+                )
+                db.add(comment)
+                db.add(Activity(
+                    user_id=commenter.id,
+                    type=ActivityType.CREATED_COMMENT,
+                    target_id=comment.id,
+                    extra_data=comment_activity_payload(comment, discussion),
+                    created_at=comment_created_at,
+                ))
+                discussion.updated_at = max(discussion.updated_at, comment_created_at)
+                fresh_comments_created += 1
+
+                db.add(Notification(
+                    user_id=lucia.id,
+                    type=NotificationType.NEW_COMMENT,
+                    title=f"{commenter.username} reacted to your discussion",
+                    content=comment_text[:200],
+                    actor_id=commenter.id,
+                    target_type="discussion",
+                    target_id=discussion.id,
+                    extra_data={"discussion_id": str(discussion.id)},
+                    is_read=random.random() < 0.4,
+                    created_at=comment_created_at,
+                ))
 
         # 4) Ensure Lucia has enough authored discussions.
         result = await db.execute(select(Discussion).where(Discussion.author_id == lucia.id))
@@ -935,6 +1030,8 @@ async def seed_lucia_spotlight():
         print(f"✓ Teams created for Lucia spotlight (+{teams_created_for_lucia})")
         print(f"✓ Lucia team memberships ensured (+{teams_joined})")
         print(f"✓ Lucia team-project links ensured (+{team_problem_links_added})")
+        print(f"✓ Lucia fresh multi-topic discussions created (+{fresh_discussions_created})")
+        print(f"✓ Lucia fresh multi-topic comments created (+{fresh_comments_created})")
         print(f"✓ Lucia discussions ensured (+{created_lucia_discussions})")
         print(f"✓ Lucia reaction threads ensured (+{created_reaction_threads})")
         print(f"✓ Lucia discussion comments added (+{comments_added})")
