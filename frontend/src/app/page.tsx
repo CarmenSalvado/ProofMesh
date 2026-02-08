@@ -95,7 +95,7 @@ export default function LandingPage() {
           <p className="text-lg text-neutral-500 max-w-2xl mx-auto mb-10 font-light leading-relaxed">
             ProofMesh is a collaborative workspace for mathematical proofs: teams explore ideas in shared threads,
             challenge assumptions in context, and validate results with{" "}
-            <span className="rho-mention">@Rho</span>.{" "}
+            <span className="rho-mention">@Rho</span>. Meanwhile, {" "}
             <a
               href={IDEA2STORY_PAPER_URL}
               target="_blank"
@@ -363,8 +363,7 @@ export default function LandingPage() {
             </div>
 
             <div className="mt-4 rounded-xl border border-neutral-200 bg-neutral-50 p-3 text-xs text-neutral-600">
-              <span className="font-semibold text-neutral-800">Personalities:</span> Explorer, Verifier, Archivist, Skeptic.
-              Rho composes them dynamically for each step of the proof.
+              <span className="font-semibold text-neutral-800">Personalities:</span> You can explore new ideas, challenge your colleagues’ work, and get inspired. Rho assembles these roles dynamically for each step of the proof.
             </div>
           </div>
         </div>
@@ -458,10 +457,12 @@ export default function LandingPage() {
               </svg>
             </Link>
             <Link
-              href="/library"
+              href={HACKATHON_DEMO_VIDEO_URL}
+              target="_blank"
+              rel="noopener noreferrer"
               className="border border-neutral-700 text-white px-8 py-3 rounded-full text-sm font-medium hover:border-neutral-500 transition-colors"
             >
-              Explore Theorem Library
+              Watch Demo
             </Link>
           </div>
         </div>

@@ -1191,6 +1191,9 @@ export function FloatingAIBar({
     if (!activeAction) return null;
     const labels: Record<string, string> = {
       explore: "Explorer running",
+      canvas: "Canvas explorer running",
+      strategist: "Proof strategist running",
+      socratic: "Socratic tutor running",
       "explore-patterns": "Explorer (patterns) running",
       formalize: "Formalizer running",
       verify: "Verifier running",
@@ -1207,7 +1210,7 @@ export function FloatingAIBar({
   const cancelExplore = useCallback(() => {
     exploreRunTokenRef.current += 1;
     setIsLoading(false);
-    setActiveAction((prev) => (prev === "explore" ? null : prev));
+    setActiveAction((prev) => (prev === "explore" || prev === "canvas" || prev === "strategist" || prev === "socratic" ? null : prev));
     addInsight({
       type: "insight",
       title: "Exploración cancelada",
@@ -1352,8 +1355,9 @@ export function FloatingAIBar({
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [isVisible, onToggle]);
 
-  const handleExplore = useCallback(async (promptOverride?: string) => {
-    if (isLoading && activeAction === "explore") {
+  const handleExplore = useCallback(async (promptOverride?: string, mode?: SlashMode) => {
+    const effectiveMode = mode || "explore";
+    if (isLoading && (activeAction === "explore" || activeAction === effectiveMode)) {
       cancelExplore();
       return;
     }
@@ -1405,7 +1409,7 @@ export function FloatingAIBar({
     const isStaleRun = () => runToken !== exploreRunTokenRef.current;
 
     setIsLoading(true);
-    setActiveAction("explore");
+    setActiveAction(effectiveMode);
 
     try {
       console.log("[FloatingAIBar] Starting exploration with context...");
@@ -1747,7 +1751,7 @@ export function FloatingAIBar({
 
     const runMode = async (selectedMode: SlashMode, inputText: string) => {
       if (selectedMode === "canvas" || selectedMode === "strategist" || selectedMode === "socratic") {
-        await handleExplore(buildExplorePromptForMode(selectedMode, inputText));
+        await handleExplore(buildExplorePromptForMode(selectedMode, inputText), selectedMode);
         return;
       }
       if (selectedMode === "formalize") {
