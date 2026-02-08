@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     cors_origins: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
     demo_access_code: str = "PR00FM3SH"
     demo_code_required_in_production: bool = True
+    allow_registration_in_production: bool = False
+    allow_password_login_in_production: bool = False
     
     # Lean Runner
     lean_runner_url: str = "http://lean-runner:9008"
@@ -46,7 +48,12 @@ class Settings(BaseSettings):
             return value.lower() in ("true", "1", "yes", "on")
         return value
 
-    @field_validator("demo_code_required_in_production", mode="before")
+    @field_validator(
+        "demo_code_required_in_production",
+        "allow_registration_in_production",
+        "allow_password_login_in_production",
+        mode="before",
+    )
     @classmethod
     def parse_demo_code_required(cls, value):
         if isinstance(value, str):

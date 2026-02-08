@@ -8,11 +8,14 @@ import { Logo } from "@/components/Logo";
 const DEMO_CODE_REQUIRED =
 	process.env.NEXT_PUBLIC_DEMO_CODE_REQUIRED === "true" ||
 	process.env.NODE_ENV === "production";
+const ACCOUNT_AUTH_ENABLED =
+	process.env.NEXT_PUBLIC_ENABLE_ACCOUNT_AUTH === "true" ||
+	process.env.NODE_ENV !== "production";
 
 export default function RegisterPage() {
 	const { register, demo } = useAuth();
 	const [mode, setMode] = useState<"demo" | "account">(
-		DEMO_CODE_REQUIRED ? "demo" : "account"
+		!ACCOUNT_AUTH_ENABLED || DEMO_CODE_REQUIRED ? "demo" : "account"
 	);
 	const [email, setEmail] = useState("");
 	const [username, setUsername] = useState("");
@@ -86,7 +89,7 @@ export default function RegisterPage() {
 						</div>
 					)}
 
-					{mode === "account" ? (
+					{mode === "account" && ACCOUNT_AUTH_ENABLED ? (
 						<form onSubmit={handleSubmit} className="space-y-4">
 							<div>
 								<label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">
@@ -171,26 +174,30 @@ export default function RegisterPage() {
 						</div>
 					)}
 
-					<div className="mt-4 text-center">
-						<button
-							type="button"
-							onClick={() => {
-								setError("");
-								setMode(mode === "demo" ? "account" : "demo");
-							}}
-							className="text-xs text-[var(--text-muted)] hover:text-[var(--text-secondary)] underline-offset-2 hover:underline"
-						>
-							{mode === "demo" ? "Create an account instead" : "Use demo access code instead"}
-						</button>
-					</div>
+					{ACCOUNT_AUTH_ENABLED && (
+						<div className="mt-4 text-center">
+							<button
+								type="button"
+								onClick={() => {
+									setError("");
+									setMode(mode === "demo" ? "account" : "demo");
+								}}
+								className="text-xs text-[var(--text-muted)] hover:text-[var(--text-secondary)] underline-offset-2 hover:underline"
+							>
+								{mode === "demo" ? "Create an account instead" : "Use demo access code instead"}
+							</button>
+						</div>
+					)}
 				</div>
 
-				<p className="mt-8 text-center text-sm text-[var(--text-muted)]">
-					Already have an account?{" "}
-					<Link href="/login" className="text-[var(--accent-primary)] font-medium hover:underline">
-						Sign in
-					</Link>
-				</p>
+				{ACCOUNT_AUTH_ENABLED && (
+					<p className="mt-8 text-center text-sm text-[var(--text-muted)]">
+						Already have an account?{" "}
+						<Link href="/login" className="text-[var(--accent-primary)] font-medium hover:underline">
+							Sign in
+						</Link>
+					</p>
+				)}
 			</div>
 		</div>
 	);

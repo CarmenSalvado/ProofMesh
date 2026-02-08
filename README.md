@@ -242,6 +242,13 @@ Use `.env.example` as the baseline. Important groups:
 - Frontend:
   - `NEXT_PUBLIC_API_URL`
   - `NEXT_PUBLIC_WS_URL`
+  - `NEXT_PUBLIC_DEMO_CODE_REQUIRED`
+  - `NEXT_PUBLIC_ENABLE_ACCOUNT_AUTH`
+- Auth policy:
+  - `DEMO_ACCESS_CODE`
+  - `DEMO_CODE_REQUIRED_IN_PRODUCTION`
+  - `ALLOW_REGISTRATION_IN_PRODUCTION`
+  - `ALLOW_PASSWORD_LOGIN_IN_PRODUCTION`
 
 ## Repository Layout
 
