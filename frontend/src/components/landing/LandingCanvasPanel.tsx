@@ -145,7 +145,7 @@ const SLASH_MODE_OPTIONS: Array<{
     label: "/verify",
     title: "Lean Verifier",
     description: "Run theorem checks quickly",
-    aliases: ["check", "verifica"],
+    aliases: ["check"],
   },
   {
     id: "critic",
@@ -319,6 +319,39 @@ export function LandingCanvasPanel() {
       });
     };
 
+    const animateEdgeDraw = (edgeId: string) => {
+      requestAnimationFrame(() => {
+        const edgePath = rootRef.current?.querySelector(
+          `g[data-edge-id="${edgeId}"] .edge-line`
+        ) as SVGPathElement | null;
+        if (!edgePath) return;
+
+        let length = 0;
+        try {
+          length = edgePath.getTotalLength();
+        } catch {
+          return;
+        }
+        if (!Number.isFinite(length) || length <= 0) return;
+
+        gsap.killTweensOf(edgePath);
+        gsap.set(edgePath, {
+          strokeDasharray: `${length} ${length}`,
+          strokeDashoffset: length,
+          opacity: 0.28,
+        });
+        gsap.to(edgePath, {
+          strokeDashoffset: 0,
+          opacity: 1,
+          duration: 0.88,
+          ease: "power2.out",
+          onComplete: () => {
+            gsap.set(edgePath, { clearProps: "strokeDasharray,strokeDashoffset,opacity" });
+          },
+        });
+      });
+    };
+
     const initCursorControllers = () => {
       disposeCursorControllers();
       CURSOR_USERS.forEach(({ id }) => {
@@ -378,7 +411,7 @@ export function LandingCanvasPanel() {
       const typing = { progress: 0 };
       resetStates();
 
-      const tl = gsap.timeline({ paused: true, repeat: -1, repeatDelay: 2.0 });
+      const tl = gsap.timeline({ paused: true, repeat: -1, repeatDelay: 0.12 });
 
       tl.call(() => {
         typing.progress = 0;
@@ -488,6 +521,7 @@ export function LandingCanvasPanel() {
             setActivityText("Collaborators connected definition -> theorem.");
           })
         )
+        .call(() => animateEdgeDraw("e1"))
         .call(() => moveCursors([["al", 346, 266], ["dm", 514, 454]]))
         .to({}, { duration: 0.1 })
         .call(() => moveCursors([["al", 350, 292], ["dm", 526, 448]]))
@@ -500,6 +534,7 @@ export function LandingCanvasPanel() {
             setActivityText("Collaborators connected lemma -> theorem.");
           })
         )
+        .call(() => animateEdgeDraw("e2"))
         .call(() => moveCursors([["sj", 650, 292], ["dm", 546, 432], ["al", 364, 328]]))
         .to({}, { duration: 0.1 })
         .call(() => moveCursors([["sj", 632, 312], ["dm", 556, 428], ["al", 370, 336]]))
@@ -567,7 +602,7 @@ export function LandingCanvasPanel() {
             setActivityText("Rho attached a formal verification node and started Lean runner.");
           })
         )
-        .call(() => moveCursors([["dm", 250, 500], ["al", 410, 370], ["sj", 580, 346]]))
+        .call(() => animateEdgeDraw("e3"))
         .to({}, { duration: 0.72 })
         .call(() =>
           safeSet(() => {
@@ -581,7 +616,7 @@ export function LandingCanvasPanel() {
             setActivityText("Lean runner finished: verification PASS, theorem remains valid.");
           })
         )
-        .to({}, { duration: 0.85 });
+        .to({}, { duration: 0.2 });
 
       ScrollTrigger.create({
         trigger: rootRef.current,

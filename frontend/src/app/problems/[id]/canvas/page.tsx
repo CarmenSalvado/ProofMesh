@@ -327,9 +327,10 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
     [nodes, shareNodeIds]
   );
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (options?: { showLoading?: boolean }) => {
+    const showLoading = options?.showLoading ?? true;
     try {
-      setLoading(true);
+      if (showLoading) setLoading(true);
       setError(null);
       let problemData: Problem;
       try {
@@ -337,7 +338,7 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
       } catch (err) {
         const message = err instanceof Error ? err.message : "Problem not found";
         setError(message.includes("HTTP 404") ? "Problem not found." : message);
-        setLoading(false);
+        if (showLoading) setLoading(false);
         return;
       }
       const [libraryData, blocksData] = await Promise.all([
@@ -376,7 +377,7 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load problem");
     } finally {
-      setLoading(false);
+      if (showLoading) setLoading(false);
     }
   }, [problemId]);
 
@@ -432,7 +433,7 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
 
   useEffect(() => {
     if (!lastCompletedAiRunId) return;
-    loadData();
+    void loadData({ showLoading: false });
   }, [lastCompletedAiRunId, loadData]);
 
   // Register collaboration handlers for receiving real-time updates from other users
@@ -445,7 +446,7 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
         console.log(`[Collaboration] Node created by user ${fromUser}:`, node.id);
         // Fetch fresh data from backend to get the full LibraryItem
         // (the CanvasNode from WS doesn't have all fields)
-        loadData();
+        void loadData({ showLoading: false });
       },
 
       // When another user updates a node
@@ -470,7 +471,7 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
             );
           }
           // If node doesn't exist locally, fetch fresh
-          loadData();
+          void loadData({ showLoading: false });
           return prev;
         });
       },
@@ -1211,36 +1212,6 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
     [problemId, collaboration, libraryItems, positions, recordMultiDelete]
   );
 
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Delete") return;
-
-      const target = event.target as HTMLElement | null;
-      if (
-        target &&
-        (target.tagName === "INPUT" ||
-          target.tagName === "TEXTAREA" ||
-          target.isContentEditable)
-      ) {
-        return;
-      }
-
-      if (selectedNodeIds.size > 0) {
-        event.preventDefault();
-        void handleMultiDelete(Array.from(selectedNodeIds));
-        return;
-      }
-
-      if (selectedNodeId) {
-        event.preventDefault();
-        void handleDeleteNode(selectedNodeId);
-      }
-    };
-
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [handleDeleteNode, handleMultiDelete, selectedNodeId, selectedNodeIds]);
-
   // Handle undo
   const applyPositionsSnapshot = useCallback((nextPositions: Record<string, { x: number; y: number }>) => {
     setLibraryItems(prev =>
@@ -1470,7 +1441,7 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
         <div className="flex items-center gap-3">
           {/* Refresh */}
           <button
-            onClick={loadData}
+            onClick={() => void loadData()}
             className="p-2 text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100 rounded-lg transition-colors"
             title="Refresh"
           >

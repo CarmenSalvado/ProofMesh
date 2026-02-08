@@ -806,7 +806,7 @@ export default function ThumbnailPage() {
       .join(",\n");
 
     navigator.clipboard.writeText(fullExport);
-    alert("¡Posiciones copiadas al portapapeles! Revisa la consola para el código completo.");
+    alert("Positions copied to clipboard. Check the console for the full code.");
     console.log("=== COPY THIS TO UPDATE DIAGRAM_NODES ===");
     DIAGRAM_NODES.forEach((node) => {
       const pos = nodePositions[node.id];

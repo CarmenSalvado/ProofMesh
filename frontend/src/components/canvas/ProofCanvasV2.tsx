@@ -18,6 +18,8 @@ import { InlineNodeEditor, QuickNodeData } from "./InlineNodeEditor";
 import { CanvasContextMenu } from "./CanvasContextMenu";
 
 type CanvasMode = "cursor" | "hand";
+const AGENT_NODE_STAGGER_MS = 120;
+const NODE_ENTER_ANIMATION_MS = 760;
 
 interface ProofCanvasV2Props {
   nodes: CanvasNode[];
@@ -255,6 +257,22 @@ const isEditableTarget = (target: EventTarget | null): boolean => {
   return role === "textbox" || role === "combobox";
 };
 
+const isDeleteShortcut = (event: KeyboardEvent): boolean => {
+  const key = (event.key || "").toLowerCase();
+  const code = (event.code || "").toLowerCase();
+  return (
+    key === "delete" ||
+    key === "del" ||
+    key === "supr" ||
+    key === "suprimir" ||
+    key === "backspace" ||
+    code === "delete" ||
+    code === "backspace" ||
+    event.keyCode === 46 ||
+    event.keyCode === 8
+  );
+};
+
 export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(function ProofCanvasV2({
   nodes,
   edges,
@@ -303,6 +321,7 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
   const [dragDelta, setDragDelta] = useState<{ x: number; y: number } | null>(null);
   const [multiDraggingIds, setMultiDraggingIds] = useState<string[] | null>(null);
   const [newNodeIds, setNewNodeIds] = useState<Set<string>>(new Set());
+  const [newNodeDelays, setNewNodeDelays] = useState<Map<string, number>>(new Map());
   
   // Canvas interaction mode: cursor (selection) or hand (pan)
   const [canvasMode, setCanvasMode] = useState<CanvasMode>("cursor");
@@ -353,6 +372,7 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
   const prevNodeIdsRef = useRef<Set<string>>(new Set());
   const hasInitializedNodesRef = useRef(false);
   const newNodeTimeoutsRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
+  const nodeAnimationCursorRef = useRef<number>(0);
   const lastMousePosRef = useRef<{ x: number; y: number } | null>(null);
   const rafRef = useRef<number | null>(null);
   const panStartRef = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
@@ -444,31 +464,101 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
 
   useEffect(() => {
     const currentIds = new Set(nodes.map((node) => node.id));
+
+    setNewNodeIds((prev) => {
+      let changed = false;
+      const next = new Set<string>();
+      prev.forEach((id) => {
+        if (currentIds.has(id)) {
+          next.add(id);
+        } else {
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+
+    setNewNodeDelays((prev) => {
+      let changed = false;
+      const next = new Map<string, number>();
+      prev.forEach((delay, id) => {
+        if (currentIds.has(id)) {
+          next.set(id, delay);
+        } else {
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+
+    newNodeTimeoutsRef.current.forEach((timeout, nodeId) => {
+      if (!currentIds.has(nodeId)) {
+        clearTimeout(timeout);
+        newNodeTimeoutsRef.current.delete(nodeId);
+      }
+    });
+
     if (!hasInitializedNodesRef.current) {
       hasInitializedNodesRef.current = true;
       prevNodeIdsRef.current = currentIds;
+      nodeAnimationCursorRef.current = Date.now();
       return;
     }
 
     const prevIds = prevNodeIdsRef.current;
     const added = nodes.filter((node) => !prevIds.has(node.id));
     if (added.length > 0) {
+      const now = Date.now();
+      const agentNodes = added
+        .filter((node) => node.agentId || node.authors?.some((author) => author.type === "agent"))
+        .sort((a, b) => a.y - b.y || a.x - b.x);
+      const staggeredNodes = (agentNodes.length > 0 ? agentNodes : added).sort(
+        (a, b) => a.y - b.y || a.x - b.x
+      );
+      const baseDelay = Math.max(0, nodeAnimationCursorRef.current - now);
+      const delayByNodeId = new Map<string, number>();
+
+      staggeredNodes.forEach((node, index) => {
+        delayByNodeId.set(node.id, baseDelay + index * AGENT_NODE_STAGGER_MS);
+      });
+
+      if (staggeredNodes.length > 0) {
+        nodeAnimationCursorRef.current = now + baseDelay + staggeredNodes.length * AGENT_NODE_STAGGER_MS;
+      } else if (nodeAnimationCursorRef.current < now) {
+        nodeAnimationCursorRef.current = now;
+      }
+
       setNewNodeIds((prev) => {
         const next = new Set(prev);
         added.forEach((node) => next.add(node.id));
         return next;
       });
+      setNewNodeDelays((prev) => {
+        const next = new Map(prev);
+        added.forEach((node) => {
+          next.set(node.id, delayByNodeId.get(node.id) ?? 0);
+        });
+        return next;
+      });
+
       added.forEach((node) => {
         const existing = newNodeTimeoutsRef.current.get(node.id);
         if (existing) clearTimeout(existing);
+        const delayMs = delayByNodeId.get(node.id) ?? 0;
         const timeout = setTimeout(() => {
           setNewNodeIds((prev) => {
             const next = new Set(prev);
             next.delete(node.id);
             return next;
           });
+          setNewNodeDelays((prev) => {
+            if (!prev.has(node.id)) return prev;
+            const next = new Map(prev);
+            next.delete(node.id);
+            return next;
+          });
           newNodeTimeoutsRef.current.delete(node.id);
-        }, 700);
+        }, NODE_ENTER_ANIMATION_MS + delayMs);
         newNodeTimeoutsRef.current.set(node.id, timeout);
       });
     }
@@ -803,7 +893,7 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
       // Ignore canvas shortcuts while typing in inputs/editors.
       if (isEditableTarget(e.target)) return;
 
-      if (e.key === "Delete" || e.key === "Backspace") {
+      if (isDeleteShortcut(e)) {
         if (!readOnly) {
           e.preventDefault();
           // Delete selected edge first
@@ -1987,6 +2077,7 @@ export const ProofCanvasV2 = forwardRef<ProofCanvasHandle, ProofCanvasV2Props>(f
             isDragging={draggedNode === node.id}
             isConnecting={connectingFrom === node.id}
             isNew={newNodeIds.has(node.id)}
+            entryDelayMs={newNodeDelays.get(node.id) ?? 0}
             anchorStatus={nodeAnchorStatus?.get(node.id)}
             onMouseDown={(e: React.MouseEvent) => handleNodeMouseDown(e, node)}
             onMouseUp={(e: React.MouseEvent) => handleNodeMouseUp(e, node)}

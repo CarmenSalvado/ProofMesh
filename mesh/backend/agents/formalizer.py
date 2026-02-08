@@ -18,6 +18,8 @@ Guidelines:
 3. Use standard Mathlib conventions when applicable
 4. Include necessary imports
 5. Add brief comments for clarity
+6. NEVER invent placeholder objects such as `my_def`, `my_theorem`, or generic stand-ins when the statement is underspecified.
+7. If the input is underspecified (e.g. "apply the definition" without the definition), return empty code and low confidence.
 
 Format your response as JSON:
 {
@@ -26,6 +28,15 @@ Format your response as JSON:
     "axioms_used": ["Any axioms required"],
     "confidence": 0.0-1.0,
     "notes": "Any important notes about the formalization"
+}
+
+When underspecified, use:
+{
+    "lean_code": "",
+    "imports": [],
+    "axioms_used": [],
+    "confidence": 0.1,
+    "notes": "Insufficient mathematical detail to formalize."
 }
 
 Focus on correctness and minimality. The code must type-check in Lean 4."""
@@ -121,12 +132,26 @@ class FormalizerAgent:
             # Clean lean_code if it's wrapped in markdown
             if lean_code.strip().startswith("```"):
                 lean_code = self._extract_code(lean_code)
-            
+
+            confidence_raw = data.get("confidence", 0.5)
+            try:
+                confidence = float(confidence_raw)
+            except (TypeError, ValueError):
+                confidence = 0.5
+
+            if self._is_placeholder_formalization(lean_code):
+                return FormalizationResult(
+                    lean_code="",
+                    imports=[],
+                    axioms_used=[],
+                    confidence=min(confidence, 0.1),
+                )
+
             return FormalizationResult(
                 lean_code=lean_code,
                 imports=data.get("imports", []),
                 axioms_used=data.get("axioms_used", []),
-                confidence=float(data.get("confidence", 0.5))
+                confidence=confidence
             )
 
         # 1. Try parsing full content as JSON directly
@@ -158,10 +183,33 @@ class FormalizerAgent:
         # Or try to extract code block directly if JSON failed completely
         print("  [DEBUG] Formalizer JSON parse failed, falling back to raw code extraction")
         lean_code = self._extract_code(content)
+        if self._is_placeholder_formalization(lean_code):
+            return FormalizationResult(
+                lean_code="",
+                confidence=0.1
+            )
         return FormalizationResult(
             lean_code=lean_code,
             confidence=0.3
         )
+
+    def _is_placeholder_formalization(self, lean_code: str) -> bool:
+        """Detect low-quality generic formalizations that do not use real statement context."""
+        code = (lean_code or "").strip().lower()
+        if not code:
+            return False
+
+        placeholder_patterns = [
+            r"\bmy_def\b",
+            r"\bmy_theorem\b",
+            r"\bmy_lemma\b",
+            r"\bplaceholder\b",
+            r"specific definition isn't provided",
+            r"since the specific definition",
+            r"we define a generic",
+            r"\bapplydefinition\b",
+        ]
+        return any(re.search(pattern, code) for pattern in placeholder_patterns)
     
     def _extract_code(self, text: str) -> str:
         """Extract Lean code from markdown or plain text."""

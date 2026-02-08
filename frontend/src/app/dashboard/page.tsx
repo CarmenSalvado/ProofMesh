@@ -15,6 +15,7 @@ import {
   LatexFileInfo,
   getLatexFile,
   getSocialFeed,
+  getSocialContributions,
   getSocialConnections,
   getSocialUsers,
   followUser,
@@ -149,6 +150,14 @@ export default function DashboardPage() {
   const [stats, setStats] = useState<PlatformStats | null>(null);
   const [followingCount, setFollowingCount] = useState<number>(0);
   const [connections, setConnections] = useState<SocialConnectionsResponse | null>(null);
+  const [recentProofs, setRecentProofs] = useState<Array<{
+    id: string;
+    title: string;
+    visibility: "private" | "public";
+    lastActivityAt?: string | null;
+    isOwned: boolean;
+    libraryItemCount: number;
+  }>>([]);
   const [showFollowingModal, setShowFollowingModal] = useState(false);
   const [loading, setLoading] = useState(true);
   const [feedTab, setFeedTab] = useState<"following" | "discover">("discover");
@@ -198,16 +207,139 @@ export default function DashboardPage() {
     if (!user) return;
     setLoading(true);
     try {
-      const [problemsData, feedData, usersData, trendingData, statsData, connectionsData, starsData] = await Promise.all([
-        getProblems({ mine: true }),
-        getSocialFeed({ scope: feedTab === "following" ? "network" : "global", limit: 20 }),
-        getSocialUsers({ limit: 10 }),
-        getTrendingProblems(5),
-        getPlatformStats(),
-        getSocialConnections(),
-        getStars({ target_type: "discussion", limit: 500 }),
+      const [
+        problemsData,
+        feedData,
+        networkFeedData,
+        usersData,
+        trendingData,
+        statsData,
+        connectionsData,
+        starsData,
+        contributionsData,
+      ] = await Promise.all([
+        getProblems({ mine: true }).catch(
+          (): Awaited<ReturnType<typeof getProblems>> => ({ problems: [], total: 0 })
+        ),
+        getSocialFeed({ scope: feedTab === "following" ? "network" : "global", limit: 20 }).catch(
+          (): Awaited<ReturnType<typeof getSocialFeed>> => ({ items: [], total: 0 })
+        ),
+        getSocialFeed({ scope: "network", limit: 100 }).catch(
+          (): Awaited<ReturnType<typeof getSocialFeed>> => ({ items: [], total: 0 })
+        ),
+        getSocialUsers({ limit: 10 }).catch(
+          (): Awaited<ReturnType<typeof getSocialUsers>> => ({ users: [], total: 0 })
+        ),
+        getTrendingProblems(5).catch(
+          (): Awaited<ReturnType<typeof getTrendingProblems>> => ({ problems: [], total: 0 })
+        ),
+        getPlatformStats().catch(
+          (): Awaited<ReturnType<typeof getPlatformStats>> | null => null
+        ),
+        getSocialConnections().catch(
+          (): Awaited<ReturnType<typeof getSocialConnections>> => ({
+            followers: [],
+            following: [],
+            total_followers: 0,
+            total_following: 0,
+          })
+        ),
+        getStars({ target_type: "discussion", limit: 500 }).catch(
+          (): Awaited<ReturnType<typeof getStars>> => ({ stars: [], total: 0 })
+        ),
+        getSocialContributions().catch(
+          (): Awaited<ReturnType<typeof getSocialContributions>> => ({ problems: [], total: 0 })
+        ),
       ]);
       setProblems(problemsData.problems);
+      const recentProofMap = new Map<string, {
+        id: string;
+        title: string;
+        visibility: "private" | "public";
+        lastActivityAt?: string | null;
+        isOwned: boolean;
+        libraryItemCount: number;
+      }>();
+      problemsData.problems.forEach((problem) => {
+        recentProofMap.set(problem.id, {
+          id: problem.id,
+          title: problem.title,
+          visibility: problem.visibility,
+          lastActivityAt: problem.updated_at,
+          isOwned: true,
+          libraryItemCount: problem.library_item_count || 0,
+        });
+      });
+      contributionsData.problems.forEach((contribution) => {
+        const existing = recentProofMap.get(contribution.problem_id);
+        if (existing) {
+          const existingTs = parseTimestamp(existing.lastActivityAt);
+          const contributionTs = parseTimestamp(contribution.last_activity_at || null);
+          if ((contributionTs || 0) > (existingTs || 0)) {
+            existing.lastActivityAt = contribution.last_activity_at || existing.lastActivityAt;
+          }
+          return;
+        }
+        recentProofMap.set(contribution.problem_id, {
+          id: contribution.problem_id,
+          title: contribution.problem_title,
+          visibility: contribution.visibility === "private" ? "private" : "public",
+          lastActivityAt: contribution.last_activity_at || null,
+          isOwned: false,
+          libraryItemCount: contribution.total_contributions || 0,
+        });
+      });
+      const ownProblemIds = new Set(problemsData.problems.map((problem) => problem.id));
+      networkFeedData.items.forEach((item) => {
+        if (item.actor.id !== user.id) return;
+        const extraData = item.extra_data || {};
+        const extraProblemIdRaw = extraData["problem_id"];
+        const extraProblemId =
+          typeof extraProblemIdRaw === "string" && extraProblemIdRaw.trim()
+            ? extraProblemIdRaw
+            : null;
+        const problemId = item.problem?.id || extraProblemId;
+        if (!problemId) return;
+
+        const extraProblemTitleRaw = extraData["problem_title"];
+        const extraProblemTitle =
+          typeof extraProblemTitleRaw === "string" && extraProblemTitleRaw.trim()
+            ? extraProblemTitleRaw.trim()
+            : null;
+        const title = item.problem?.title || extraProblemTitle;
+        if (!title) return;
+
+        const existing = recentProofMap.get(problemId);
+        const visibility =
+          item.problem?.visibility === "private" || item.problem?.visibility === "public"
+            ? item.problem.visibility
+            : (existing?.visibility || "private");
+
+        if (existing) {
+          const existingTs = parseTimestamp(existing.lastActivityAt);
+          const itemTs = parseTimestamp(item.created_at);
+          if ((itemTs || 0) > (existingTs || 0)) {
+            existing.lastActivityAt = item.created_at;
+          }
+          existing.isOwned = existing.isOwned || ownProblemIds.has(problemId);
+          return;
+        }
+
+        recentProofMap.set(problemId, {
+          id: problemId,
+          title,
+          visibility,
+          lastActivityAt: item.created_at,
+          isOwned: ownProblemIds.has(problemId),
+          libraryItemCount: 0,
+        });
+      });
+      const sortedRecentProofs = Array.from(recentProofMap.values()).sort((a, b) => {
+        const aTs = parseTimestamp(a.lastActivityAt);
+        const bTs = parseTimestamp(b.lastActivityAt);
+        return (bTs || 0) - (aTs || 0);
+      });
+      setRecentProofs(sortedRecentProofs);
       setFeedItems(feedData.items);
       setLikedDiscussionIds(new Set(starsData.stars.map((star) => star.target_id)));
       setSuggestions(usersData.users.filter((u) => u.id !== user.id && !u.is_following));
@@ -734,7 +866,7 @@ export default function DashboardPage() {
     }
   }, [activityOffset, feedTab, hasMoreActivity, loadingMore]);
 
-  const filteredProblems = problems.filter((p) =>
+  const filteredRecentProofs = recentProofs.filter((p) =>
     p.title.toLowerCase().includes(repoFilter.toLowerCase())
   );
 
@@ -892,7 +1024,7 @@ export default function DashboardPage() {
                 onChange={(e) => setRepoFilter(e.target.value)}
                 className="w-full text-xs bg-neutral-50 border border-neutral-200 rounded-md px-2.5 py-1.5 mb-2 focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 placeholder:text-neutral-400 text-neutral-900"
               />
-              {filteredProblems.slice(0, 5).map((problem) => (
+              {filteredRecentProofs.slice(0, 5).map((problem) => (
                 <Link
                   key={problem.id}
                   href={`/problems/${problem.id}`}
@@ -906,14 +1038,19 @@ export default function DashboardPage() {
                   <span className="text-sm font-medium text-neutral-700 group-hover:text-indigo-600 truncate">
                     {problem.title}
                   </span>
-                  {problem.library_item_count > 0 && (
+                  {problem.libraryItemCount > 0 && (
                     <span className="ml-auto w-1.5 h-1.5 rounded-full bg-emerald-500" />
                   )}
                 </Link>
               ))}
-              {problems.length > 5 && (
+              {filteredRecentProofs.length === 0 && (
+                <div className="px-2 py-2 text-xs text-neutral-500">
+                  No recent proofs found yet.
+                </div>
+              )}
+              {recentProofs.length > 5 && (
                 <Link
-                  href="/catalog?mine=true"
+                  href="/catalog"
                   className="mt-2 text-xs text-neutral-500 hover:text-indigo-600 flex items-center gap-1 ml-2"
                 >
                   Show more

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback } from "react";
+import { useCallback, type CSSProperties } from "react";
 import { Bot, MessageSquare, Link2, FileText, AlertCircle, FileCode } from "lucide-react";
 import { CanvasNode, NODE_TYPE_CONFIG, STATUS_CONFIG } from "./types";
 import { MarkdownRenderer } from "@/components/ui/MarkdownRenderer";
@@ -12,6 +12,7 @@ interface CanvasNodeItemProps {
   isDragging?: boolean;
   isConnecting?: boolean;
   isNew?: boolean;
+  entryDelayMs?: number;
   anchorStatus?: { hasAnchors: boolean; isStale: boolean; count: number };
   onMouseDown: (e: React.MouseEvent) => void;
   onMouseUp: (e: React.MouseEvent) => void;
@@ -28,6 +29,7 @@ export function CanvasNodeItem({
   isDragging = false,
   isConnecting = false,
   isNew = false,
+  entryDelayMs = 0,
   anchorStatus,
   onMouseDown,
   onMouseUp,
@@ -130,15 +132,17 @@ export function CanvasNodeItem({
     onConnectionStart?.(e);
   }, [onConnectionStart]);
 
+  const entryAnimationStyle: CSSProperties | undefined = isNew
+    ? ({ ["--pm-node-enter-delay" as string]: `${Math.max(0, entryDelayMs)}ms` } as CSSProperties)
+    : undefined;
+  const zLayerClass = isDragging ? "z-50" : isHighlighted ? "z-40" : "";
+
   return (
     <div
       data-node-id={node.id}
-      className={`absolute top-0 left-0 rounded-xl border cursor-pointer group select-none transition-shadow duration-100
-        ${typeConfig.bgColor} ${typeConfig.borderColor}
-        ${isHighlighted ? "ring-2 ring-indigo-500 ring-offset-1 shadow-lg z-40" : "hover:shadow-md"}
-        ${isDragging ? "shadow-xl cursor-grabbing z-50" : ""}
-        ${isConnecting ? "ring-2 ring-emerald-500" : ""}
-      `}
+      className={`absolute top-0 left-0 group select-none ${zLayerClass} ${
+        isDragging ? "cursor-grabbing" : "cursor-pointer"
+      }`}
       style={{
         transform: `translate3d(${node.x}px, ${node.y}px, 0)`,
         width: node.width || 260,
@@ -156,7 +160,16 @@ export function CanvasNodeItem({
       onContextMenu={onContextMenu}
       draggable={false}
     >
-      <div className={`relative w-full h-full ${isNew ? "pm-node-enter" : ""}`}>
+      <div
+        className={`relative w-full h-full rounded-xl border transition-shadow duration-150
+          ${typeConfig.bgColor} ${typeConfig.borderColor}
+          ${isHighlighted ? "ring-2 ring-indigo-500 ring-offset-1 shadow-lg" : "hover:shadow-md"}
+          ${isDragging ? "shadow-xl" : ""}
+          ${isConnecting ? "ring-2 ring-emerald-500" : ""}
+          ${isNew ? "pm-node-enter" : ""}
+        `}
+        style={entryAnimationStyle}
+      >
       {/* Document Anchor Badge */}
       {anchorStatus?.hasAnchors && (
         <div

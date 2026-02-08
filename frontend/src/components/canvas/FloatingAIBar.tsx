@@ -89,7 +89,7 @@ const hasMeaningfulCanvasPrompt = (value: string) => {
   if (!text) return false;
   if (text.length >= 8) return true;
   if (/[0-9=+\-*/^()]/.test(text)) return true;
-  return /\b(odd|even|par|impar|lemma|theorem|proof|lean|python|compute|verify)\b/i.test(text);
+  return /\b(odd|even|lemma|theorem|proof|lean|python|compute|verify)\b/i.test(text);
 };
 
 type SlashMode =
@@ -113,28 +113,28 @@ const SLASH_MODE_OPTIONS: Array<{
     label: "/explorer",
     title: "Explorer",
     description: "Explore ideas and connect nodes directly on canvas",
-    aliases: ["canvas", "explore", "mapa", "diagram"],
+    aliases: ["canvas", "explore", "diagram"],
   },
   {
     id: "formalize",
     label: "/formalize",
     title: "Lean Formalizer",
     description: "Generate Lean code from selected context",
-    aliases: ["formaliza", "lean", "formalise"],
+    aliases: ["formalize", "lean", "formalise"],
   },
   {
     id: "verify",
     label: "/verify",
     title: "Lean Verifier",
     description: "Run Lean verification on selected Lean node",
-    aliases: ["verifica", "check"],
+    aliases: ["verify", "check"],
   },
   {
     id: "critic",
     label: "/critic",
     title: "Rigorous Critic",
     description: "Stress-test assumptions and detect weak spots",
-    aliases: ["critica", "review", "peer"],
+    aliases: ["review", "peer"],
   },
   {
     id: "compute",
@@ -148,7 +148,7 @@ const SLASH_MODE_OPTIONS: Array<{
     label: "/strategist",
     title: "Proof Strategist",
     description: "Plan proof roadmap and node decomposition",
-    aliases: ["strategy", "plan", "roadmap", "estrategia"],
+    aliases: ["strategy", "plan", "roadmap"],
   },
   {
     id: "socratic",
@@ -277,8 +277,8 @@ const getSlashModeAccent = (mode: SlashMode | null) => {
   };
 };
 
-const FORMALIZE_DIRECTIVE_REGEX = /^(?:formaliza(?:\s+esto)?|formalize(?:\s+this)?|lean)\b[:\s-]*/i;
-const VERIFY_DIRECTIVE_REGEX = /^(?:verifica(?:\s+esto)?|verify(?:\s+this)?)\b[:\s-]*/i;
+const FORMALIZE_DIRECTIVE_REGEX = /^(?:formalize(?:\s+this)?|lean)\b[:\s-]*/i;
+const VERIFY_DIRECTIVE_REGEX = /^(?:verify(?:\s+this)?)\b[:\s-]*/i;
 
 const isFormalizeDirectiveText = (value: string) => FORMALIZE_DIRECTIVE_REGEX.test((value || "").trim());
 
@@ -393,8 +393,40 @@ const mapKeywordToType = (keyword: string) => {
   }
 };
 
+const hasMathFormulaSignal = (value: string) => {
+  const text = (value || "").trim();
+  if (!text) return false;
+  const withoutCode = text
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/`[^`]*`/g, " ");
+
+  const hasMathDelimiters = /\$\$?[\s\S]*?\$\$?|\\\(|\\\)|\\\[|\\\]/.test(withoutCode);
+  const hasLatexCommands = /\\(?:frac|sum|prod|int|lim|sqrt|cdot|times|alpha|beta|gamma|delta|epsilon|theta|lambda|mu|pi|sigma|phi|psi|omega|forall|exists|infty|leq|geq|neq|to|mapsto|Rightarrow|implies|iff|in|subseteq)\b/.test(withoutCode);
+  const hasMathRelation = /[A-Za-z0-9)\]}]\s*(?:=|<|>|≤|≥|≈|≠|∈|⊂|⊆|→|⇒|↦)\s*[A-Za-z0-9({[]/.test(withoutCode);
+  const hasSuperOrSubscript = /[A-Za-z0-9]\s*[_^]\s*[A-Za-z0-9({\\]/.test(withoutCode);
+
+  return hasMathDelimiters || hasLatexCommands || hasMathRelation || hasSuperOrSubscript;
+};
+
+const inferMathNodeType = (value: string) => {
+  const text = (value || "").trim();
+  if (!text) return "CLAIM";
+  const lower = text.toLowerCase();
+  const hasDefinitionPattern =
+    /\bdefinition\b/.test(lower) ||
+    /\bdefine\b/.test(lower) ||
+    /\bdenote\b/.test(lower) ||
+    /\bdefined as\b/.test(lower) ||
+    /:=|≔|\\coloneqq|\\defeq/.test(text);
+
+  if (hasDefinitionPattern) return "DEFINITION";
+  return "CLAIM";
+};
+
 const inferNodeTypeFromText = (value: string) => {
-  const lower = value.toLowerCase();
+  const text = (value || "").trim();
+  if (!text) return "NOTE";
+  const lower = text.toLowerCase();
   if (lower.includes("definition")) return "DEFINITION";
   if (lower.includes("theorem")) return "THEOREM";
   if (lower.includes("lemma")) return "LEMMA";
@@ -406,6 +438,7 @@ const inferNodeTypeFromText = (value: string) => {
   if (lower.includes("resource") || lower.includes("reference") || lower.includes("paper")) return "RESOURCE";
   if (lower.includes("idea") || lower.includes("approach")) return "IDEA";
   if (lower.includes("insight")) return "CLAIM";
+  if (hasMathFormulaSignal(text)) return inferMathNodeType(text);
   return "NOTE";
 };
 
@@ -419,7 +452,12 @@ const parseTypedSections = (text: string) => {
     const content = current.content.trim();
     if (content.length === 0 && current.title.length === 0) return;
     const title = current.title || deriveGroupTitle(content, "Insight");
-    sections.push({ type: current.type, title, content });
+    const merged = [title, content].filter(Boolean).join("\n");
+    const inferredType = inferNodeTypeFromText(merged);
+    const resolvedType = current.type === "NOTE" && inferredType !== "NOTE"
+      ? inferredType
+      : current.type;
+    sections.push({ type: resolvedType, title, content });
   };
 
   const headerRegex = new RegExp(
@@ -472,6 +510,7 @@ const extractChatResponse = (content: string) => {
 const MAX_CHAT_PREVIEW_CHARS = 180;
 const MAX_NODE_CONTENT_CHARS = 360;
 const MAX_SECTIONS_PER_RESPONSE = 8;
+const EXPLORER_NODE_REVEAL_DELAY_MS = 95;
 
 const compactChatText = (content: string, maxChars = MAX_CHAT_PREVIEW_CHARS) => {
   const cleaned = stripMarkdown(content || "")
@@ -480,6 +519,13 @@ const compactChatText = (content: string, maxChars = MAX_CHAT_PREVIEW_CHARS) => 
   if (!cleaned) return "";
   if (cleaned.length <= maxChars) return cleaned;
   return `${cleaned.slice(0, maxChars).trim()}...`;
+};
+
+const waitForNodeReveal = async () => {
+  // Let the browser paint the newly added node first.
+  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+  // Then keep a short gap so explorer-created nodes don't visually batch together.
+  await new Promise<void>((resolve) => setTimeout(resolve, EXPLORER_NODE_REVEAL_DELAY_MS));
 };
 
 const splitLongInsightContent = (content: string, maxChars = 220) => {
@@ -567,6 +613,16 @@ const ensurePythonComputation = (input: string): string | null => {
 };
 
 const LEAN_NODE_TYPES = new Set(["FORMAL_TEST", "LEMMA", "THEOREM", "CLAIM", "DEFINITION", "COUNTEREXAMPLE"]);
+const FORMALIZATION_MIN_CONFIDENCE = 0.45;
+const LEAN_PLACEHOLDER_PATTERNS: RegExp[] = [
+  /\bmy_def\b/i,
+  /\bmy_theorem\b/i,
+  /\bmy_lemma\b/i,
+  /\bplaceholder\b/i,
+  /specific definition (isn't|is not) provided/i,
+  /we define a generic/i,
+  /\bapplydefinition\b/i,
+];
 
 const looksLikeLeanCode = (value: string): boolean => {
   const text = (value || "").trim();
@@ -577,6 +633,26 @@ const looksLikeLeanCode = (value: string): boolean => {
   if (/^\s*by\b/m.test(text)) return true;
   if (/[∀∃→↔ℕℤℚℝ]/.test(text)) return true;
   return false;
+};
+
+const isPlaceholderLeanCode = (value: string): boolean => {
+  const code = (value || "").trim();
+  if (!code) return false;
+  return LEAN_PLACEHOLDER_PATTERNS.some((pattern) => pattern.test(code));
+};
+
+const getFormalizationIssue = (leanCode: string, confidence?: number): string | null => {
+  const code = (leanCode || "").trim();
+  if (!code) {
+    return "Could not formalize: a precise mathematical statement is required for Lean conversion.";
+  }
+  if (isPlaceholderLeanCode(code)) {
+    return "The formalization looks generic/placeholder (not grounded in the selected node).";
+  }
+  if (typeof confidence === "number" && confidence < FORMALIZATION_MIN_CONFIDENCE) {
+    return `Low confidence (${Math.round(confidence * 100)}%). Provide more mathematical context before verification.`;
+  }
+  return null;
 };
 
 const extractLeanCodeFromNode = (node?: CanvasNode | null): string | null => {
@@ -625,12 +701,14 @@ type DiagramSpec = {
 
 const EDGE_TYPES = new Set(["uses", "implies", "contradicts", "references"]);
 
-const normalizeNodeType = (value?: string | null) => {
-  if (!value) return "NOTE";
+const normalizeNodeType = (value?: string | null, fallbackText?: string) => {
+  if (!value) {
+    return fallbackText ? inferNodeTypeFromText(fallbackText) : "NOTE";
+  }
   const upper = String(value).trim().toUpperCase();
   if (NODE_TYPE_CONFIG[upper]) return upper;
   if (NODE_TYPE_CONFIG[upper.toLowerCase()]) return upper;
-  return "NOTE";
+  return fallbackText ? inferNodeTypeFromText(fallbackText) : "NOTE";
 };
 
 const normalizeEdgeType = (value?: string | null) => {
@@ -641,14 +719,21 @@ const normalizeEdgeType = (value?: string | null) => {
 const sanitizeDiagram = (diagram?: DiagramSpec | null) => {
   if (!diagram || !Array.isArray(diagram.nodes)) return null;
   const nodes = diagram.nodes
-    .map((node, index) => ({
-      id: String(node.id || `n${index + 1}`),
-      type: normalizeNodeType(node.type),
-      title: String(node.title || "").trim(),
-      content: node.content ? String(node.content).trim() : "",
-      formula: node.formula ? String(node.formula).trim() : undefined,
-      leanCode: node.lean_code || node.leanCode || undefined,
-    }))
+    .map((node, index) => {
+      const title = String(node.title || "").trim();
+      const content = node.content ? String(node.content).trim() : "";
+      const formula = node.formula ? String(node.formula).trim() : undefined;
+      const leanCode = node.lean_code || node.leanCode || undefined;
+      const typeHint = [title, content, formula || ""].filter(Boolean).join("\n");
+      return {
+        id: String(node.id || `n${index + 1}`),
+        type: normalizeNodeType(node.type, typeHint),
+        title,
+        content,
+        formula,
+        leanCode,
+      };
+    })
     .filter((node) => node.title.length > 0);
 
   if (nodes.length < 2) return null;
@@ -1151,6 +1236,7 @@ export function FloatingAIBar({
         lastCreatedId = created.id;
         createdIds.push(created.id);
       }
+      await waitForNodeReveal();
     }
 
     return createdIds.length;
@@ -1180,9 +1266,9 @@ export function FloatingAIBar({
 
     addInsight({
       type: "insight",
-      title: "Canvas actualizado",
+      title: "Canvas updated",
       content: createdCount > 0
-        ? `Creé ${createdCount} nodo${createdCount === 1 ? "" : "s"} en el canvas.`
+        ? `Created ${createdCount} node${createdCount === 1 ? "" : "s"} on the canvas.`
         : compactChatText(response, 120),
     });
   }, [createTypedNodesFromText, addInsight]);
@@ -1213,8 +1299,8 @@ export function FloatingAIBar({
     setActiveAction((prev) => (prev === "explore" || prev === "canvas" || prev === "strategist" || prev === "socratic" ? null : prev));
     addInsight({
       type: "insight",
-      title: "Exploración cancelada",
-      content: "Cancelé la generación en curso.",
+      title: "Exploration canceled",
+      content: "Canceled the current generation.",
     });
   }, [addInsight]);
 
@@ -1389,8 +1475,8 @@ export function FloatingAIBar({
     ) {
       addInsight({
         type: "insight",
-        title: "Prompt muy corto",
-        content: "Escribe una petición un poco más concreta o selecciona un nodo.",
+        title: "Prompt too short",
+        content: "Write a more specific request or select a node.",
       });
       return;
     }
@@ -1565,6 +1651,10 @@ export function FloatingAIBar({
                   baseDepsByActualId.set(created.id, baseDeps);
                   createdNodeIds.push(created.id);
                 }
+
+                if (!isStaleRun()) {
+                  await waitForNodeReveal();
+                }
               }
 
               // Update edges (dependencies) after creating all nodes
@@ -1612,6 +1702,9 @@ export function FloatingAIBar({
                   authors: [AI_AUTHOR],
                   source: buildAISource(runId),
                 });
+                if (!isStaleRun()) {
+                  await waitForNodeReveal();
+                }
               }
 
               return { diagramIdToActualId, createdNodeIds };
@@ -1624,7 +1717,7 @@ export function FloatingAIBar({
                 console.error(`[FloatingAIBar] ❌ Error creating diagram:`, error);
                 addInsight({
                   type: "insight",
-                  title: "Error creando diagrama",
+                  title: "Error creating diagram",
                   content: error.message,
                 });
               },
@@ -1678,6 +1771,13 @@ export function FloatingAIBar({
                 authors: [AI_AUTHOR],
                 source: buildAISource(runId),
               });
+              if (!isStaleRun()) {
+                await waitForNodeReveal();
+              }
+            }
+
+            if (!isStaleRun()) {
+              await waitForNodeReveal();
             }
 
             if (onCreateBlock && created && typeof created === "object" && "id" in created && created.id) {
@@ -1734,11 +1834,11 @@ export function FloatingAIBar({
     if (trimmed.startsWith("/")) {
       const slash = parseSlashCommand(trimmed);
       if (slash.hasDirective && !slash.mode) {
-        addInsight({
-          type: "insight",
-          title: "Unknown command",
-          content: "Use /canvas, /formalize, /verify, /critic, /compute, /strategist o /socratic.",
-        });
+          addInsight({
+            type: "insight",
+            title: "Unknown command",
+            content: "Use /canvas, /formalize, /verify, /critic, /compute, /strategist or /socratic.",
+          });
         return;
       }
       if (slash.mode) {
@@ -1759,7 +1859,7 @@ export function FloatingAIBar({
           addInsight({
             type: "insight",
             title: "Formalize unavailable",
-            content: "No pude iniciar formalización en este momento.",
+            content: "Could not start formalization right now.",
           });
           return;
         }
@@ -1803,7 +1903,7 @@ export function FloatingAIBar({
         addInsight({
           type: "insight",
           title: "Verify unavailable",
-          content: "No pude iniciar verificación en este momento.",
+          content: "Could not start verification right now.",
         });
         return;
       }
@@ -1818,7 +1918,7 @@ export function FloatingAIBar({
         addInsight({
           type: "insight",
           title: "Formalize unavailable",
-          content: "No pude iniciar formalización en este momento.",
+          content: "Could not start formalization right now.",
         });
         return;
       }
@@ -1893,6 +1993,7 @@ export function FloatingAIBar({
                 source: buildAISource(explorationRunId),
               })
             );
+            await waitForNodeReveal();
             proposalY += 240;
           } catch (err) {
             console.error("Failed to create exploration node", err);
@@ -1965,6 +2066,18 @@ export function FloatingAIBar({
         problem_id: problemId,
         text: sourceText,
       });
+      const issue = getFormalizationIssue(result.lean_code, result.confidence);
+      if (issue) {
+        addInsight({
+          type: "insight",
+          title: "Formalization rejected",
+          content: issue,
+          score: 0,
+          nodeRef: node.id,
+          runId: result.run_id,
+        });
+        return;
+      }
 
       setCurrentLeanCode(result.lean_code);
 
@@ -1983,6 +2096,7 @@ export function FloatingAIBar({
           authors: [AI_AUTHOR],
           source: buildAISource(result.run_id),
         });
+        await waitForNodeReveal();
       }
 
       // Update node's leanCode field if we have onUpdateNode
@@ -2014,6 +2128,22 @@ export function FloatingAIBar({
     if (!problemId) return;
     const leanCode = (leanCodeOverride ?? currentLeanCode ?? "").trim();
     if (!leanCode) return;
+    if (!looksLikeLeanCode(leanCode)) {
+      addInsight({
+        type: "insight",
+        title: "Verify needs Lean code",
+        content: "The selected node does not contain valid Lean code to run /verify.",
+      });
+      return;
+    }
+    if (isPlaceholderLeanCode(leanCode)) {
+      addInsight({
+        type: "insight",
+        title: "Verification blocked",
+        content: "Verification blocked because the Lean code looks like a generic placeholder. Formalize with a concrete definition or statement.",
+      });
+      return;
+    }
 
     setIsLoading(true);
     setActiveAction("verify");
@@ -2042,6 +2172,7 @@ export function FloatingAIBar({
           authors: [AI_AUTHOR],
           source: buildAISource(result.run_id),
         });
+        await waitForNodeReveal();
       }
 
       if (onUpdateNode && primaryNode?.id) {
@@ -2081,8 +2212,8 @@ export function FloatingAIBar({
         type: "insight",
         title: "Verify needs Lean node",
         content: explicitPrompt
-          ? "Selecciona un nodo con codigo Lean para verificar. /verify no formaliza ni genera codigo."
-          : "Selecciona un nodo que ya tenga codigo Lean para ejecutar la verificacion.",
+          ? "Select a node with Lean code to verify. /verify does not formalize or generate code."
+          : "Select a node that already has Lean code to run verification.",
       });
       return;
     }
@@ -2116,6 +2247,17 @@ export function FloatingAIBar({
         problem_id: problemId,
         text: sourceText,
       });
+      const issue = getFormalizationIssue(formalization.lean_code, formalization.confidence);
+      if (issue) {
+        addInsight({
+          type: "insight",
+          title: "Lean mode blocked",
+          content: issue,
+          score: 0,
+          runId: formalization.run_id,
+        });
+        return;
+      }
       setCurrentLeanCode(formalization.lean_code);
 
       if (onCreateNode) {
@@ -2130,6 +2272,7 @@ export function FloatingAIBar({
           authors: [AI_AUTHOR],
           source: buildAISource(formalization.run_id),
         });
+        await waitForNodeReveal();
       }
 
       if (onUpdateNode && primaryNode?.id) {
@@ -2190,7 +2333,7 @@ export function FloatingAIBar({
         addInsight({
           type: "insight",
           title: "Compute mode expects Python",
-          content: "Escribe codigo Python ejecutable en lugar de texto descriptivo.",
+          content: "Write executable Python code instead of descriptive text.",
         });
         return;
       }
@@ -2212,6 +2355,7 @@ export function FloatingAIBar({
         dependencies: dependencyIds,
         authors: [AI_AUTHOR],
       });
+      await waitForNodeReveal();
       if (created && typeof created === "object" && "id" in created && created.id) {
         targetNodeId = created.id;
         baseDependencies = Array.from(new Set([created.id, ...dependencyIds]));
@@ -2234,7 +2378,7 @@ export function FloatingAIBar({
         addInsight({
           type: "insight",
           title: "Compute mode expects Python",
-          content: "Escribe codigo Python ejecutable en lugar de texto descriptivo.",
+          content: "Write executable Python code instead of descriptive text.",
         });
         return;
       }
@@ -2284,6 +2428,7 @@ export function FloatingAIBar({
           dependencies: Array.from(new Set([targetNodeId, ...baseDependencies])),
           authors: [AI_AUTHOR],
         });
+        await waitForNodeReveal();
       }
 
       addInsight({
@@ -2356,6 +2501,7 @@ export function FloatingAIBar({
           authors: [AI_AUTHOR],
           source: buildAISource(critique.run_id),
         });
+        await waitForNodeReveal();
       }
 
       addInsight({
@@ -2449,6 +2595,7 @@ export function FloatingAIBar({
           authors: [AI_AUTHOR],
           source: buildAISource(explorationRunId),
         });
+        await waitForNodeReveal();
 
         if (createdProposal && typeof createdProposal === "object" && "id" in createdProposal) {
           proposalNodeId = createdProposal.id;
@@ -2472,6 +2619,17 @@ export function FloatingAIBar({
         problem_id: problemId,
         text: bestProposal.content,
       });
+      const formalizationIssue = getFormalizationIssue(formalization.lean_code, formalization.confidence);
+      if (formalizationIssue) {
+        addInsight({
+          type: "insight",
+          title: "Pipeline halted",
+          content: `Formalization stopped: ${formalizationIssue}`,
+          score: 0,
+          runId: formalization.run_id,
+        });
+        return;
+      }
 
       setCurrentLeanCode(formalization.lean_code);
       addInsight({ type: "code", title: "Lean 4 Code", content: formalization.lean_code, score: formalization.confidence });
@@ -2494,6 +2652,7 @@ export function FloatingAIBar({
           authors: [AI_AUTHOR],
           source: buildAISource(formalization.run_id),
         });
+        await waitForNodeReveal();
 
         if (createdLean && typeof createdLean === "object" && "id" in createdLean) {
           leanNodeId = createdLean.id;
@@ -2531,6 +2690,7 @@ export function FloatingAIBar({
           authors: [AI_AUTHOR],
           source: buildAISource(verification.run_id),
         });
+        await waitForNodeReveal();
       }
 
       // Final result
@@ -2635,6 +2795,7 @@ export function FloatingAIBar({
             authors: [AI_AUTHOR],
             source: buildAISource(result.run_id),
           });
+          await waitForNodeReveal();
         }
       }
 
@@ -2691,6 +2852,7 @@ export function FloatingAIBar({
           dependencies: dependencyIds,
           authors: [AI_AUTHOR],
         });
+        await waitForNodeReveal();
       }
 
       setStoryModalOpen(true);
@@ -2753,6 +2915,7 @@ export function FloatingAIBar({
           dependencies: dependencyIds,
           authors: [AI_AUTHOR],
         });
+        await waitForNodeReveal();
       }
 
       setCommand("");
@@ -2954,7 +3117,7 @@ export function FloatingAIBar({
                   const responseText = content.replace(/<thinking>[\s\S]*?<\/thinking>/g, "").trim();
                   const createdNodes = assistantNodeCounts[msg.id] || 0;
                   const compactResponse = createdNodes > 0
-                    ? `Creé ${createdNodes} nodo${createdNodes === 1 ? "" : "s"} en el canvas.`
+                    ? `Created ${createdNodes} node${createdNodes === 1 ? "" : "s"} on the canvas.`
                     : compactChatText(responseText);
                   
                   return (
@@ -3038,7 +3201,7 @@ export function FloatingAIBar({
                     {!currentThinking && !currentResponse && (
                       <div className="flex items-center gap-2 text-xs text-neutral-400">
                         <Loader2 className="w-3 h-3 animate-spin" />
-                        <span>Rho iniciando...</span>
+                        <span>Rho starting...</span>
                       </div>
                     )}
                   </div>
@@ -3055,7 +3218,7 @@ export function FloatingAIBar({
                     className="text-[10px] text-neutral-400 hover:text-neutral-600 flex items-center gap-1"
                   >
                     <Brain className="w-3 h-3" />
-                    {showThinking ? "Ocultar pensamiento" : "Mostrar pensamiento"}
+                    {showThinking ? "Hide thinking" : "Show thinking"}
                   </button>
                 </div>
               )}

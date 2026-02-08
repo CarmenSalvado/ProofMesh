@@ -111,7 +111,7 @@ const DEFAULT_ACTIONS = [
 
 const LATEX_LANGUAGE_ID = "latex";
 const EDIT_INTENT_PATTERN =
-  /(add|insert|append|update|edit|rewrite|replace|fix|refactor|delete|remove|change|improve|shorten|expand|format|reformat|summarize|summarise|prove|derive|section|subsection|seccion|equation|theorem|lemma|proof|corrig|corrige|corrigir|correg|cambia|modifica|anade|agrega|inserta|borra|elimina|quita|mejor|resume|resumir|acorta|amplia|create|write|draft|paper|article|document|crea|crear|genera|generar|redacta|redactar|escribe|escribir|paper|articulo|documento)/i;
+  /(add|insert|append|update|edit|rewrite|replace|fix|refactor|delete|remove|change|improve|shorten|expand|format|reformat|summarize|summarise|prove|derive|section|subsection|equation|theorem|lemma|proof|correct|create|write|draft|paper|article|document)/i;
 
 const normalizeInstruction = (value: string) =>
   value.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
