@@ -11,6 +11,11 @@ from app.database import async_session_maker
 from app.models.user import User
 from app.services.auth import get_password_hash
 
+DEMO_EMAIL = "demo@proofmesh.app"
+DEMO_USERNAME = "lucia_mora"
+DEMO_PASSWORD = "proofmesh-demo"
+DEMO_BIO = "Collaborative mathematician exploring conjectures and formal proofs on ProofMesh."
+
 
 # Real universities with their locations
 UNIVERSITIES = [
@@ -197,10 +202,44 @@ def generate_bio(areas: list[tuple[str, list[str]]]) -> str:
 async def seed_users(num_users: int = 80):
     """Seed realistic academic users."""
     async with async_session_maker() as db:
+        async def ensure_demo_user() -> bool:
+            """Ensure demo account exists with human-like identity."""
+            result_demo = await db.execute(select(User).where(User.email == DEMO_EMAIL))
+            demo_user = result_demo.scalar_one_or_none()
+
+            if not demo_user:
+                db.add(
+                    User(
+                        email=DEMO_EMAIL,
+                        username=DEMO_USERNAME,
+                        password_hash=get_password_hash(DEMO_PASSWORD),
+                        bio=DEMO_BIO,
+                        created_at=random_past_time(120, 7),
+                    )
+                )
+                await db.commit()
+                return True
+
+            updated = False
+            if demo_user.bio != DEMO_BIO:
+                demo_user.bio = DEMO_BIO
+                updated = True
+            if demo_user.username != DEMO_USERNAME:
+                username_taken = await db.execute(
+                    select(User).where(User.username == DEMO_USERNAME, User.id != demo_user.id)
+                )
+                if username_taken.scalar_one_or_none() is None:
+                    demo_user.username = DEMO_USERNAME
+                    updated = True
+            if updated:
+                await db.commit()
+            return updated
+
         # Check if users already exist
         result = await db.execute(select(User))
         existing_users = result.scalars().all()
         if len(existing_users) > 10:
+            await ensure_demo_user()
             print(f"✓ Already have {len(existing_users)} users, skipping user seeding")
             return
         
@@ -249,6 +288,9 @@ async def seed_users(num_users: int = 80):
                 print(f"  Created {users_created}/{num_users} users...")
         
         await db.commit()
+        demo_created_or_updated = await ensure_demo_user()
+        if demo_created_or_updated:
+            print(f"✓ Ensured demo user @{DEMO_USERNAME}")
         print(f"✓ Created {users_created} users")
 
 

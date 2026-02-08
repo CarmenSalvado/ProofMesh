@@ -21,7 +21,7 @@ interface AuthContextType {
 	user: User | null;
 	isLoading: boolean;
 	login: (email: string, password: string) => Promise<void>;
-	demo: () => Promise<void>;
+	demo: (code?: string) => Promise<void>;
 	register: (email: string, username: string, password: string) => Promise<void>;
 	logout: () => void;
 	getToken: () => string | null;
@@ -86,9 +86,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 		router.push("/dashboard");
 	};
 
-	const demo = async () => {
+	const demo = async (code?: string) => {
 		const res = await fetch(`${API_URL}/api/auth/demo`, {
 			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(code ? { code } : {}),
 		});
 
 		if (!res.ok) {

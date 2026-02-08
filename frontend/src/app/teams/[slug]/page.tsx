@@ -92,6 +92,7 @@ export default function TeamDetailPage() {
   // Add problem modal state
   const [userProblems, setUserProblems] = useState<Problem[]>([]);
   const [loadingProblems, setLoadingProblems] = useState(false);
+  const [removingProblemId, setRemovingProblemId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -221,7 +222,8 @@ export default function TeamDetailPage() {
     setLoadingProblems(true);
     try {
       const data = await getProblems({ mine: true });
-      setUserProblems(data.problems);
+      const existingProblemIds = new Set((team?.problems || []).map((p) => p.problem_id));
+      setUserProblems(data.problems.filter((p) => !existingProblemIds.has(p.id)));
     } catch (err) {
       console.error("Failed to load problems", err);
     } finally {
@@ -237,6 +239,19 @@ export default function TeamDetailPage() {
       setShowAddProblemModal(false);
     } catch (err) {
       console.error("Add problem failed", err);
+    }
+  };
+
+  const handleRemoveProblem = async (problemId: string) => {
+    if (!team || !confirm("Remove this problem from the team?")) return;
+    setRemovingProblemId(problemId);
+    try {
+      await removeTeamProblem(team.slug, problemId);
+      await loadTeam();
+    } catch (err) {
+      console.error("Remove problem failed", err);
+    } finally {
+      setRemovingProblemId(null);
     }
   };
 
@@ -266,6 +281,7 @@ export default function TeamDetailPage() {
   }
 
   if (!user) return null;
+  const teamProblems = team.problems || [];
 
   return (
     <div className="min-h-screen bg-neutral-50 text-neutral-900 flex flex-col">
@@ -386,7 +402,7 @@ export default function TeamDetailPage() {
             <div className="bg-white rounded-xl border border-neutral-200 overflow-hidden">
               <div className="px-4 py-3 border-b border-neutral-100 flex items-center justify-between">
                 <h2 className="text-sm font-semibold text-neutral-900">
-                  Team Problems ({team.problem_count})
+                  Team Problems ({teamProblems.length})
                 </h2>
                 {userRole && (
                   <button
@@ -399,7 +415,7 @@ export default function TeamDetailPage() {
                 )}
               </div>
               <div className="p-4">
-                {team.problem_count === 0 ? (
+                {teamProblems.length === 0 ? (
                   <div className="text-center py-8">
                     <Users className="w-8 h-8 text-neutral-300 mx-auto mb-3" />
                     <p className="text-sm text-neutral-500 mb-3">
@@ -415,9 +431,38 @@ export default function TeamDetailPage() {
                     )}
                   </div>
                 ) : (
-                  <p className="text-sm text-neutral-500">
-                    Team problems will be displayed here.
-                  </p>
+                  <div className="space-y-2">
+                    {teamProblems.map((problem) => (
+                      <div
+                        key={problem.problem_id}
+                        className="flex items-center justify-between gap-3 rounded-lg border border-neutral-200 px-3 py-2 hover:border-indigo-200 hover:bg-indigo-50/40 transition-colors"
+                      >
+                        <Link
+                          href={`/problems/${problem.problem_id}`}
+                          className="min-w-0 flex-1 flex items-center gap-2"
+                        >
+                          {problem.visibility === "private" ? (
+                            <Lock className="w-3.5 h-3.5 text-neutral-400 flex-shrink-0" />
+                          ) : (
+                            <Globe className="w-3.5 h-3.5 text-neutral-400 flex-shrink-0" />
+                          )}
+                          <span className="text-sm font-medium text-neutral-900 truncate">
+                            {problem.title}
+                          </span>
+                        </Link>
+                        {canManage && (
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveProblem(problem.problem_id)}
+                            disabled={removingProblemId === problem.problem_id}
+                            className="text-xs font-medium text-neutral-500 hover:text-red-600 disabled:opacity-50"
+                          >
+                            {removingProblemId === problem.problem_id ? "Removing..." : "Remove"}
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
                 )}
               </div>
             </div>

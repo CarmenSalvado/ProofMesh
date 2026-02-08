@@ -158,8 +158,8 @@ export default function LandingPage() {
       </section>
 
       {/* Interactive Mockup Section */}
-      <section className="max-w-[1320px] mx-auto px-4 pb-24">
-        <div className="relative rounded-xl border border-neutral-200 bg-white shadow-[0_30px_60px_-10px_rgba(0,0,0,0.08)] overflow-hidden h-[700px] md:h-[790px]">
+      <section className="max-w-[1320px] mx-auto px-3 sm:px-4 pb-16 sm:pb-24">
+        <div className="relative rounded-xl border border-neutral-200 bg-white shadow-[0_30px_60px_-10px_rgba(0,0,0,0.08)] overflow-hidden h-[500px] sm:h-[600px] md:h-[790px]">
           {/* Mockup Toolbar */}
           <div className="h-12 border-b border-neutral-100 flex items-center justify-between px-4 bg-neutral-50/50">
             <div className="flex items-center gap-2">
@@ -196,12 +196,12 @@ export default function LandingPage() {
       </section>
 
       {/* LaTeX Editor Animation */}
-      <section className="max-w-[1320px] mx-auto px-4 pb-24">
-        <div className="text-center mb-8">
-          <h2 className="text-3xl font-semibold tracking-tight text-neutral-900 mb-2">
+      <section className="max-w-[1320px] mx-auto px-3 sm:px-4 pb-16 sm:pb-24">
+        <div className="text-center mb-6 sm:mb-8 px-2">
+          <h2 className="text-2xl sm:text-3xl font-semibold tracking-tight text-neutral-900 mb-2">
             Collaborative LaTeX, built for proof teams
           </h2>
-          <p className="text-neutral-500">
+          <p className="text-sm sm:text-base text-neutral-500 max-w-2xl mx-auto">
             Write together, review in context, and keep every compiled revision aligned with formal reasoning.
           </p>
         </div>
@@ -211,7 +211,7 @@ export default function LandingPage() {
       <LandingSocialPanel />
 
       {/* Social Features Grid */}
-      <section id="methodology" className="max-w-6xl mx-auto px-4 py-20">
+      <section id="methodology" className="max-w-6xl mx-auto px-3 sm:px-4 py-12 sm:py-20">
         <div className="text-center mb-16">
           <h2 className="text-3xl font-semibold tracking-tight text-neutral-900 mb-3">
             One workflow from conjecture to verified proof
@@ -221,7 +221,7 @@ export default function LandingPage() {
           </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 sm:gap-6">
           {/* Feature 1 */}
           <div className="group p-6 rounded-2xl bg-neutral-50 hover:bg-white border border-neutral-200 hover:border-neutral-300 hover:shadow-lg transition-all duration-300">
             <div className="w-10 h-10 rounded-lg bg-indigo-50 border border-indigo-100 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
@@ -264,9 +264,9 @@ export default function LandingPage() {
       </section>
 
       {/* AI Features Section */}
-      <section className="border-y border-neutral-100 bg-gradient-to-b from-indigo-50/30 to-white py-20">
-        <div className="max-w-6xl mx-auto px-4">
-          <div className="text-center mb-16">
+      <section className="border-y border-neutral-100 bg-gradient-to-b from-indigo-50/30 to-white py-12 sm:py-20">
+        <div className="max-w-6xl mx-auto px-3 sm:px-4">
+          <div className="text-center mb-10 sm:mb-16">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-100 text-indigo-700 text-xs font-medium mb-4">
               <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456zM16.894 20.567L16.5 21.75l-.394-1.183a2.25 2.25 0 00-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 001.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 001.423 1.423l1.183.394-1.183.394a2.25 2.25 0 00-1.423 1.423z" />
@@ -281,7 +281,7 @@ export default function LandingPage() {
             </p>
           </div>
 
-          <div className="rounded-2xl border border-indigo-200 bg-gradient-to-br from-indigo-50 to-cyan-50 p-5 md:p-6 mb-6 shadow-sm">
+          <div className="rounded-2xl border border-indigo-200 bg-gradient-to-br from-indigo-50 to-cyan-50 p-4 sm:p-5 md:p-6 mb-6 shadow-sm">
             <div className="flex items-center gap-2 mb-3">
               <div className="w-6 h-6 rounded-md bg-indigo-100 text-indigo-700 flex items-center justify-center text-[11px] font-semibold">@</div>
               <h3 className="text-base font-semibold text-neutral-900">What is Rho?</h3>
@@ -297,8 +297,8 @@ export default function LandingPage() {
             </div>
           </div>
 
-          <div className="text-center mb-6">
-            <h3 className="text-xl font-semibold tracking-tight text-neutral-900 mb-2">
+          <div className="text-center mb-6 px-2">
+            <h3 className="text-lg sm:text-xl font-semibold tracking-tight text-neutral-900 mb-2">
               Technical routing behind Rho
             </h3>
             <p className="text-neutral-500 max-w-2xl mx-auto">
@@ -315,7 +315,7 @@ export default function LandingPage() {
             </p>
           </div>
 
-          <div className="rounded-2xl border border-neutral-200 bg-white p-5 md:p-6 mb-8 shadow-sm">
+          <div className="rounded-2xl border border-neutral-200 bg-white p-4 sm:p-5 md:p-6 mb-8 shadow-sm overflow-x-auto">
             <div className="flex items-center gap-2 mb-3">
               <div className="w-6 h-6 rounded-md bg-cyan-100 text-cyan-700 flex items-center justify-center text-[11px] font-semibold">ρ</div>
               <h3 className="text-base font-semibold text-neutral-900">How Rho works</h3>
@@ -370,8 +370,8 @@ export default function LandingPage() {
       </section>
 
       {/* Review / Collaboration Snippet */}
-      <section id="community-story" className="py-20">
-        <div className="max-w-4xl mx-auto px-4 flex flex-col md:flex-row items-center gap-12">
+      <section id="community-story" className="py-12 sm:py-20">
+        <div className="max-w-4xl mx-auto px-3 sm:px-4 flex flex-col md:flex-row items-center gap-8 sm:gap-12">
           <div className="flex-1 space-y-6">
             <div className="flex items-center gap-2 text-indigo-600 font-medium text-xs uppercase tracking-wider">
               <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -398,7 +398,7 @@ export default function LandingPage() {
           </div>
 
           {/* Visual Card: Comment Thread */}
-          <div className="flex-1 w-full max-w-sm bg-white rounded-xl border border-neutral-200 shadow-xl p-4 relative">
+          <div className="flex-1 w-full max-w-sm bg-white rounded-xl border border-neutral-200 shadow-xl p-3 sm:p-4 relative mx-auto md:mx-0">
             {/* Thread Item 1 */}
             <div className="flex gap-3 mb-4">
               <div className="w-8 h-8 rounded-full bg-indigo-50 border border-indigo-100 flex-shrink-0 flex items-center justify-center text-[10px] font-bold text-indigo-600">
@@ -437,8 +437,8 @@ export default function LandingPage() {
       </section>
 
       {/* CTA */}
-      <section className="py-32 px-6 text-center bg-neutral-900 text-white">
-        <div className="max-w-2xl mx-auto">
+      <section className="py-20 sm:py-32 px-4 sm:px-6 text-center bg-neutral-900 text-white">
+        <div className="max-w-2xl mx-auto px-2">
           <h2 className="text-3xl font-semibold tracking-tight mb-6">
             Build mathematics with rigor and momentum.
           </h2>
@@ -469,8 +469,8 @@ export default function LandingPage() {
       </section>
 
       {/* Footer */}
-      <footer className="bg-neutral-900 border-t border-neutral-800 py-12 px-6">
-        <div className="max-w-6xl mx-auto flex flex-col md:flex-row justify-between items-center gap-6">
+      <footer className="bg-neutral-900 border-t border-neutral-800 py-8 sm:py-12 px-4 sm:px-6">
+        <div className="max-w-6xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4 sm:gap-6">
           <div className="flex items-center gap-2">
             <Logo size={16} />
             <span className="text-sm font-semibold text-white">ProofMesh</span>

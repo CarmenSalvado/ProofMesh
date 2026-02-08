@@ -31,12 +31,12 @@ const FEED_ITEMS = [
 
 export function LandingSocialPanel() {
   return (
-    <section id="community" className="max-w-[1320px] mx-auto px-4 pb-24">
-      <div className="text-center mb-8">
-        <h2 className="text-3xl font-semibold tracking-tight text-neutral-900 mb-2">
+    <section id="community" className="max-w-[1320px] mx-auto px-3 sm:px-4 pb-16 sm:pb-24">
+      <div className="text-center mb-6 sm:mb-8 px-2">
+        <h2 className="text-2xl sm:text-3xl font-semibold tracking-tight text-neutral-900 mb-2">
           Social workflow for mathematical proof teams
         </h2>
-        <p className="text-neutral-500">
+        <p className="text-sm sm:text-base text-neutral-500 max-w-2xl mx-auto">
           Shared feed, threaded critique, and branch history where Rho assistance and
           {" "}
           <a
@@ -51,15 +51,16 @@ export function LandingSocialPanel() {
         </p>
       </div>
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1.2fr_0.8fr]">
-        <div className="rounded-2xl border border-neutral-200 bg-white p-4 shadow-[0_20px_50px_-28px_rgba(0,0,0,0.35)]">
-          <div className="mb-3 flex items-center justify-between">
+      <div className="grid grid-cols-1 gap-4 sm:gap-6 lg:grid-cols-[1.2fr_0.8fr]">
+        <div className="rounded-2xl border border-neutral-200 bg-white p-3 sm:p-4 shadow-[0_20px_50px_-28px_rgba(0,0,0,0.35)]">
+          <div className="mb-3 flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 text-sm font-semibold text-neutral-900">
               <Flame className="h-4 w-4 text-amber-500" />
-              Live theorem activity
+              <span className="hidden sm:inline">Live theorem activity</span>
+              <span className="sm:hidden">Live activity</span>
             </div>
-            <span className="rounded-full border border-neutral-200 bg-neutral-50 px-2 py-1 text-[10px] text-neutral-600">
-              Rho Hackathon flow
+            <span className="rounded-full border border-neutral-200 bg-neutral-50 px-2 py-1 text-[10px] text-neutral-600 whitespace-nowrap">
+              Rho Hackathon
             </span>
           </div>
 
@@ -93,8 +94,8 @@ export function LandingSocialPanel() {
           </div>
         </div>
 
-        <div className="space-y-6">
-          <div className="rounded-2xl border border-neutral-200 bg-white p-4 shadow-[0_20px_50px_-28px_rgba(0,0,0,0.35)]">
+        <div className="space-y-4 sm:space-y-6">
+          <div className="rounded-2xl border border-neutral-200 bg-white p-3 sm:p-4 shadow-[0_20px_50px_-28px_rgba(0,0,0,0.35)]">
             <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-neutral-900">
               <MessageSquare className="h-4 w-4 text-indigo-500" />
               Proof review thread
@@ -114,10 +115,11 @@ export function LandingSocialPanel() {
             </div>
           </div>
 
-          <div className="rounded-2xl border border-neutral-200 bg-white p-4 shadow-[0_20px_50px_-28px_rgba(0,0,0,0.35)]">
+          <div className="rounded-2xl border border-neutral-200 bg-white p-3 sm:p-4 shadow-[0_20px_50px_-28px_rgba(0,0,0,0.35)]">
             <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-neutral-900">
               <GitBranch className="h-4 w-4 text-emerald-500" />
-              Exploration + verification snapshot
+              <span className="hidden sm:inline">Exploration + verification snapshot</span>
+              <span className="sm:hidden">Verification snapshot</span>
             </div>
             <div className="grid grid-cols-2 gap-2 text-[11px]">
               <div className="rounded-lg border border-neutral-200 bg-neutral-50 px-2.5 py-2">

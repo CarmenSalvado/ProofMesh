@@ -1,8 +1,10 @@
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Request
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.database import get_db
 from app.models.user import User
 from app.schemas.user import (
@@ -23,10 +25,16 @@ from app.api.deps import get_current_user
 from app.services.storage import put_object, delete_object
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+settings = get_settings()
 
 DEMO_EMAIL = "demo@proofmesh.app"
-DEMO_USERNAME = "proofmesh-demo"
+DEMO_USERNAME = "lucia_mora"
 DEMO_PASSWORD = "proofmesh-demo"
+DEMO_BIO = "Collaborative mathematician exploring conjectures and formal proofs on ProofMesh."
+
+
+class DemoLoginRequest(BaseModel):
+    code: str | None = None
 
 
 @router.post("/register", response_model=TokenResponse, status_code=201)
@@ -77,8 +85,16 @@ async def login(data: UserLogin, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/demo", response_model=TokenResponse)
-async def demo_login(db: AsyncSession = Depends(get_db)):
+async def demo_login(data: DemoLoginRequest | None = None, db: AsyncSession = Depends(get_db)):
     """Return tokens for a pre-made demo user (auto-creates if missing)."""
+    if not settings.debug and settings.demo_code_required_in_production:
+        provided_code = (data.code or "").strip() if data else ""
+        if provided_code != settings.demo_access_code:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Invalid demo access code",
+            )
+
     result = await db.execute(select(User).where(User.email == DEMO_EMAIL))
     user = result.scalar_one_or_none()
 
@@ -87,7 +103,7 @@ async def demo_login(db: AsyncSession = Depends(get_db)):
             email=DEMO_EMAIL,
             username=DEMO_USERNAME,
             password_hash=get_password_hash(DEMO_PASSWORD),
-            bio="Demo account for ProofMesh preview",
+            bio=DEMO_BIO,
         )
         db.add(user)
         try:
@@ -103,6 +119,21 @@ async def demo_login(db: AsyncSession = Depends(get_db)):
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail="Unable to provision demo user",
                 )
+    else:
+        updated = False
+        if user.username != DEMO_USERNAME:
+            username_taken = await db.execute(
+                select(User).where(User.username == DEMO_USERNAME, User.id != user.id)
+            )
+            if username_taken.scalar_one_or_none() is None:
+                user.username = DEMO_USERNAME
+                updated = True
+        if user.bio != DEMO_BIO:
+            user.bio = DEMO_BIO
+            updated = True
+        if updated:
+            await db.commit()
+            await db.refresh(user)
 
     return create_tokens(str(user.id))
 

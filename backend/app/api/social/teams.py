@@ -21,6 +21,7 @@ from app.schemas.social import (
     TeamDetailResponse,
     TeamListResponse,
     TeamMemberResponse,
+    TeamProblemResponse,
     TeamInvite,
     TeamAddProblem,
 )
@@ -151,11 +152,29 @@ async def get_team(
         for m in members
     ]
     
-    problem_count_result = await db.execute(
-        select(TeamProblem).where(TeamProblem.team_id == team.id)
+    team_problems_result = await db.execute(
+        select(TeamProblem)
+        .options(selectinload(TeamProblem.problem), selectinload(TeamProblem.added_by))
+        .where(TeamProblem.team_id == team.id)
+        .order_by(TeamProblem.added_at.desc())
     )
-    problem_count = len(problem_count_result.scalars().all())
-    
+    team_problems = team_problems_result.scalars().all()
+    problem_payload: list[TeamProblemResponse] = []
+    for tp in team_problems:
+        if not tp.problem:
+            continue
+        problem_payload.append(
+            TeamProblemResponse(
+                problem_id=tp.problem_id,
+                title=tp.problem.title,
+                visibility=tp.problem.visibility.value,
+                added_at=tp.added_at,
+                added_by=build_social_user(tp.added_by, following_ids, follower_ids)
+                if tp.added_by
+                else None,
+            )
+        )
+
     return TeamDetailResponse(
         id=team.id,
         name=team.name,
@@ -164,8 +183,9 @@ async def get_team(
         is_public=team.is_public,
         avatar_url=team.avatar_url,
         member_count=len(members),
-        problem_count=problem_count,
+        problem_count=len(problem_payload),
         members=member_payload,
+        problems=problem_payload,
         created_at=team.created_at,
         updated_at=team.updated_at,
     )

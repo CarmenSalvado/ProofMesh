@@ -370,6 +370,14 @@ export interface TeamMember {
 	joined_at: string;
 }
 
+export interface TeamProblemSummary {
+	problem_id: string;
+	title: string;
+	visibility: "public" | "private" | string;
+	added_at: string;
+	added_by?: SocialUser | null;
+}
+
 export interface Team {
 	id: string;
 	name: string;
@@ -385,6 +393,7 @@ export interface Team {
 
 export interface TeamDetail extends Team {
 	members: TeamMember[];
+	problems: TeamProblemSummary[];
 }
 
 export interface TeamListResponse {
@@ -1285,9 +1294,12 @@ export async function getStars(params?: {
 	target_type?: StarTargetType;
 	limit?: number;
 }): Promise<StarListResponse> {
+	const MAX_STARS_LIMIT = 200;
 	const searchParams = new URLSearchParams();
 	if (params?.target_type) searchParams.set("target_type", params.target_type);
-	if (params?.limit) searchParams.set("limit", params.limit.toString());
+	if (params?.limit) {
+		searchParams.set("limit", Math.min(params.limit, MAX_STARS_LIMIT).toString());
+	}
 	const query = searchParams.toString();
 	return apiFetch(`/social/stars${query ? `?${query}` : ""}`);
 }

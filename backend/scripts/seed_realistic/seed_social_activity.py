@@ -60,6 +60,21 @@ COMMENT_TEMPLATES = [
 ]
 
 
+def sanitize_project_title(title: str) -> str:
+    """Keep project token syntax stable even with unusual characters in titles."""
+    return title.replace("[", "").replace("]", "").replace("|", "/").strip()
+
+
+def project_token(problem: Problem) -> str:
+    """Format project reference token used by frontend rich renderer."""
+    return f"[[project:{problem.id}|{sanitize_project_title(problem.title)}]]"
+
+
+def user_mention(user: User) -> str:
+    """Format user mention token used by frontend rich renderer."""
+    return f"@{user.username}"
+
+
 def random_past_time(days_ago_max: int, days_ago_min: int = 0) -> datetime:
     """Generate a random datetime between days_ago_min and days_ago_max days ago."""
     days = random.randint(days_ago_min, days_ago_max)
@@ -198,9 +213,12 @@ async def seed_discussions():
         
         # Create 40-60 discussions
         num_discussions = random.randint(40, 60)
-        
+        problems_by_id = {p.id: p for p in all_problems}
+
         for _ in range(num_discussions):
             author = random.choice(all_users)
+            mention_candidates = [u for u in all_users if u.id != author.id]
+            mentioned_user = random.choice(mention_candidates) if mention_candidates else None
             
             # 70% are problem-specific, 30% general
             if random.random() < 0.7 and all_problems:
@@ -214,6 +232,9 @@ async def seed_discussions():
                     "alternative method",
                     "some property",
                 )
+                content += f"\n\nProject context: {project_token(problem)}"
+                if mentioned_user and random.random() < 0.65:
+                    content += f"\n\n{user_mention(mentioned_user)} would love your take on this."
             else:
                 problem_id = None
                 title = random.choice([
@@ -231,6 +252,12 @@ async def seed_discussions():
                     "Curious to hear the community's thoughts on this.",
                     "What's your experience with this?",
                 ])
+                # Add references so seeded social text exercises mention/tag rendering.
+                if all_problems and random.random() < 0.55:
+                    random_problem = random.choice(all_problems)
+                    content += f"\n\nRelated project: {project_token(random_problem)}"
+                if mentioned_user and random.random() < 0.45:
+                    content += f"\n\nTagging {user_mention(mentioned_user)} for suggestions."
             
             # Some discussions are pinned (5%)
             is_pinned = random.random() < 0.05
@@ -265,6 +292,21 @@ async def seed_discussions():
                     "use this method",
                     "related concept",
                 )
+
+                # Mentions in comments
+                comment_mention_candidates = [u for u in all_users if u.id != commenter.id]
+                if comment_mention_candidates and random.random() < 0.35:
+                    mentioned_comment_user = random.choice(comment_mention_candidates)
+                    comment_text += f" {user_mention(mentioned_comment_user)}"
+
+                # Project references in comments
+                target_problem = None
+                if problem_id and problem_id in problems_by_id:
+                    target_problem = problems_by_id[problem_id]
+                elif all_problems and random.random() < 0.45:
+                    target_problem = random.choice(all_problems)
+                if target_problem and random.random() < 0.6:
+                    comment_text += f" See {project_token(target_problem)}."
                 
                 # 20% chance of being a reply to previous comment
                 parent_id = None

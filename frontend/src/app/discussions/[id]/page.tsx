@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useRouter, useParams } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth";
@@ -10,8 +10,12 @@ import {
   createComment,
   updateDiscussion,
   deleteDiscussion,
+  getSocialUsers,
+  getProblems,
   Discussion,
   Comment,
+  SocialUser,
+  Problem,
 } from "@/lib/api";
 import { extractPostAttachments } from "@/lib/postAttachments";
 import { DashboardNavbar } from "@/components/layout/DashboardNavbar";
@@ -30,6 +34,34 @@ import {
 } from "lucide-react";
 
 const RHO_MENTION_REGEX = /(?:^|\s)@rho\b/i;
+const PROJECT_LINK_TOKEN_REGEX = /^\[\[project:([^|\]]+)\|([^\]]+)\]\]$/i;
+
+type AutocompleteScope = "main" | "reply";
+type AutocompleteMode = "user" | "project";
+
+type AutocompleteContext = {
+  mode: AutocompleteMode;
+  query: string;
+  start: number;
+  end: number;
+};
+
+type AutocompleteItem =
+  | {
+      key: string;
+      mode: "user";
+      label: string;
+      meta?: string;
+      username: string;
+    }
+  | {
+      key: string;
+      mode: "project";
+      label: string;
+      meta?: string;
+      problemId: string;
+      problemTitle: string;
+    };
 
 function getInitials(name: string) {
   return name
@@ -54,17 +86,55 @@ function formatRelativeTime(iso: string) {
   return new Date(iso).toLocaleDateString();
 }
 
+function getAutocompleteContext(text: string, cursor: number): AutocompleteContext | null {
+  const prefix = text.slice(0, cursor);
+  const match = prefix.match(/(?:^|\s)([@#])([A-Za-z0-9._-]*)$/);
+  if (!match) return null;
+  const symbol = match[1];
+  const query = match[2] || "";
+  const end = cursor;
+  const start = end - (1 + query.length);
+  return {
+    mode: symbol === "@" ? "user" : "project",
+    query,
+    start,
+    end,
+  };
+}
+
 function highlightMentions(text: string) {
-  const parts = text.split(/(@[A-Za-z0-9._-]+)/g);
+  const parts = text.split(/(\[\[project:[^\]|]+\|[^\]]+\]\]|@[A-Za-z0-9._-]+)/g);
   return parts.map((part, idx) => {
+    if (!part) return null;
+
+    const projectMatch = part.match(PROJECT_LINK_TOKEN_REGEX);
+    if (projectMatch) {
+      const [, projectId, projectTitle] = projectMatch;
+      return (
+        <Link
+          key={`project-${idx}`}
+          href={`/problems/${encodeURIComponent(projectId)}`}
+          title={`Open project ${projectTitle}`}
+          className="inline-flex items-center rounded-full border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-900 shadow-[inset_0_0_0_1px_rgba(16,185,129,0.08)] transition hover:bg-emerald-100"
+        >
+          #{projectTitle}
+        </Link>
+      );
+    }
+
     if (!part.startsWith("@")) return <span key={`text-${idx}`}>{part}</span>;
     const isRho = part.toLowerCase() === "@rho";
-    const mentionedUsername = part.slice(1);
+    const mentionedUsername = part.slice(1).trim();
     return (
       <Link
         key={`mention-${idx}`}
         href={`/users/${encodeURIComponent(mentionedUsername)}`}
-        className={isRho ? "text-cyan-700 font-semibold" : "text-indigo-700 font-medium"}
+        title={`Open profile @${mentionedUsername}`}
+        className={
+          isRho
+            ? "inline-flex items-center rounded-full border border-emerald-300 bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-900 shadow-[inset_0_0_0_1px_rgba(16,185,129,0.15)] transition hover:bg-emerald-200"
+            : "inline-flex items-center rounded-full border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-900 shadow-[inset_0_0_0_1px_rgba(16,185,129,0.08)] transition hover:bg-emerald-100"
+        }
       >
         {part}
       </Link>
@@ -87,6 +157,15 @@ export default function DiscussionDetailPage() {
   const [replyTo, setReplyTo] = useState<string | null>(null);
   const [showMenu, setShowMenu] = useState(false);
   const [rhoPending, setRhoPending] = useState(false);
+  const [activeComposer, setActiveComposer] = useState<AutocompleteScope | null>(null);
+  const [autocomplete, setAutocomplete] = useState<AutocompleteContext | null>(null);
+  const [autocompleteIndex, setAutocompleteIndex] = useState(0);
+  const [autocompleteLoading, setAutocompleteLoading] = useState(false);
+  const [userSuggestions, setUserSuggestions] = useState<SocialUser[]>([]);
+  const [projectPool, setProjectPool] = useState<Problem[]>([]);
+  const [projectSuggestions, setProjectSuggestions] = useState<Problem[]>([]);
+  const mainComposerRef = useRef<HTMLTextAreaElement | null>(null);
+  const replyComposerRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -117,6 +196,72 @@ export default function DiscussionDetailPage() {
     loadData();
   }, [loadData]);
 
+  useEffect(() => {
+    if (!autocomplete || autocomplete.mode !== "user") return;
+    let cancelled = false;
+    setAutocompleteLoading(true);
+    getSocialUsers({ q: autocomplete.query || undefined, limit: 8 })
+      .then((data) => {
+        if (cancelled) return;
+        setUserSuggestions(data.users);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setUserSuggestions([]);
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setAutocompleteLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [autocomplete]);
+
+  useEffect(() => {
+    if (!autocomplete || autocomplete.mode !== "project") return;
+    const normalized = autocomplete.query.trim().toLowerCase();
+    const filterProjects = (problems: Problem[]) => {
+      const filtered = problems
+        .filter((problem) => {
+          if (!normalized) return true;
+          return (
+            problem.title.toLowerCase().includes(normalized) ||
+            problem.id.toLowerCase().startsWith(normalized)
+          );
+        })
+        .slice(0, 8);
+      setProjectSuggestions(filtered);
+    };
+
+    if (projectPool.length > 0) {
+      setAutocompleteLoading(false);
+      filterProjects(projectPool);
+      return;
+    }
+
+    let cancelled = false;
+    setAutocompleteLoading(true);
+    getProblems()
+      .then((data) => {
+        if (cancelled) return;
+        setProjectPool(data.problems);
+        filterProjects(data.problems);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setProjectSuggestions([]);
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setAutocompleteLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [autocomplete, projectPool]);
+
   const appendRhoMention = () => {
     setNewComment((prev) => {
       const trimmed = prev.trimEnd();
@@ -125,6 +270,119 @@ export default function DiscussionDetailPage() {
       return `${trimmed} @rho `;
     });
   };
+
+  const autocompleteItems = useMemo<AutocompleteItem[]>(() => {
+    if (!autocomplete) return [];
+    if (autocomplete.mode === "user") {
+      return userSuggestions.map((user) => ({
+        key: `user-${user.id}`,
+        mode: "user",
+        label: `@${user.username}`,
+        meta: user.bio || undefined,
+        username: user.username,
+      }));
+    }
+    return projectSuggestions.map((problem) => ({
+      key: `project-${problem.id}`,
+      mode: "project",
+      label: problem.title,
+      meta: problem.visibility,
+      problemId: problem.id,
+      problemTitle: problem.title,
+    }));
+  }, [autocomplete, projectSuggestions, userSuggestions]);
+
+  useEffect(() => {
+    setAutocompleteIndex(0);
+  }, [autocomplete?.mode, autocomplete?.query, autocompleteItems.length]);
+
+  const closeAutocomplete = useCallback(() => {
+    setAutocomplete(null);
+    setAutocompleteLoading(false);
+    setAutocompleteIndex(0);
+  }, []);
+
+  const syncAutocomplete = useCallback(
+    (value: string, cursor: number | null, scope: AutocompleteScope) => {
+      setActiveComposer(scope);
+      if (cursor == null) {
+        closeAutocomplete();
+        return;
+      }
+      const nextContext = getAutocompleteContext(value, cursor);
+      if (!nextContext) {
+        closeAutocomplete();
+        return;
+      }
+      setAutocomplete(nextContext);
+    },
+    [closeAutocomplete]
+  );
+
+  const handleComposerChange = useCallback(
+    (value: string, cursor: number | null, scope: AutocompleteScope) => {
+      setNewComment(value);
+      syncAutocomplete(value, cursor, scope);
+    },
+    [syncAutocomplete]
+  );
+
+  const applyAutocompleteSelection = useCallback(
+    (item: AutocompleteItem) => {
+      if (!autocomplete) return;
+
+      const insertion =
+        item.mode === "user"
+          ? `@${item.username} `
+          : `[[project:${item.problemId}|${item.problemTitle}]] `;
+      const nextCursor = autocomplete.start + insertion.length;
+
+      setNewComment((prev) => `${prev.slice(0, autocomplete.start)}${insertion}${prev.slice(autocomplete.end)}`);
+      closeAutocomplete();
+
+      requestAnimationFrame(() => {
+        const input = activeComposer === "reply" ? replyComposerRef.current : mainComposerRef.current;
+        if (!input) return;
+        input.focus();
+        if ("setSelectionRange" in input) {
+          input.setSelectionRange(nextCursor, nextCursor);
+        }
+      });
+    },
+    [activeComposer, autocomplete, closeAutocomplete]
+  );
+
+  const handleComposerKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLTextAreaElement | HTMLInputElement>) => {
+      if (!autocomplete) return;
+
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closeAutocomplete();
+        return;
+      }
+
+      if (!autocompleteItems.length) return;
+
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setAutocompleteIndex((prev) => (prev + 1) % autocompleteItems.length);
+        return;
+      }
+
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setAutocompleteIndex((prev) => (prev - 1 + autocompleteItems.length) % autocompleteItems.length);
+        return;
+      }
+
+      if ((e.key === "Enter" || e.key === "Tab") && autocompleteItems[autocompleteIndex]) {
+        e.preventDefault();
+        applyAutocompleteSelection(autocompleteItems[autocompleteIndex]);
+      }
+    },
+    [applyAutocompleteSelection, autocomplete, autocompleteIndex, autocompleteItems, closeAutocomplete]
+  );
 
   const handleSubmitComment = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -144,6 +402,7 @@ export default function DiscussionDetailPage() {
       setComments((prev) => [...prev, comment]);
       setNewComment("");
       setReplyTo(null);
+      closeAutocomplete();
 
       // The backend auto-posts Rho as a threaded reply when @rho is present.
       if (triggersRho) {
@@ -224,6 +483,55 @@ export default function DiscussionDetailPage() {
   const { cleanContent: discussionContent, attachments: discussionAttachments } = extractPostAttachments(
     discussion.content
   );
+  const hasRhoMention = RHO_MENTION_REGEX.test(newComment);
+
+  const renderAutocompleteMenu = (scope: AutocompleteScope) => {
+    if (!autocomplete || activeComposer !== scope) return null;
+
+    const noResultsText =
+      autocomplete.mode === "user" ? "No users match that mention." : "No projects match that link.";
+
+    return (
+      <div className="mt-2 rounded-xl border border-neutral-200 bg-white shadow-sm overflow-hidden">
+        <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-neutral-500 bg-neutral-50 border-b border-neutral-100">
+          {autocomplete.mode === "user" ? "Mention users" : "Link projects"}
+        </div>
+        {autocompleteLoading ? (
+          <div className="px-3 py-2 text-xs text-neutral-500">Searching…</div>
+        ) : autocompleteItems.length === 0 ? (
+          <div className="px-3 py-2 text-xs text-neutral-500">{noResultsText}</div>
+        ) : (
+          <div className="max-h-56 overflow-y-auto">
+            {autocompleteItems.map((item, index) => (
+              <button
+                key={item.key}
+                type="button"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  applyAutocompleteSelection(item);
+                }}
+                className={`w-full px-3 py-2 text-left transition ${
+                  index === autocompleteIndex ? "bg-emerald-50" : "hover:bg-neutral-50"
+                }`}
+              >
+                {item.mode === "user" ? (
+                  <div className="min-w-0">
+                    <div className="text-xs font-semibold text-emerald-800 truncate">{item.label}</div>
+                    {item.meta && <div className="text-[11px] text-neutral-500 truncate">{item.meta}</div>}
+                  </div>
+                ) : (
+                  <div className="min-w-0">
+                    <div className="text-xs font-semibold text-emerald-700 truncate">#{item.label}</div>
+                    <div className="text-[11px] text-neutral-500 truncate">{item.problemId}</div>
+                  </div>
+                )}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   const renderComment = (comment: Comment, depth = 0) => {
     const children = getChildren(comment.id);
@@ -283,10 +591,39 @@ export default function DiscussionDetailPage() {
                 <form onSubmit={handleSubmitComment} className="mt-3">
                   <div className="flex gap-2">
                     <input
+                      ref={isReplying ? replyComposerRef : undefined}
                       type="text"
                       value={newComment}
-                      onChange={(e) => setNewComment(e.target.value)}
-                      placeholder={`Reply to ${comment.author.username}... (mention @rho for AI check)`}
+                      onChange={(e) =>
+                        handleComposerChange(
+                          e.target.value,
+                          e.target.selectionStart ?? e.target.value.length,
+                          "reply"
+                        )
+                      }
+                      onFocus={(e) =>
+                        syncAutocomplete(
+                          e.currentTarget.value,
+                          e.currentTarget.selectionStart ?? e.currentTarget.value.length,
+                          "reply"
+                        )
+                      }
+                      onClick={(e) =>
+                        syncAutocomplete(
+                          e.currentTarget.value,
+                          e.currentTarget.selectionStart ?? e.currentTarget.value.length,
+                          "reply"
+                        )
+                      }
+                      onKeyUp={(e) =>
+                        syncAutocomplete(
+                          e.currentTarget.value,
+                          e.currentTarget.selectionStart ?? e.currentTarget.value.length,
+                          "reply"
+                        )
+                      }
+                      onKeyDown={handleComposerKeyDown}
+                      placeholder={`Reply to ${comment.author.username}... (@user or #project)`}
                       className="flex-1 rounded-lg border border-neutral-200 px-3 py-2 text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 bg-white text-neutral-900"
                       autoFocus
                     />
@@ -300,6 +637,7 @@ export default function DiscussionDetailPage() {
                     <button
                       type="button"
                       onClick={() => {
+                        closeAutocomplete();
                         setReplyTo(null);
                         setNewComment("");
                       }}
@@ -308,6 +646,7 @@ export default function DiscussionDetailPage() {
                       Cancel
                     </button>
                   </div>
+                  {renderAutocompleteMenu("reply")}
                 </form>
               )}
             </div>
@@ -426,7 +765,7 @@ export default function DiscussionDetailPage() {
             <h2 className="text-sm font-semibold text-neutral-900">Comments ({comments.length})</h2>
             <div className="inline-flex items-center gap-2 rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1.5 text-xs text-cyan-800">
               <WandSparkles className="w-3.5 h-3.5" />
-              Mention <span className="font-semibold">@rho</span> to ask for an AI truth-check.
+              Type <span className="font-semibold">@</span> to mention users, <span className="font-semibold">#</span> to link projects.
             </div>
           </div>
 
@@ -458,37 +797,68 @@ export default function DiscussionDetailPage() {
 
                 <div className="flex-1">
                   <textarea
+                    ref={mainComposerRef}
                     value={newComment}
-                    onChange={(e) => setNewComment(e.target.value)}
-                    placeholder="Write a comment, proof idea, or question..."
+                    onChange={(e) =>
+                      handleComposerChange(
+                        e.target.value,
+                        e.target.selectionStart ?? e.target.value.length,
+                        "main"
+                      )
+                    }
+                    onFocus={(e) =>
+                      syncAutocomplete(
+                        e.currentTarget.value,
+                        e.currentTarget.selectionStart ?? e.currentTarget.value.length,
+                        "main"
+                      )
+                    }
+                    onClick={(e) =>
+                      syncAutocomplete(
+                        e.currentTarget.value,
+                        e.currentTarget.selectionStart ?? e.currentTarget.value.length,
+                        "main"
+                      )
+                    }
+                    onKeyUp={(e) =>
+                      syncAutocomplete(
+                        e.currentTarget.value,
+                        e.currentTarget.selectionStart ?? e.currentTarget.value.length,
+                        "main"
+                      )
+                    }
+                    onKeyDown={handleComposerKeyDown}
+                    placeholder="Write a comment, proof idea, or question... (@user, #project)"
                     rows={3}
                     className="w-full rounded-xl border border-neutral-200 px-3 py-2 text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 resize-none bg-white text-neutral-900"
                   />
-                  <div className="mt-2 flex items-center justify-between gap-2">
-                    {RHO_MENTION_REGEX.test(newComment) ? (
+                  {renderAutocompleteMenu("main")}
+                  <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                    {hasRhoMention && (
                       <div className="text-[11px] text-cyan-800 rounded-md border border-cyan-200 bg-cyan-50 px-2 py-1">
                         Rho will reply after you post.
                       </div>
-                    ) : (
-                      <div />
                     )}
-                    <button
-                      type="button"
-                      onClick={appendRhoMention}
-                      className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border border-cyan-200 bg-cyan-50 text-cyan-800 hover:bg-cyan-100"
-                    >
-                      <Bot className="w-3.5 h-3.5" />
-                      Call @rho
-                    </button>
+                    <div className="ml-auto flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={appendRhoMention}
+                        disabled={hasRhoMention}
+                        className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-cyan-300 bg-white px-3 text-xs font-semibold text-cyan-800 transition hover:border-cyan-400 hover:bg-cyan-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <Bot className="w-3.5 h-3.5" />
+                        {hasRhoMention ? "Rho linked" : "Call @rho"}
+                      </button>
 
-                    <button
-                      type="submit"
-                      disabled={submitting || !newComment.trim()}
-                      className="flex items-center gap-2 px-4 py-2 bg-neutral-900 text-white rounded-lg text-sm font-medium hover:bg-neutral-800 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      <Send className="w-4 h-4" />
-                      {submitting ? "Posting..." : "Post Comment"}
-                    </button>
+                      <button
+                        type="submit"
+                        disabled={submitting || !newComment.trim()}
+                        className="flex items-center gap-2 px-4 py-2 bg-neutral-900 text-white rounded-lg text-sm font-medium hover:bg-neutral-800 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <Send className="w-4 h-4" />
+                        {submitting ? "Posting..." : "Post Comment"}
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>

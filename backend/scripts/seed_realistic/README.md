@@ -49,6 +49,7 @@ python -m scripts.seed_realistic.run --help
 - Real university emails (@mit.edu, @stanford.edu, @ox.ac.uk, etc.)
 - Research areas and academic bios
 - Diverse international names
+- Demo account with human profile: `demo@proofmesh.app` (`@lucia_mora`)
 
 **Universities included:**
 MIT, Stanford, Oxford, Cambridge, ETH Zürich, Princeton, Harvard, Berkeley, ENS, Imperial College, University of Tokyo, and more.
@@ -88,7 +89,10 @@ MIT, Stanford, Oxford, Cambridge, ETH Zürich, Princeton, Harvard, Berkeley, ENS
 ### 📝 Workspaces
 For each problem:
 - `workspace.md` - Initial workspace file
-- `paper.tex` - LaTeX paper draft with TODOs (60%)
+- `main.tex` - Modular LaTeX entrypoint (60%)
+- `tex/preamble.tex` and `tex/macros.tex` - Shared LaTeX setup (60%)
+- `sections/introduction.tex`, `sections/proofs.tex`, `sections/open_problems.tex` (60%)
+- `paper.tex` - Legacy full draft with TODOs (60%)
 - `references.bib` - Bibliography (60%)
 - `notes/research_notes.md` - Research notes (40%)
 - `scratch.md` - Scratch calculations (20%)
@@ -206,7 +210,8 @@ Generates problems with:
 ### seed_workspaces.py
 Populates workspaces with:
 - Initial workspace markdown
-- LaTeX paper drafts with structure
+- Modular LaTeX paper files (`main.tex`, `tex/*`, `sections/*`)
+- Legacy single-file LaTeX draft (`paper.tex`)
 - Bibliography files
 - Research notes in markdown
 - Scratch calculation files

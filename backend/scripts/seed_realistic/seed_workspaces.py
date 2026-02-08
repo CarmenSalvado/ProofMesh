@@ -205,6 +205,99 @@ BIBLIOGRAPHY_TEMPLATE = """@article{{author2023,
 }}
 """
 
+
+def generate_main_tex(problem_title: str, tags: list[str]) -> str:
+    """Generate a modular LaTeX main file that includes sections and shared tex files."""
+    area = tags[0].replace("-", " ") if tags else "mathematics"
+    return f"""\\documentclass[11pt]{{article}}
+\\input{{tex/preamble}}
+\\input{{tex/macros}}
+
+\\title{{{problem_title}}}
+\\author{{[Author Names]}}
+\\date{{\\today}}
+
+\\begin{{document}}
+
+\\maketitle
+
+\\begin{{abstract}}
+We investigate a problem in {area} and provide a collaborative roadmap toward machine-checked results.
+\\end{{abstract}}
+
+\\input{{sections/introduction}}
+\\input{{sections/proofs}}
+\\input{{sections/open_problems}}
+
+\\bibliographystyle{{alpha}}
+\\bibliography{{references}}
+
+\\end{{document}}
+"""
+
+
+def generate_preamble_tex() -> str:
+    """Generate shared LaTeX preamble."""
+    return """% Shared package imports
+\\usepackage[a4paper,margin=1in]{geometry}
+\\usepackage{amsmath,amsthm,amssymb,mathtools}
+\\usepackage{bbm}
+\\usepackage{hyperref}
+\\usepackage[nameinlink,noabbrev]{cleveref}
+\\usepackage{enumitem}
+\\usepackage{graphicx}
+\\usepackage{xcolor}
+
+\\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!60!black,
+  citecolor=violet!70!black,
+  urlcolor=cyan!50!black
+}
+"""
+
+
+def generate_macros_tex() -> str:
+    """Generate common mathematical macros and theorem environments."""
+    return """% Common theorem environments
+\\newtheorem{theorem}{Theorem}
+\\newtheorem{lemma}[theorem]{Lemma}
+\\newtheorem{corollary}[theorem]{Corollary}
+\\newtheorem{proposition}[theorem]{Proposition}
+\\newtheorem{claim}[theorem]{Claim}
+\\theoremstyle{definition}
+\\newtheorem{definition}[theorem]{Definition}
+\\theoremstyle{remark}
+\\newtheorem{remark}[theorem]{Remark}
+
+% Common notation
+\\newcommand{\\R}{\\mathbb{R}}
+\\newcommand{\\N}{\\mathbb{N}}
+\\newcommand{\\Z}{\\mathbb{Z}}
+\\newcommand{\\Q}{\\mathbb{Q}}
+\\newcommand{\\C}{\\mathbb{C}}
+\\newcommand{\\eps}{\\varepsilon}
+\\newcommand{\\set}[1]{\\left\\{#1\\right\\}}
+\\newcommand{\\abs}[1]{\\left|#1\\right|}
+\\newcommand{\\norm}[1]{\\left\\lVert #1\\right\\rVert}
+"""
+
+
+def generate_open_problems_tex() -> str:
+    """Generate a reusable open problems section."""
+    return """\\section{Open Problems}
+
+The current draft leaves several directions unresolved:
+\\begin{enumerate}[label=\\arabic*.]
+  \\item Can the main statement be strengthened without compactness assumptions?
+  \\item Is there an effective quantitative version of the result?
+  \\item Which parts of the argument are easiest to formalize first in Lean?
+\\end{enumerate}
+
+\\paragraph{Collaboration TODO.}
+Mark each item above as \\texttt{formalized}, \\texttt{blocked}, or \\texttt{needs examples}.
+"""
+
 # File content generators
 def generate_workspace_markdown(title: str, description: str) -> str:
     """Generate initial workspace.md content."""
@@ -328,6 +421,38 @@ def random_past_time(days_ago_max: int, days_ago_min: int = 0) -> datetime:
 async def seed_workspaces():
     """Seed workspace files for problems."""
     async with async_session_maker() as db:
+        def add_workspace_file_if_missing(
+            existing_paths: set[str],
+            *,
+            problem_id,
+            path: str,
+            parent_path: str,
+            file_type: WorkspaceFileType,
+            content: str | None,
+            file_format: str | None,
+            mimetype: str | None,
+            created_at: datetime,
+            updated_at: datetime,
+        ) -> bool:
+            if path in existing_paths:
+                return False
+
+            db.add(
+                WorkspaceFile(
+                    problem_id=problem_id,
+                    path=path,
+                    parent_path=parent_path,
+                    type=file_type,
+                    content=content,
+                    format=file_format,
+                    mimetype=mimetype,
+                    created_at=created_at,
+                    updated_at=updated_at,
+                )
+            )
+            existing_paths.add(path)
+            return True
+
         # Check if workspace files already exist (beyond initial workspace.md)
         result = await db.execute(
             select(WorkspaceFile).where(WorkspaceFile.path != "workspace.md")
@@ -354,47 +479,163 @@ async def seed_workspaces():
         files_created = 0
         
         for i, problem in enumerate(all_problems):
-            # Check if workspace.md exists
+            # Load current workspace files for this problem to avoid duplicate paths.
             result = await db.execute(
                 select(WorkspaceFile)
                 .where(WorkspaceFile.problem_id == problem.id)
-                .where(WorkspaceFile.path == "workspace.md")
             )
-            workspace_md = result.scalar_one_or_none()
+            existing_files_for_problem = result.scalars().all()
+            existing_paths = {wf.path for wf in existing_files_for_problem}
             
-            if not workspace_md:
+            if "workspace.md" not in existing_paths:
                 # Create workspace.md
-                workspace_md = WorkspaceFile(
+                if add_workspace_file_if_missing(
+                    existing_paths,
                     problem_id=problem.id,
                     path="workspace.md",
                     parent_path="",
-                    type=WorkspaceFileType.FILE,
+                    file_type=WorkspaceFileType.FILE,
                     content=generate_workspace_markdown(problem.title, problem.description or ""),
-                    format="markdown",
+                    file_format="markdown",
                     mimetype="text/markdown",
                     created_at=problem.created_at,
                     updated_at=random_past_time(30, 0),
-                )
-                db.add(workspace_md)
-                files_created += 1
+                ):
+                    files_created += 1
             
             # 60% of problems get a paper draft
             if random.random() < 0.6:
                 paper_content = generate_paper_content(problem.title, problem.tags or [])
                 created_at = random_past_time(180, 10)
-                
-                db.add(WorkspaceFile(
+
+                # Modular LaTeX workspace structure.
+                if add_workspace_file_if_missing(
+                    existing_paths,
                     problem_id=problem.id,
-                    path="paper.tex",
+                    path="tex",
                     parent_path="",
-                    type=WorkspaceFileType.FILE,
-                    content=paper_content,
-                    format="latex",
+                    file_type=WorkspaceFileType.DIRECTORY,
+                    content=None,
+                    file_format=None,
+                    mimetype=None,
+                    created_at=created_at,
+                    updated_at=created_at,
+                ):
+                    files_created += 1
+
+                if add_workspace_file_if_missing(
+                    existing_paths,
+                    problem_id=problem.id,
+                    path="sections",
+                    parent_path="",
+                    file_type=WorkspaceFileType.DIRECTORY,
+                    content=None,
+                    file_format=None,
+                    mimetype=None,
+                    created_at=created_at,
+                    updated_at=created_at,
+                ):
+                    files_created += 1
+
+                if add_workspace_file_if_missing(
+                    existing_paths,
+                    problem_id=problem.id,
+                    path="main.tex",
+                    parent_path="",
+                    file_type=WorkspaceFileType.FILE,
+                    content=generate_main_tex(problem.title, problem.tags or []),
+                    file_format="latex",
                     mimetype="application/x-latex",
                     created_at=created_at,
                     updated_at=random_past_time(30, 0),
-                ))
-                files_created += 1
+                ):
+                    files_created += 1
+
+                if add_workspace_file_if_missing(
+                    existing_paths,
+                    problem_id=problem.id,
+                    path="tex/preamble.tex",
+                    parent_path="tex",
+                    file_type=WorkspaceFileType.FILE,
+                    content=generate_preamble_tex(),
+                    file_format="latex",
+                    mimetype="application/x-latex",
+                    created_at=created_at,
+                    updated_at=created_at,
+                ):
+                    files_created += 1
+
+                if add_workspace_file_if_missing(
+                    existing_paths,
+                    problem_id=problem.id,
+                    path="tex/macros.tex",
+                    parent_path="tex",
+                    file_type=WorkspaceFileType.FILE,
+                    content=generate_macros_tex(),
+                    file_format="latex",
+                    mimetype="application/x-latex",
+                    created_at=created_at,
+                    updated_at=created_at,
+                ):
+                    files_created += 1
+
+                intro_template = random.choice(PAPER_INTRO_TEMPLATES)
+                if add_workspace_file_if_missing(
+                    existing_paths,
+                    problem_id=problem.id,
+                    path="sections/introduction.tex",
+                    parent_path="sections",
+                    file_type=WorkspaceFileType.FILE,
+                    content=intro_template,
+                    file_format="latex",
+                    mimetype="application/x-latex",
+                    created_at=created_at,
+                    updated_at=random_past_time(20, 0),
+                ):
+                    files_created += 1
+
+                proof_template = random.choice(PAPER_PROOF_TEMPLATES)
+                if add_workspace_file_if_missing(
+                    existing_paths,
+                    problem_id=problem.id,
+                    path="sections/proofs.tex",
+                    parent_path="sections",
+                    file_type=WorkspaceFileType.FILE,
+                    content=proof_template,
+                    file_format="latex",
+                    mimetype="application/x-latex",
+                    created_at=created_at,
+                    updated_at=random_past_time(20, 0),
+                ):
+                    files_created += 1
+
+                if add_workspace_file_if_missing(
+                    existing_paths,
+                    problem_id=problem.id,
+                    path="sections/open_problems.tex",
+                    parent_path="sections",
+                    file_type=WorkspaceFileType.FILE,
+                    content=generate_open_problems_tex(),
+                    file_format="latex",
+                    mimetype="application/x-latex",
+                    created_at=created_at,
+                    updated_at=created_at,
+                ):
+                    files_created += 1
+
+                if add_workspace_file_if_missing(
+                    existing_paths,
+                    problem_id=problem.id,
+                    path="paper.tex",
+                    parent_path="",
+                    file_type=WorkspaceFileType.FILE,
+                    content=paper_content,
+                    file_format="latex",
+                    mimetype="application/x-latex",
+                    created_at=created_at,
+                    updated_at=random_past_time(30, 0),
+                ):
+                    files_created += 1
                 
                 # Add bibliography
                 bib_content = BIBLIOGRAPHY_TEMPLATE.format(
@@ -404,50 +645,55 @@ async def seed_workspaces():
                     problem.tags[0] if problem.tags else "mathematics",
                     problem.tags[0] if problem.tags else "mathematics",
                 )
-                db.add(WorkspaceFile(
+                if add_workspace_file_if_missing(
+                    existing_paths,
                     problem_id=problem.id,
                     path="references.bib",
                     parent_path="",
-                    type=WorkspaceFileType.FILE,
+                    file_type=WorkspaceFileType.FILE,
                     content=bib_content,
-                    format="bibtex",
+                    file_format="bibtex",
                     mimetype="text/x-bibtex",
                     created_at=created_at,
                     updated_at=created_at,
-                ))
-                files_created += 1
+                ):
+                    files_created += 1
             
             # 40% get research notes
             if random.random() < 0.4:
                 # Create notes directory
-                db.add(WorkspaceFile(
+                notes_created_at = random_past_time(200, 20)
+                if add_workspace_file_if_missing(
+                    existing_paths,
                     problem_id=problem.id,
                     path="notes",
                     parent_path="",
-                    type=WorkspaceFileType.DIRECTORY,
+                    file_type=WorkspaceFileType.DIRECTORY,
                     content=None,
-                    format=None,
+                    file_format=None,
                     mimetype=None,
-                    created_at=random_past_time(200, 20),
+                    created_at=notes_created_at,
                     updated_at=random_past_time(50, 0),
-                ))
+                ):
+                    files_created += 1
                 
                 notes_content = generate_research_notes(
                     problem.title,
                     usernames_by_id.get(problem.author_id, "Unknown")
                 )
-                db.add(WorkspaceFile(
+                if add_workspace_file_if_missing(
+                    existing_paths,
                     problem_id=problem.id,
                     path="notes/research_notes.md",
                     parent_path="notes",
-                    type=WorkspaceFileType.FILE,
+                    file_type=WorkspaceFileType.FILE,
                     content=notes_content,
-                    format="markdown",
+                    file_format="markdown",
                     mimetype="text/markdown",
                     created_at=random_past_time(150, 5),
                     updated_at=random_past_time(20, 0),
-                ))
-                files_created += 2
+                ):
+                    files_created += 1
             
             # 20% get scratch calculations
             if random.random() < 0.2:
@@ -469,18 +715,19 @@ $$
 
 **TODO:** Complete this calculation.
 """
-                db.add(WorkspaceFile(
+                if add_workspace_file_if_missing(
+                    existing_paths,
                     problem_id=problem.id,
                     path="scratch.md",
                     parent_path="",
-                    type=WorkspaceFileType.FILE,
+                    file_type=WorkspaceFileType.FILE,
                     content=scratch,
-                    format="markdown",
+                    file_format="markdown",
                     mimetype="text/markdown",
                     created_at=random_past_time(100, 5),
                     updated_at=random_past_time(10, 0),
-                ))
-                files_created += 1
+                ):
+                    files_created += 1
             
             if (i + 1) % 20 == 0:
                 print(f"  Processed {i + 1}/{len(all_problems)} problems...")

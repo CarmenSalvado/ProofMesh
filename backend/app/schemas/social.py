@@ -263,8 +263,17 @@ class TeamResponse(TeamBase):
     updated_at: datetime
 
 
+class TeamProblemResponse(BaseModel):
+    problem_id: UUID
+    title: str
+    visibility: str
+    added_at: datetime
+    added_by: SocialUser | None = None
+
+
 class TeamDetailResponse(TeamResponse):
     members: list[TeamMemberResponse] = []
+    problems: list[TeamProblemResponse] = []
 
 
 class TeamListResponse(BaseModel):

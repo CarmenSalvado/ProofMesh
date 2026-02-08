@@ -62,14 +62,27 @@ const MOCK_KNOWLEDGE_EDGES: Array<{ from: string; to: string }> = [
   { from: "lem-euclid", to: "thm-primes" },
 ];
 
+// Hook para detectar mobile
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 1024);
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, []);
+  return isMobile;
+}
+
 export function LandingLatexPanel() {
+  const isMobile = useIsMobile();
   const rootRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const editorPaneRef = useRef<HTMLDivElement>(null);
   const previewPaneRef = useRef<HTMLDivElement>(null);
   const chatRef = useRef<HTMLDivElement>(null);
   const hasPlayedRef = useRef(false);
-  const [phase, setPhase] = useState(0); // 0 typing, 1 thinking, 2 response, 3 compiling, 4 done
+  const [phase, setPhase] = useState(0);
   const [reasoningStepCount, setReasoningStepCount] = useState(0);
   const [leftTab, setLeftTab] = useState<LeftTab>("files");
   const editorHasPatch = phase >= 3;
@@ -159,6 +172,211 @@ export function LandingLatexPanel() {
     };
   }, []);
 
+  // Mobile version - Horizontal layout like desktop but compact
+  if (isMobile) {
+    return (
+      <section
+        ref={rootRef}
+        className="relative rounded-2xl border border-neutral-800 bg-gradient-to-br from-neutral-950 via-neutral-900 to-emerald-950/50 p-3 sm:p-4 shadow-[0_20px_60px_-30px_rgba(0,0,0,0.65)]"
+      >
+        <div
+          ref={panelRef}
+          className="rounded-xl overflow-hidden border border-neutral-800 bg-[#0d0d0d]"
+          style={{ opacity: 0 }}
+        >
+          {/* Header */}
+          <div className="flex items-center justify-between border-b border-neutral-800 bg-[#151515] px-3 py-2">
+            <div>
+              <h3 className="text-xs font-semibold text-neutral-100">LaTeX + Rho AI</h3>
+              <p className="text-[10px] text-neutral-400">Collaborative editing</p>
+            </div>
+            {phase >= 4 ? (
+              <div className="flex items-center gap-1 text-emerald-400 text-[10px]">
+                <CheckCircle2 className="w-3 h-3" />
+                <span>Compiled</span>
+              </div>
+            ) : phase === 3 ? (
+              <div className="flex items-center gap-1 text-amber-400 text-[10px]">
+                <Loader2 className="w-3 h-3 animate-spin" />
+                <span>Compiling</span>
+              </div>
+            ) : (
+              <button className="flex items-center gap-1 rounded bg-emerald-600 px-2 py-0.5 text-[10px] text-white">
+                <Play className="w-3 h-3" />
+                Compile
+              </button>
+            )}
+          </div>
+
+          {/* Mobile: Horizontal layout - 2 columns */}
+          <div className="grid grid-cols-2">
+            {/* Editor - Left side */}
+            <div ref={editorPaneRef} className="border-r border-neutral-800">
+              <div className="flex items-center justify-between border-b border-neutral-800 bg-[#151515] px-2 py-1">
+                <div className="flex items-center gap-1">
+                  <FileText className="h-3 w-3 text-amber-400" />
+                  <span className="font-mono text-[9px] text-neutral-200">proof.tex</span>
+                </div>
+                <span className={`text-[8px] px-1 py-0.5 rounded border ${phase >= 4 ? "border-emerald-600/40 text-emerald-400" : "border-neutral-700 text-neutral-500"}`}>
+                  {phase >= 4 ? "synced" : "editing"}
+                </span>
+              </div>
+
+              <div className="relative h-[180px] overflow-hidden bg-[#0c0c0c] font-mono text-[9px] leading-[1.4] text-neutral-300">
+                <div className="h-full overflow-hidden px-2 py-2">
+                  {[
+                    "% Infinitude of Primes",
+                    "\\documentclass[12pt]{article}",
+                    "\\usepackage{amsthm}",
+                    "\\begin{document}",
+                    "\\begin{theorem}",
+                    "  There are infinitely many primes.",
+                    "\\end{theorem}",
+                    "\\begin{proof}",
+                    "  Let N = p_1...p_n + 1.",
+                  ].map((line, idx) => (
+                    <div key={idx} className="flex gap-1.5">
+                      <span className="w-3 shrink-0 text-right text-neutral-600">{idx + 1}</span>
+                      <span className="truncate">{line}</span>
+                    </div>
+                  ))}
+                  
+                  {editorHasPatch ? (
+                    <>
+                      <div className="flex gap-1.5 border-l-2 border-emerald-400 bg-emerald-500/10">
+                        <span className="w-3 shrink-0 text-right text-emerald-500">11</span>
+                        <span className="text-emerald-100 truncate">N mod p_i = 1...</span>
+                      </div>
+                      <div className="flex gap-1.5 border-l-2 border-emerald-400 bg-emerald-500/10">
+                        <span className="w-3 shrink-0 text-right text-emerald-500">12</span>
+                        <span className="text-emerald-100 truncate">New divisor...</span>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="flex gap-1.5 border-l-2 border-indigo-400 bg-indigo-500/10">
+                      <span className="w-3 shrink-0 text-right text-neutral-600">11</span>
+                      <span className="inline-block h-2.5 w-0.5 animate-pulse bg-indigo-400" />
+                    </div>
+                  )}
+                  
+                  <div className="flex gap-1.5">
+                    <span className="w-3 shrink-0 text-right text-neutral-600">{editorHasPatch ? "13" : "12"}</span>
+                    <span className="text-sky-300">{"\\end{proof}"}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Mini Chat */}
+              <div ref={chatRef} className="border-t border-neutral-800 bg-[#0a0a0a] p-1.5">
+                <div className="rounded border border-neutral-800 bg-neutral-950 p-1.5">
+                  <div className="mb-1 flex justify-end">
+                    <div className="max-w-[90%] rounded rounded-tr-sm bg-neutral-800 px-1.5 py-0.5 text-[9px] text-neutral-200">
+                      Tighten the proof...
+                    </div>
+                  </div>
+
+                  {phase >= 2 && (
+                    <div className="flex items-start gap-1">
+                      <Sparkles className="mt-0.5 h-2.5 w-2.5 text-amber-400 flex-shrink-0" />
+                      <div className="rounded rounded-tl-sm border border-neutral-800 bg-neutral-900/60 px-1.5 py-1 text-[9px] text-neutral-300">
+                        <span className="text-sky-300">Idea2Story</span> integrated.
+                        <div className="mt-0.5 space-y-0">
+                          {reasoningSteps.slice(0, 2).map((step, index) => {
+                            const visible = reasoningStepCount > index;
+                            return (
+                              <div
+                                key={step}
+                                className={`flex items-start gap-0.5 text-[8px] transition-opacity ${visible ? "opacity-100" : "opacity-30"}`}
+                              >
+                                <span className={`mt-0.5 h-0.5 w-0.5 rounded-full ${visible ? "bg-emerald-400" : "bg-neutral-500"}`} />
+                                <span className="truncate">{step.slice(0, 25)}...</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Preview - Right side */}
+            <div ref={previewPaneRef} className="flex flex-col bg-[#0d0d0d]">
+              <div className="flex items-center justify-between border-b border-neutral-800 bg-[#151515] px-2 py-1 text-[9px] text-neutral-400">
+                <span>PDF</span>
+                <div className="flex items-center gap-0.5 text-neutral-500">
+                  <button className="rounded p-0.5 hover:bg-neutral-800">
+                    <ZoomOut className="h-2.5 w-2.5" />
+                  </button>
+                  <span className="text-[8px]">100%</span>
+                  <button className="rounded p-0.5 hover:bg-neutral-800">
+                    <ZoomIn className="h-2.5 w-2.5" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="relative flex-1 bg-neutral-900/30 p-1.5">
+                {phase === 3 && (
+                  <div className="absolute inset-0 z-20 flex items-center justify-center bg-neutral-950/40">
+                    <div className="flex items-center gap-1 rounded bg-neutral-950 px-1.5 py-0.5 text-[9px] text-neutral-200">
+                      <Loader2 className="h-2.5 w-2.5 animate-spin text-amber-400" />
+                      Compiling...
+                    </div>
+                  </div>
+                )}
+
+                <div className="mx-auto flex h-full w-full items-center justify-center">
+                  <div className="relative aspect-[1/1.414] w-full max-w-[120px] overflow-hidden border border-neutral-300 bg-[#fffdfa] shadow">
+                    <div className="h-full px-2 py-2 text-[6px] leading-tight text-neutral-900">
+                      <h4 className="text-center text-[8px] font-semibold leading-tight">
+                        On the Infinitude of Prime Numbers
+                      </h4>
+                      <p className="text-center text-[5px] text-neutral-500">A. Lovelace</p>
+
+                      <p className="mt-1">
+                        <span className="font-semibold">Theorem 1.</span> There are infinitely many primes.
+                      </p>
+
+                      <p className="mt-0.5 italic">Proof.</p>
+                      <p className="mt-0.5">Assume p_1,...,p_n are all primes. Let N = p_1...p_n + 1.</p>
+
+                      {previewHasPatch ? (
+                        <div className="space-y-0">
+                          <p>N mod p_i = 1, so p_i ∤ N.</p>
+                          <p>Thus N has a new prime divisor. □</p>
+                        </div>
+                      ) : (
+                        <p className="text-neutral-500">Draft incomplete...</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Footer badges */}
+          <div className="flex flex-wrap items-center justify-center gap-2 border-t border-neutral-800 bg-[#0a0a0a] px-2 py-2">
+            <span className="rounded-full border border-neutral-700/70 bg-neutral-900/40 px-2 py-0.5 text-[9px] text-neutral-200">
+              <Sparkles className="mr-1 inline h-3 w-3 text-amber-400" />
+              Rho AI
+            </span>
+            <span className="rounded-full border border-neutral-700/70 bg-neutral-900/40 px-2 py-0.5 text-[9px] text-neutral-200">
+              <BookOpen className="mr-1 inline h-3 w-3 text-sky-400" />
+              Idea2Story
+            </span>
+            <span className="rounded-full border border-neutral-700/70 bg-neutral-900/40 px-2 py-0.5 text-[9px] text-neutral-200">
+              <FileText className="mr-1 inline h-3 w-3 text-emerald-400" />
+              PDF
+            </span>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  // Desktop full version (original)
   return (
     <section
       ref={rootRef}
