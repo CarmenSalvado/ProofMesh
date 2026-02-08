@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import re
 from uuid import UUID
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
@@ -47,6 +48,26 @@ def _feed_score(activity: Activity) -> float:
     return timestamp
 
 
+PROJECT_TOKEN_REGEX = re.compile(r"\[\[project:[^\]|]+\|([^\]]+)\]\]", flags=re.IGNORECASE)
+MENTION_REGEX = re.compile(r"@[a-z0-9._-]+", flags=re.IGNORECASE)
+SPACE_REGEX = re.compile(r"\s+")
+
+
+def _comment_signature(activity: Activity) -> str | None:
+    data = activity.extra_data or {}
+    raw = data.get("comment_content")
+    if not isinstance(raw, str):
+        return None
+    text = raw.strip().lower()
+    if not text:
+        return None
+    # Normalize dynamic tokens so near-identical comment templates collapse.
+    text = PROJECT_TOKEN_REGEX.sub(r"project:\1", text)
+    text = MENTION_REGEX.sub("@user", text)
+    text = SPACE_REGEX.sub(" ", text)
+    return text
+
+
 def _prioritize_global_activities(
     activities: list[Activity],
     *,
@@ -66,14 +87,18 @@ def _prioritize_global_activities(
     # Build enough rows for current page while capping FOLLOWED_USER noise.
     desired_count = offset + limit
     follow_cap = max(1, desired_count // 6)  # ~16% follow events max in early window
+    actor_cap = max(2, desired_count // 5)
     follow_used = 0
     selected: list[Activity] = []
     deferred_follows: list[Activity] = []
     deferred_comments: list[Activity] = []
+    deferred_actor_overflow: list[Activity] = []
     comments_per_discussion: dict[str, int] = {}
     comment_cap_per_discussion = 2
     comments_per_problem: dict[str, int] = {}
     comment_cap_per_problem = max(2, desired_count // 4)
+    actor_usage: dict = {}
+    seen_comment_signatures: set[str] = set()
 
     def discussion_key(activity: Activity) -> str | None:
         data = activity.extra_data or {}
@@ -90,12 +115,20 @@ def _prioritize_global_activities(
         return None
 
     for activity in ranked:
+        actor_used = actor_usage.get(activity.user_id, 0)
+        if actor_used >= actor_cap:
+            deferred_actor_overflow.append(activity)
+            continue
         if activity.type == ActivityType.FOLLOWED_USER and follow_used >= follow_cap:
             deferred_follows.append(activity)
             continue
         if activity.type == ActivityType.CREATED_COMMENT:
             key = discussion_key(activity)
             problem_id = problem_key(activity)
+            signature = _comment_signature(activity)
+            if signature and signature in seen_comment_signatures:
+                deferred_comments.append(activity)
+                continue
             if key and comments_per_discussion.get(key, 0) >= comment_cap_per_discussion:
                 deferred_comments.append(activity)
                 continue
@@ -103,21 +136,45 @@ def _prioritize_global_activities(
                 deferred_comments.append(activity)
                 continue
         selected.append(activity)
+        actor_usage[activity.user_id] = actor_used + 1
         if activity.type == ActivityType.FOLLOWED_USER:
             follow_used += 1
         elif activity.type == ActivityType.CREATED_COMMENT:
             key = discussion_key(activity)
             problem_id = problem_key(activity)
+            signature = _comment_signature(activity)
             if key:
                 comments_per_discussion[key] = comments_per_discussion.get(key, 0) + 1
             if problem_id:
                 comments_per_problem[problem_id] = comments_per_problem.get(problem_id, 0) + 1
+            if signature:
+                seen_comment_signatures.add(signature)
         if len(selected) >= desired_count:
             break
 
     if len(selected) < desired_count and deferred_comments:
         for activity in deferred_comments:
+            actor_used = actor_usage.get(activity.user_id, 0)
+            if actor_used >= actor_cap:
+                continue
+            signature = _comment_signature(activity)
+            if signature and signature in seen_comment_signatures:
+                continue
             selected.append(activity)
+            actor_usage[activity.user_id] = actor_used + 1
+            if signature:
+                seen_comment_signatures.add(signature)
+            if len(selected) >= desired_count:
+                break
+
+    if len(selected) < desired_count and deferred_actor_overflow:
+        for activity in deferred_actor_overflow:
+            signature = _comment_signature(activity)
+            if signature and signature in seen_comment_signatures:
+                continue
+            selected.append(activity)
+            if signature:
+                seen_comment_signatures.add(signature)
             if len(selected) >= desired_count:
                 break
 
