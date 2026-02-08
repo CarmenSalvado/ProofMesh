@@ -148,9 +148,9 @@ async def embed_abstracts_api(abstracts: List[str], provider: str = "auto") -> n
             batch = abstracts[i:i+batch_size]
             print(f"  Batch {i//batch_size + 1}/{(len(abstracts) + batch_size - 1)//batch_size}")
             
-            # Use text-embedding-004 model
+            # Use gemini-embedding-001 model
             response = client.models.embed_content(
-                model='models/text-embedding-004',
+                model='models/gemini-embedding-001',
                 contents=batch
             )
             

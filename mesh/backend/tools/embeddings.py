@@ -1,5 +1,5 @@
 """
-Embedding Service - Generates embeddings using Google's text-embedding-004 model
+Embedding Service - Generates embeddings using Google's gemini-embedding-001 model
 
 This service provides vector embeddings for the Knowledge Graph, enabling
 semantic similarity search across theorems, definitions, and proofs.
@@ -20,13 +20,13 @@ from google.genai import types
 
 class EmbeddingService:
     """
-    Service for generating text embeddings using Gemini's text-embedding-004 model.
+    Service for generating text embeddings using Gemini's gemini-embedding-001 model.
     
     The embeddings are 768-dimensional vectors optimized for semantic similarity
     in the mathematics domain.
     """
     
-    MODEL_NAME = "text-embedding-004"
+    MODEL_NAME = "gemini-embedding-001"
     EMBEDDING_DIM = 768
     MAX_BATCH_SIZE = 100
     

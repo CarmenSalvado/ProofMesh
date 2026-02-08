@@ -84,7 +84,7 @@ class KnowledgeNode(Base):
     formula: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # LaTeX
     lean_code: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # Lean 4
     
-    # Semantic embedding (768 dimensions for text-embedding-004)
+    # Semantic embedding (768 dimensions projected from gemini-embedding-001)
     embedding: Mapped[Optional[list]] = mapped_column(Vector(768), nullable=True)
     
     # Metadata

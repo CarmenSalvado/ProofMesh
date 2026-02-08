@@ -39,7 +39,7 @@ Rho is the AI layer, and ProofMesh integrates **Gemini 3** across the stack thro
 
 Three Gemini capabilities are load-bearing for the product. **Streaming** lets canvas agents push partial output to the UI in real time. **Extended thinking** using `gemini-3-flash-preview-thinking` powers deeper LaTeX edit reasoning inside the editor flow. **Tool use** lets the LaTeX chat agent call a structured `updateDocument` function so it can apply precise edits instead of regenerating entire documents.
 
-Semantic retrieval uses **`text-embedding-004`** for search across the knowledge graph, matching mathematical concepts by meaning and supporting retrieval-augmented proof construction. Agents also disable safety filtering to allow unrestricted mathematical content.
+Semantic retrieval uses **`gemini-embedding-001`** for search across the knowledge graph, matching mathematical concepts by meaning and supporting retrieval-augmented proof construction. Agents also disable safety filtering to allow unrestricted mathematical content.
 
 Lean verification is isolated in `lean-runner` and exposed through HTTP (`POST /verify`). The service writes a temporary `.lean` file, runs `lake env lean`, returns structured output, and removes the temp file. Lean dependencies are cached via a mounted `.lake` volume.
 
