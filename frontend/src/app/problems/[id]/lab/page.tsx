@@ -71,8 +71,8 @@ import {
   type LatexFileResponse,
   type Problem,
   type CanvasBlock,
+  type LibraryItem,
 } from "@/lib/api";
-import { LibraryItem } from "@/lib/types";
 import { useAuth } from "@/lib/auth";
 import { Logo } from "@/components/Logo";
 import ReactMarkdown from "react-markdown";
@@ -4008,7 +4008,7 @@ export default function LabPage({ params }: PageProps) {
           </Link>
           <button
             type="button"
-            onClick={loadPdf}
+            onClick={() => { void loadPdf(); }}
             className="p-1.5 rounded-md hover:bg-[#1a1a1a] text-neutral-500 hover:text-neutral-300 transition-colors"
             title="Refresh PDF"
           >

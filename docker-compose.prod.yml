@@ -106,6 +106,7 @@ services:
         condition: service_started
     labels:
       - traefik.enable=true
+      - traefik.docker.network=proofmesh_web
       - traefik.http.routers.backend.rule=Host(`${API_DOMAIN}`)
       - traefik.http.routers.backend.entrypoints=websecure
       - traefik.http.routers.backend.tls.certresolver=le
@@ -197,6 +198,7 @@ services:
       - backend
     labels:
       - traefik.enable=true
+      - traefik.docker.network=proofmesh_web
       - traefik.http.routers.frontend.rule=Host(`${APP_DOMAIN}`)
       - traefik.http.routers.frontend.entrypoints=websecure
       - traefik.http.routers.frontend.tls.certresolver=le

@@ -223,8 +223,8 @@ export function AgentStudioPanel({
       const settled = await Promise.allSettled(selectedProfiles.map(runSingle));
 
       const successes = settled.filter(
-        (res): res is PromiseFulfilledResult<{ agent: AgentProfile; result: Awaited<ReturnType<typeof runAgent>> }>
-          => res.status === "fulfilled"
+        (res): res is PromiseFulfilledResult<{ agent: AgentProfile; result: Awaited<ReturnType<typeof runAgent>> }> =>
+          res.status === "fulfilled"
       );
 
       const merged = successes.flatMap(({ value: { agent, result } }) =>
