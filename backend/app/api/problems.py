@@ -1,19 +1,28 @@
 import uuid
+from collections import defaultdict
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select, inspect, func
+from sqlalchemy import select, inspect, func, or_
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.problem import Problem, ProblemVisibility, ProblemDifficulty
+from app.models.team import TeamMember, TeamProblem, TeamRole
 from app.models.star import Star, StarTargetType
 from app.models.activity import Activity, ActivityType
 from app.models.library_item import LibraryItem
 from app.models.canvas_block import CanvasBlock
 from app.models.workspace_file import WorkspaceFile, WorkspaceFileType
 from app.models.user import User
-from app.api.deps import get_current_user, get_current_user_optional
+from app.api.deps import (
+    get_current_user,
+    get_current_user_optional,
+    get_problem_access_info,
+    verify_problem_access,
+    ProblemAccessInfo,
+    ProblemAccessLevel,
+)
 from app.services.storage import list_objects, copy_object
 from app.schemas.problem import (
     ProblemCreate,
@@ -41,12 +50,64 @@ def build_workspace_markdown(title: str, description: str | None = None) -> str:
 """
 
 
-def problem_to_response(problem: Problem, star_count: int = 0) -> ProblemResponse:
+async def fetch_team_roles_for_problems(
+    problem_ids: list[UUID],
+    current_user: User | None,
+    db: AsyncSession,
+) -> dict[UUID, set[TeamRole]]:
+    if not current_user or not problem_ids:
+        return {}
+
+    result = await db.execute(
+        select(TeamProblem.problem_id, TeamMember.role)
+        .join(TeamMember, TeamMember.team_id == TeamProblem.team_id)
+        .where(
+            TeamMember.user_id == current_user.id,
+            TeamProblem.problem_id.in_(problem_ids),
+        )
+    )
+
+    role_map: dict[UUID, set[TeamRole]] = defaultdict(set)
+    for problem_id, role in result.all():
+        if role is not None:
+            role_map[problem_id].add(role)
+    return role_map
+
+
+def resolve_problem_access(
+    problem: Problem,
+    current_user: User | None,
+    team_roles: set[TeamRole] | None = None,
+) -> ProblemAccessInfo | None:
+    roles = team_roles or set()
+
+    if current_user and problem.author_id == current_user.id:
+        return ProblemAccessInfo(level=ProblemAccessLevel.OWNER)
+    if TeamRole.OWNER in roles or TeamRole.ADMIN in roles:
+        return ProblemAccessInfo(level=ProblemAccessLevel.ADMIN, team_roles=list(roles))
+    if TeamRole.MEMBER in roles:
+        return ProblemAccessInfo(level=ProblemAccessLevel.EDITOR, team_roles=list(roles))
+    if problem.visibility == ProblemVisibility.PUBLIC:
+        return ProblemAccessInfo(level=ProblemAccessLevel.VIEWER, team_roles=list(roles))
+    return None
+
+
+def problem_to_response(
+    problem: Problem,
+    star_count: int = 0,
+    access: ProblemAccessInfo | None = None,
+    library_count: int | None = None,
+) -> ProblemResponse:
     """Convert Problem model to response with counts"""
-    state = inspect(problem)
-    library_count = 0
-    if "library_items" not in state.unloaded:
-        library_count = len(problem.library_items)
+    resolved_library_count = library_count
+    if resolved_library_count is None:
+        state = inspect(problem)
+        resolved_library_count = 0
+        if "library_items" not in state.unloaded:
+            resolved_library_count = len(problem.library_items)
+
+    access_info = access or ProblemAccessInfo(level=ProblemAccessLevel.VIEWER)
+
     return ProblemResponse(
         id=problem.id,
         title=problem.title,
@@ -61,8 +122,12 @@ def problem_to_response(problem: Problem, star_count: int = 0) -> ProblemRespons
             username=problem.author.username,
             avatar_url=problem.author.avatar_url,
         ),
-        library_item_count=library_count,
+        library_item_count=resolved_library_count,
         star_count=star_count,
+        access_level=access_info.level.value,
+        can_edit=access_info.can_edit,
+        can_admin=access_info.can_admin,
+        is_owner=access_info.is_owner,
     )
 
 
@@ -73,31 +138,55 @@ async def list_problems(
     db: AsyncSession = Depends(get_db),
     current_user: User | None = Depends(get_current_user_optional),
 ):
-    """List problems - public ones or user's own"""
+    """List problems visible to the current user (including team-shared private problems)."""
     query = select(Problem).options(
         selectinload(Problem.author),
-        selectinload(Problem.library_items),
     )
-    
-    if mine and current_user:
+
+    team_problem_ids = None
+    if current_user:
+        team_problem_ids = (
+            select(TeamProblem.problem_id)
+            .join(TeamMember, TeamMember.team_id == TeamProblem.team_id)
+            .where(TeamMember.user_id == current_user.id)
+        )
+
+    if mine:
+        if not current_user:
+            return ProblemListResponse(problems=[], total=0)
         query = query.where(Problem.author_id == current_user.id)
-    elif visibility:
-        query = query.where(Problem.visibility == visibility)
+    elif visibility is not None:
+        if visibility == ProblemVisibility.PUBLIC:
+            query = query.where(Problem.visibility == ProblemVisibility.PUBLIC)
+        else:
+            if not current_user:
+                return ProblemListResponse(problems=[], total=0)
+            query = query.where(
+                Problem.visibility == ProblemVisibility.PRIVATE,
+                or_(
+                    Problem.author_id == current_user.id,
+                    Problem.id.in_(team_problem_ids),
+                ),
+            )
     else:
-        # By default, show public or own problems
+        # Default: public + own + team-shared private problems.
         if current_user:
             query = query.where(
-                (Problem.visibility == ProblemVisibility.PUBLIC) | 
-                (Problem.author_id == current_user.id)
+                or_(
+                    Problem.visibility == ProblemVisibility.PUBLIC,
+                    Problem.author_id == current_user.id,
+                    Problem.id.in_(team_problem_ids),
+                )
             )
         else:
             query = query.where(Problem.visibility == ProblemVisibility.PUBLIC)
-    
+
     query = query.order_by(Problem.updated_at.desc())
     result = await db.execute(query)
     problems = result.scalars().all()
 
     star_counts: dict[UUID, int] = {}
+    library_counts: dict[UUID, int] = {}
     problem_ids = [p.id for p in problems]
     if problem_ids:
         stars_result = await db.execute(
@@ -109,10 +198,32 @@ async def list_problems(
             .group_by(Star.target_id)
         )
         star_counts = {target_id: count for target_id, count in stars_result.all()}
-    
+        library_result = await db.execute(
+            select(LibraryItem.problem_id, func.count(LibraryItem.id))
+            .where(LibraryItem.problem_id.in_(problem_ids))
+            .group_by(LibraryItem.problem_id)
+        )
+        library_counts = {problem_id: count for problem_id, count in library_result.all()}
+
+    team_roles_map = await fetch_team_roles_for_problems(problem_ids, current_user, db)
+
+    payload: list[ProblemResponse] = []
+    for problem in problems:
+        access = resolve_problem_access(problem, current_user, team_roles_map.get(problem.id))
+        if access is None:
+            continue
+        payload.append(
+            problem_to_response(
+                problem,
+                star_counts.get(problem.id, 0),
+                access=access,
+                library_count=library_counts.get(problem.id, 0),
+            )
+        )
+
     return ProblemListResponse(
-        problems=[problem_to_response(p, star_counts.get(p.id, 0)) for p in problems],
-        total=len(problems)
+        problems=payload,
+        total=len(payload),
     )
 
 
@@ -161,8 +272,9 @@ async def create_problem(
         .where(Problem.id == problem.id)
     )
     problem = result.scalar_one()
-    
-    return problem_to_response(problem)
+
+    access = ProblemAccessInfo(level=ProblemAccessLevel.OWNER)
+    return problem_to_response(problem, access=access, library_count=0)
 
 
 @router.post("/{problem_id}/fork", response_model=ProblemResponse, status_code=201)
@@ -171,17 +283,8 @@ async def fork_problem(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Fork a public problem into the current user's workspace."""
-    result = await db.execute(
-        select(Problem)
-        .options(selectinload(Problem.author))
-        .where(Problem.id == problem_id)
-    )
-    problem = result.scalar_one_or_none()
-    if not problem:
-        raise HTTPException(status_code=404, detail="Problem not found")
-    if problem.visibility != ProblemVisibility.PUBLIC and problem.author_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Not authorized to fork this problem")
+    """Fork a problem visible to the current user into the user's private workspace."""
+    problem = await verify_problem_access(problem_id, db, current_user, load_author=True)
 
     forked = Problem(
         title=f"{problem.title} (fork)",
@@ -275,7 +378,8 @@ async def fork_problem(
         .where(Problem.id == forked.id)
     )
     forked = result.scalar_one()
-    return problem_to_response(forked)
+    access = ProblemAccessInfo(level=ProblemAccessLevel.OWNER)
+    return problem_to_response(forked, access=access, library_count=len(items))
 
 
 @router.post("/seed", response_model=ProblemListResponse)
@@ -351,7 +455,14 @@ async def seed_problems(
     if created:
         await db.commit()
     return ProblemListResponse(
-        problems=[problem_to_response(p) for p in created],
+        problems=[
+            problem_to_response(
+                problem,
+                access=ProblemAccessInfo(level=ProblemAccessLevel.OWNER),
+                library_count=0,
+            )
+            for problem in created
+        ],
         total=len(created),
     )
 
@@ -363,24 +474,17 @@ async def get_problem(
     current_user: User | None = Depends(get_current_user_optional),
 ):
     """Get a problem by ID"""
-    result = await db.execute(
-        select(Problem)
-        .options(
-            selectinload(Problem.author),
-            selectinload(Problem.library_items),
-        )
-        .where(Problem.id == problem_id)
+    problem = await verify_problem_access(
+        problem_id, db, current_user, load_author=True
     )
-    problem = result.scalar_one_or_none()
-    
-    if not problem:
+    access = await get_problem_access_info(problem, db, current_user)
+    if access is None:
         raise HTTPException(status_code=404, detail="Problem not found")
-    
-    # Check visibility
-    if problem.visibility == ProblemVisibility.PRIVATE:
-        if not current_user or problem.author_id != current_user.id:
-            raise HTTPException(status_code=404, detail="Problem not found")
-    
+
+    library_result = await db.execute(
+        select(func.count(LibraryItem.id)).where(LibraryItem.problem_id == problem.id)
+    )
+    library_count = library_result.scalar() or 0
     stars_result = await db.execute(
         select(func.count(Star.id)).where(
             Star.target_type == StarTargetType.PROBLEM,
@@ -388,7 +492,7 @@ async def get_problem(
         )
     )
     star_count = stars_result.scalar() or 0
-    return problem_to_response(problem, star_count)
+    return problem_to_response(problem, star_count, access=access, library_count=library_count)
 
 
 @router.patch("/{problem_id}", response_model=ProblemResponse)
@@ -398,22 +502,14 @@ async def update_problem(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Update a problem (owner only)"""
-    result = await db.execute(
-        select(Problem)
-        .options(
-            selectinload(Problem.author),
-            selectinload(Problem.library_items),
-        )
-        .where(Problem.id == problem_id)
+    """Update a problem (owner/admin)"""
+    problem = await verify_problem_access(
+        problem_id, db, current_user, require_admin=True, load_author=True
     )
-    problem = result.scalar_one_or_none()
     
-    if not problem:
-        raise HTTPException(status_code=404, detail="Problem not found")
-    
-    if problem.author_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Not authorized")
+    # Only owner can change visibility
+    if data.visibility is not None and problem.author_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Only owner can change visibility")
     
     if data.title is not None:
         problem.title = data.title
@@ -428,25 +524,33 @@ async def update_problem(
     
     await db.commit()
     await db.refresh(problem)
-    
-    return problem_to_response(problem)
+
+    access = await get_problem_access_info(problem, db, current_user)
+    if access is None:
+        raise HTTPException(status_code=404, detail="Problem not found")
+    library_result = await db.execute(
+        select(func.count(LibraryItem.id)).where(LibraryItem.problem_id == problem.id)
+    )
+    library_count = library_result.scalar() or 0
+    stars_result = await db.execute(
+        select(func.count(Star.id)).where(
+            Star.target_type == StarTargetType.PROBLEM,
+            Star.target_id == problem.id,
+        )
+    )
+    star_count = stars_result.scalar() or 0
+    return problem_to_response(problem, star_count, access=access, library_count=library_count)
 
 
-@router.delete("/{problem_id}", status_code=204)
+@router.delete("/{problem_id}")
 async def delete_problem(
     problem_id: UUID,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Delete a problem (owner only)"""
-    result = await db.execute(select(Problem).where(Problem.id == problem_id))
-    problem = result.scalar_one_or_none()
-    
-    if not problem:
-        raise HTTPException(status_code=404, detail="Problem not found")
-    
-    if problem.author_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Not authorized")
-    
+    """Delete a problem (owner/admin)."""
+    problem = await verify_problem_access(
+        problem_id, db, current_user, require_admin=True
+    )
     await db.delete(problem)
     await db.commit()

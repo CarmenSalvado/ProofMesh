@@ -39,7 +39,7 @@ async def create_block(
     current_user: User = Depends(get_current_user),
 ):
     """Create a new canvas block."""
-    await verify_problem_access(problem_id, db, current_user, require_owner=False)
+    await verify_problem_access(problem_id, db, current_user, require_write=True)
     block = CanvasBlock(
         problem_id=problem_id,
         name=block_data.name,
@@ -84,7 +84,7 @@ async def update_block(
     current_user: User = Depends(get_current_user),
 ):
     """Update a canvas block (rename or change node_ids)."""
-    await verify_problem_access(problem_id, db, current_user, require_owner=False)
+    await verify_problem_access(problem_id, db, current_user, require_write=True)
     result = await db.execute(
         select(CanvasBlock)
         .where(CanvasBlock.id == block_id, CanvasBlock.problem_id == problem_id)
@@ -114,7 +114,7 @@ async def delete_block(
     current_user: User = Depends(get_current_user),
 ):
     """Delete a canvas block."""
-    await verify_problem_access(problem_id, db, current_user, require_owner=False)
+    await verify_problem_access(problem_id, db, current_user, require_write=True)
     result = await db.execute(
         select(CanvasBlock)
         .where(CanvasBlock.id == block_id, CanvasBlock.problem_id == problem_id)

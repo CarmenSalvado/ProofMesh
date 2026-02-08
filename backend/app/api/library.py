@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 from datetime import datetime
 
 from app.database import get_db
-from app.models.problem import Problem, ProblemVisibility
+from app.models.problem import Problem
 from app.models.library_item import LibraryItem, LibraryItemStatus, LibraryItemKind
 from app.models.activity import Activity, ActivityType
 from app.models.discussion import Discussion
@@ -176,9 +176,7 @@ async def create_library_item(
     current_user: User = Depends(get_current_user),
 ):
     """Publish a new item to the library"""
-    problem = await verify_problem_access(problem_id, db, current_user, require_owner=False)
-    if problem.visibility == ProblemVisibility.PRIVATE and problem.author_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Not authorized")
+    problem = await verify_problem_access(problem_id, db, current_user, require_write=True)
     
     # Add current user as author if not specified
     authors = [a.model_dump(mode="json") for a in data.authors]
@@ -237,7 +235,7 @@ async def update_library_item(
     current_user: User = Depends(get_current_user),
 ):
     """Update a library item (content, status, verification)"""
-    problem = await verify_problem_access(problem_id, db, current_user, require_owner=True)
+    problem = await verify_problem_access(problem_id, db, current_user, require_write=True)
     
     result = await db.execute(
         select(LibraryItem).where(
@@ -325,7 +323,7 @@ async def execute_computation_node(
     Execute Python code for a COMPUTATION node.
     The executed source is either `data.code` or the node content.
     """
-    problem = await verify_problem_access(problem_id, db, current_user, require_owner=False)
+    problem = await verify_problem_access(problem_id, db, current_user, require_write=True)
 
     result = await db.execute(
         select(LibraryItem).where(
@@ -442,8 +440,8 @@ async def delete_library_item(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Delete a library item (owner only)"""
-    await verify_problem_access(problem_id, db, current_user, require_owner=True)
+    """Delete a library item."""
+    await verify_problem_access(problem_id, db, current_user, require_write=True)
     
     result = await db.execute(
         select(LibraryItem).where(

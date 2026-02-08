@@ -126,7 +126,7 @@ async def put_file(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    await verify_problem_access(problem_id, db, current_user, require_owner=True)
+    await verify_problem_access(problem_id, db, current_user, require_write=True)
     normalized = normalize_path(path)
     if not normalized:
         raise HTTPException(status_code=400, detail="Path required")
@@ -167,7 +167,7 @@ async def delete_file(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    await verify_problem_access(problem_id, db, current_user, require_owner=True)
+    await verify_problem_access(problem_id, db, current_user, require_write=True)
     normalized = normalize_path(path)
     if not normalized:
         raise HTTPException(status_code=400, detail="Path required")
@@ -190,7 +190,7 @@ async def rename_path(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    await verify_problem_access(problem_id, db, current_user, require_owner=True)
+    await verify_problem_access(problem_id, db, current_user, require_write=True)
     from_path = normalize_path(payload.from_path)
     to_path = normalize_path(payload.to_path)
     if not from_path or not to_path:
@@ -237,7 +237,7 @@ async def compile_project(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    await verify_problem_access(problem_id, db, current_user, require_owner=True)
+    await verify_problem_access(problem_id, db, current_user, require_write=True)
     prefix = latex_prefix(problem_id)
     main = normalize_path(payload.main)
     if not main:

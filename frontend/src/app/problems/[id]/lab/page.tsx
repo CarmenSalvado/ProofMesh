@@ -102,6 +102,7 @@ type MentionSuggestion = {
 const AUTO_COMPILE_DELAY = 5000;
 const SAVE_DEBOUNCE = 800;
 const DEFAULT_MAIN = "main.tex";
+const WORKSPACE_DELETE_ENABLED = true;
 const DEFAULT_ACTIONS = [
   { id: "clarity", label: "Improve clarity", prompt: "Improve clarity and flow without changing meaning." },
   { id: "latex", label: "Fix LaTeX", prompt: "Fix LaTeX errors and improve formatting." },
@@ -649,9 +650,14 @@ export default function LabPage({ params }: PageProps) {
   );
 
   const canEdit = useMemo(() => {
-    if (!user || !problem) return false;
+    if (!problem || !user) return false;
+    if (typeof problem.can_edit === "boolean") return problem.can_edit;
     return user.id === problem.author.id;
   }, [user, problem]);
+  const problemAccessLevel = useMemo(() => {
+    if (!problem) return "viewer";
+    return problem.access_level || (canEdit ? "owner" : "viewer");
+  }, [problem, canEdit]);
 
 
   const loadProblem = useCallback(async () => {
@@ -1287,6 +1293,7 @@ export default function LabPage({ params }: PageProps) {
   }, []);
 
   const startDelete = useCallback((path: string) => {
+    if (!WORKSPACE_DELETE_ENABLED) return;
     setDeleteTarget(path);
     setCreateTarget(null);
     setRenameTarget(null);
@@ -3796,7 +3803,7 @@ export default function LabPage({ params }: PageProps) {
                   >
                     <FolderPlus size={12} />
                   </button>
-                  {node.path && (
+                  {WORKSPACE_DELETE_ENABLED && node.path && (
                     <>
                       <button
                         type="button"
@@ -3825,7 +3832,7 @@ export default function LabPage({ params }: PageProps) {
               </div>
             )}
             {expanded && renderCreateRow(node.path, depth + 1)}
-            {isDeleting && (
+            {WORKSPACE_DELETE_ENABLED && isDeleting && (
               <div
                 className="flex items-center gap-2 px-2 py-1 text-[11px]"
                 style={{ paddingLeft: padding + 12 }}
@@ -3903,17 +3910,19 @@ export default function LabPage({ params }: PageProps) {
               >
                 <Pencil size={12} />
               </button>
-              <button
-                type="button"
-                onClick={() => startDelete(node.path)}
-                className="p-1 rounded-md hover:bg-[#1a1a1a] text-neutral-600 hover:text-red-400 transition-colors"
-                title="Delete"
-              >
-                <Trash2 size={12} />
-              </button>
+              {WORKSPACE_DELETE_ENABLED && (
+                <button
+                  type="button"
+                  onClick={() => startDelete(node.path)}
+                  className="p-1 rounded-md hover:bg-[#1a1a1a] text-neutral-600 hover:text-red-400 transition-colors"
+                  title="Delete"
+                >
+                  <Trash2 size={12} />
+                </button>
+              )}
             </div>
           )}
-          {isDeleting && (
+          {WORKSPACE_DELETE_ENABLED && isDeleting && (
             <div className="flex items-center gap-2 ml-2">
               <button
                 type="button"
@@ -3981,6 +3990,19 @@ export default function LabPage({ params }: PageProps) {
             <span className="text-xs font-medium text-neutral-400">{problem?.title || "Problem"}</span>
             <ChevronRight size={12} className="text-neutral-600" />
             <span className="text-xs font-medium text-neutral-300">LaTeX Lab</span>
+            <span
+              className={`ml-2 px-2 py-0.5 rounded-full text-[10px] font-medium ${
+                problemAccessLevel === "owner"
+                  ? "bg-indigo-500/20 text-indigo-300"
+                  : problemAccessLevel === "admin"
+                  ? "bg-blue-500/20 text-blue-300"
+                  : problemAccessLevel === "editor"
+                  ? "bg-emerald-500/20 text-emerald-300"
+                  : "bg-neutral-700/40 text-neutral-300"
+              }`}
+            >
+              Access: {problemAccessLevel}
+            </span>
           </div>
         </div>
 
@@ -4139,6 +4161,9 @@ export default function LabPage({ params }: PageProps) {
                   </div>
                 )}
                 {!canEdit && <p className="text-[10px] text-neutral-600">Read-only</p>}
+                {!WORKSPACE_DELETE_ENABLED && (
+                  <p className="text-[10px] text-amber-400/80">Workspace delete disabled</p>
+                )}
               </div>
 
               <div className="flex-1 overflow-y-auto px-2 py-2">
@@ -5505,15 +5530,17 @@ export default function LabPage({ params }: PageProps) {
                       <Download size={14} />
                     </a>
                   )}
-                  <button
-                    type="button"
-                    onClick={() => startDelete(activePath)}
-                    disabled={!canEdit}
-                    className="p-1.5 rounded-md hover:bg-[#1a1a1a] text-neutral-500 hover:text-neutral-300 disabled:opacity-40 transition-colors"
-                    title="Delete file"
-                  >
-                    <Trash2 size={14} />
-                  </button>
+                  {WORKSPACE_DELETE_ENABLED && (
+                    <button
+                      type="button"
+                      onClick={() => startDelete(activePath)}
+                      disabled={!canEdit}
+                      className="p-1.5 rounded-md hover:bg-[#1a1a1a] text-neutral-500 hover:text-neutral-300 disabled:opacity-40 transition-colors"
+                      title="Delete file"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => setRightOpen(false)}

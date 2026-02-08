@@ -5,15 +5,18 @@ from datetime import datetime
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, delete
-from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models.problem import Problem
 from app.models.workspace_file import WorkspaceFile, WorkspaceFileType
 from app.models.activity import Activity, ActivityType
 from app.models.user import User
-from app.api.deps import get_current_user, get_current_user_optional, verify_problem_access
+from app.api.deps import (
+    get_current_user,
+    get_current_user_optional,
+    verify_problem_access,
+    get_problem_access_info,
+)
 from app.schemas.contents import ContentsCreate, ContentsUpdate
 
 router = APIRouter(prefix="/api/workspaces/{problem_id}/contents", tags=["workspaces"])
@@ -138,8 +141,9 @@ async def get_contents(
     current_user: User | None = Depends(get_current_user_optional),
 ):
     problem = await verify_problem_access(problem_id, db, current_user)
+    access = await get_problem_access_info(problem, db, current_user)
+    writable = access.can_edit if access else False
     normalized = normalize_path(path)
-    writable = current_user is not None and current_user.id == problem.author_id
 
     if normalized == "":
         children = await list_directory(problem_id, db, "", writable)
@@ -186,7 +190,7 @@ async def put_contents(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    problem = await verify_problem_access(problem_id, db, current_user, require_owner=True)
+    problem = await verify_problem_access(problem_id, db, current_user, require_write=True)
     normalized = normalize_path(path)
     if normalized == "":
         raise HTTPException(status_code=400, detail="Path required")
@@ -267,7 +271,7 @@ async def post_contents(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    await verify_problem_access(problem_id, db, current_user, require_owner=True)
+    await verify_problem_access(problem_id, db, current_user, require_write=True)
     normalized = normalize_path(path)
 
     payload = data or ContentsCreate(type="file")
@@ -337,7 +341,7 @@ async def patch_contents(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    await verify_problem_access(problem_id, db, current_user, require_owner=True)
+    await verify_problem_access(problem_id, db, current_user, require_write=True)
     normalized = normalize_path(path)
     file = await get_file(problem_id, db, normalized)
     if not file:
@@ -386,7 +390,7 @@ async def delete_contents(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    await verify_problem_access(problem_id, db, current_user, require_owner=True)
+    await verify_problem_access(problem_id, db, current_user, require_write=True)
     normalized = normalize_path(path)
     file = await get_file(problem_id, db, normalized)
     if not file:

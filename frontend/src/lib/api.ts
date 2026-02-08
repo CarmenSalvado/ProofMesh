@@ -24,6 +24,10 @@ export interface Problem {
 	author: AuthorInfo;
 	library_item_count: number;
 	star_count?: number;
+	access_level?: "viewer" | "editor" | "admin" | "owner";
+	can_edit?: boolean;
+	can_admin?: boolean;
+	is_owner?: boolean;
 }
 
 export interface LibraryItem {

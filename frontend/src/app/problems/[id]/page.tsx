@@ -204,6 +204,18 @@ export default function ProblemPage({ params }: PageProps) {
                 )}
                 {problem.visibility}
               </span>
+              <span className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium ${
+                (problem.access_level || "viewer") === "owner"
+                  ? "bg-indigo-50 text-indigo-600"
+                  : (problem.access_level || "viewer") === "admin"
+                  ? "bg-blue-50 text-blue-600"
+                  : (problem.access_level || "viewer") === "editor"
+                  ? "bg-emerald-50 text-emerald-600"
+                  : "bg-neutral-100 text-neutral-600"
+              }`}>
+                <Users className="w-3.5 h-3.5" />
+                access: {problem.access_level || (problem.can_edit ? "owner" : "viewer")}
+              </span>
             </div>
 
             {problem.tags.length > 0 && (

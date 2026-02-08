@@ -326,10 +326,16 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
     () => shareNodeIds.map((id) => nodes.find((node) => node.id === id)).filter(Boolean) as CanvasNode[],
     [nodes, shareNodeIds]
   );
-  const isProblemOwner = useMemo(
-    () => Boolean(user && problem && user.id === problem.author.id),
-    [user, problem]
-  );
+  const canEditProblem = useMemo(() => {
+    if (!problem || !user) return false;
+    if (typeof problem.can_edit === "boolean") return problem.can_edit;
+    return user.id === problem.author.id;
+  }, [problem, user]);
+
+  const problemAccessLevel = useMemo(() => {
+    if (!problem) return "viewer";
+    return problem.access_level || (canEditProblem ? "owner" : "viewer");
+  }, [problem, canEditProblem]);
 
   const loadData = useCallback(async (options?: { showLoading?: boolean }) => {
     const showLoading = options?.showLoading ?? true;
@@ -1443,6 +1449,19 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
         </div>
 
         <div className="flex items-center gap-3">
+          <span
+            className={`px-2 py-1 rounded-full text-[11px] font-medium ${
+              problemAccessLevel === "owner"
+                ? "bg-indigo-100 text-indigo-700"
+                : problemAccessLevel === "admin"
+                ? "bg-blue-100 text-blue-700"
+                : problemAccessLevel === "editor"
+                ? "bg-emerald-100 text-emerald-700"
+                : "bg-neutral-100 text-neutral-600"
+            }`}
+          >
+            Access: {problemAccessLevel}
+          </span>
           {/* Refresh */}
           <button
             onClick={() => void loadData()}
@@ -1497,16 +1516,16 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
           selectedBlockId={selectedBlockId}
           selectedNodeCount={blockSelectionCount}
           onBlockSelect={handleSelectBlock}
-          onCreateBlock={handleCreateBlock}
-          onRenameBlock={handleRenameBlock}
-          onDeleteBlock={handleDeleteBlock}
-          onAddItem={() => {
-            if (canvasRef.current) {
-              canvasRef.current.openInlineEditorAtCenter();
-            } else {
-              handleOpenAddModal();
-            }
-          }}
+          onCreateBlock={canEditProblem ? handleCreateBlock : undefined}
+          onRenameBlock={canEditProblem ? handleRenameBlock : undefined}
+          onDeleteBlock={canEditProblem ? handleDeleteBlock : undefined}
+          onAddItem={canEditProblem ? (() => {
+              if (canvasRef.current) {
+                canvasRef.current.openInlineEditorAtCenter();
+              } else {
+                handleOpenAddModal();
+              }
+          }) : undefined}
         />
 
         {/* Canvas Area */}
@@ -1544,7 +1563,7 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
               collaboration?.sendCursorMove?.(x, y, `canvas:${problemId}`);
             }}
             collaborators={canvasCollaborators}
-            readOnly={!isProblemOwner}
+            readOnly={!canEditProblem}
           />
 
           {/* Node Detail Panel (Edit + Comments) */}
@@ -1567,10 +1586,10 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
           allNodes={nodes}
           isVisible={aiBarVisible}
           onToggle={() => setAiBarVisible(!aiBarVisible)}
-          onCreateNode={isProblemOwner
+          onCreateNode={canEditProblem
             ? ((data: { type: string; title: string; content: string; formula?: string; x?: number; y?: number; dependencies?: string[]; authors?: Array<{ type: "human" | "agent"; id: string; name?: string }>; source?: { file_path?: string; cell_id?: string; agent_run_id?: string } }) => handleCreateNode({ ...data, dependencies: data.dependencies || [] }))
             : undefined}
-          onUpdateNode={isProblemOwner
+          onUpdateNode={canEditProblem
             ? ((nodeId: string, updates: { formula?: string; leanCode?: string; status?: "PROPOSED" | "VERIFIED" | "REJECTED"; verification?: { method: string; logs: string; status: string }; dependencies?: string[] }) => handleQuickUpdateNode(nodeId, updates))
             : undefined}
           onCreateBlock={handleCreateBlock}

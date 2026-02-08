@@ -53,6 +53,10 @@ class ProblemResponse(BaseModel):
     author: AuthorInfo
     library_item_count: int = 0
     star_count: int = 0
+    access_level: str = "viewer"
+    can_edit: bool = False
+    can_admin: bool = False
+    is_owner: bool = False
 
 
 class ProblemListResponse(BaseModel):
