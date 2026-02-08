@@ -153,6 +153,13 @@ LUCIA_COMMENT_ACTIONS = [
     "Could we compare this against the previous benchmark proof?",
 ]
 
+LUCIA_TEAM_BLUEPRINTS = [
+    ("Stochastic Structures Collective", "Focused on random structures, concentration, and probabilistic proofs."),
+    ("Spectral Methods Studio", "Researching spectral diagnostics for large combinatorial systems."),
+    ("Inference & Random Geometry Lab", "Collaborative work on random geometry, transport, and uncertainty."),
+    ("Algorithmic Conjectures Forum", "Bridges experimental mathematics and proof-oriented verification."),
+]
+
 
 def sanitize_project_title(title: str) -> str:
     """Keep project token syntax stable even with unusual characters in titles."""
@@ -644,7 +651,41 @@ async def seed_lucia_spotlight():
         lucia_memberships = memberships_result.scalars().all()
         lucia_team_ids = {membership.team_id for membership in lucia_memberships}
         teams_joined = 0
+        teams_created_for_lucia = 0
         team_problem_links_added = 0
+
+        if not all_teams:
+            existing_slugs = set()
+            for name, description in LUCIA_TEAM_BLUEPRINTS:
+                base_slug = slugify_team_name(name)
+                slug = base_slug
+                suffix = 2
+                while slug in existing_slugs:
+                    slug = f"{base_slug}-{suffix}"
+                    suffix += 1
+
+                created_at = random_past_time(240, 45)
+                team = Team(
+                    name=name,
+                    slug=slug,
+                    description=description,
+                    is_public=True,
+                    created_at=created_at,
+                    updated_at=created_at,
+                )
+                db.add(team)
+                await db.flush()
+                existing_slugs.add(slug)
+                all_teams.append(team)
+                teams_created_for_lucia += 1
+
+                owner = random.choice(other_users)
+                db.add(TeamMember(
+                    team_id=team.id,
+                    user_id=owner.id,
+                    role=TeamRole.OWNER,
+                    joined_at=created_at,
+                ))
 
         if all_teams:
             target_team_memberships = min(6, max(3, len(all_teams) // 6))
@@ -891,6 +932,7 @@ async def seed_lucia_spotlight():
         await db.commit()
         print(f"✓ Lucia followers ensured (+{follows_added})")
         print(f"✓ Lucia authored problems ensured (+{created_lucia_problems})")
+        print(f"✓ Teams created for Lucia spotlight (+{teams_created_for_lucia})")
         print(f"✓ Lucia team memberships ensured (+{teams_joined})")
         print(f"✓ Lucia team-project links ensured (+{team_problem_links_added})")
         print(f"✓ Lucia discussions ensured (+{created_lucia_discussions})")
