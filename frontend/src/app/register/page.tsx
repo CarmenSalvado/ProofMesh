@@ -8,8 +8,6 @@ import { Logo } from "@/components/Logo";
 const DEMO_CODE_REQUIRED =
 	process.env.NEXT_PUBLIC_DEMO_CODE_REQUIRED === "true" ||
 	process.env.NODE_ENV === "production";
-const DEMO_PREVIEW_CODE =
-	process.env.NEXT_PUBLIC_DEMO_PREVIEW_CODE || "PR00FM3SH";
 
 export default function RegisterPage() {
 	const { register, demo } = useAuth();
@@ -19,7 +17,7 @@ export default function RegisterPage() {
 	const [email, setEmail] = useState("");
 	const [username, setUsername] = useState("");
 	const [password, setPassword] = useState("");
-	const [demoCode, setDemoCode] = useState(DEMO_PREVIEW_CODE);
+	const [demoCode, setDemoCode] = useState("");
 	const [error, setError] = useState("");
 	const [loading, setLoading] = useState(false);
 	const [demoLoading, setDemoLoading] = useState(false);
@@ -149,17 +147,6 @@ export default function RegisterPage() {
 						</form>
 					) : (
 						<div className="space-y-4">
-							<div className="rounded-md border border-[var(--border-secondary)] bg-[var(--bg-secondary)] px-3 py-2">
-								<p className="text-[11px] text-[var(--text-muted)]">Public demo code</p>
-								<button
-									type="button"
-									onClick={() => setDemoCode(DEMO_PREVIEW_CODE)}
-									className="mt-1 font-mono text-sm text-[var(--text-primary)] hover:underline"
-									title="Use demo code"
-								>
-									{DEMO_PREVIEW_CODE}
-								</button>
-							</div>
 							<div>
 								<label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">
 									Demo access code
@@ -168,7 +155,7 @@ export default function RegisterPage() {
 									type="text"
 									value={demoCode}
 									onChange={(e) => setDemoCode(e.target.value)}
-									placeholder={DEMO_PREVIEW_CODE}
+									placeholder="Enter access code"
 									className="w-full uppercase tracking-wide"
 								/>
 							</div>
