@@ -938,11 +938,6 @@ export default function DashboardPage() {
   }, [latexLineMax, latexLineStart, latexLineEnd]);
 
   const filteredFeedItems = feedItems.filter((item) => {
-    const isOwnActivityInDiscover =
-      feedTab === "discover" &&
-      item.actor.id === user?.id;
-    if (isOwnActivityInDiscover) return false;
-
     const query = searchQuery.trim().toLowerCase();
     if (!query) return true;
     const extraData = item.extra_data || {};
@@ -1273,6 +1268,7 @@ export default function DashboardPage() {
                 const likingDiscussion = discussionId ? likingDiscussionIds.has(discussionId) : false;
                 const repostingDiscussion = discussionId ? repostingDiscussionIds.has(discussionId) : false;
                 const isDiscussionLiked = discussionId ? likedDiscussionIds.has(discussionId) : false;
+                const isOwnPost = item.actor.id === user.id;
                 const problemTitle =
                   item.problem?.title ||
                   (item.extra_data?.problem_title as string) ||
@@ -1382,7 +1378,12 @@ export default function DashboardPage() {
                         )}
 
                         {isDiscussionPost && discussionCleanContent && (
-                          <div className="mt-3 rounded-md border border-indigo-100 bg-indigo-50/60 p-3">
+                          <div
+                            className={`mt-3 rounded-md p-3 ${isOwnPost
+                              ? "border border-neutral-200 bg-neutral-50"
+                              : "border border-indigo-100 bg-indigo-50/60"
+                              }`}
+                          >
                             <p className="text-sm text-neutral-700 whitespace-pre-wrap break-words">
                               {renderRichSocialText(discussionCleanContent)}
                             </p>
