@@ -54,4 +54,12 @@ fi
 
 # Start the application
 echo "🌐 Starting FastAPI server..."
-exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+APP_HOST="${APP_HOST:-0.0.0.0}"
+APP_PORT="${APP_PORT:-8000}"
+APP_RELOAD="${APP_RELOAD:-true}"
+
+if [ "$APP_RELOAD" = "true" ]; then
+    exec uvicorn app.main:app --host "$APP_HOST" --port "$APP_PORT" --reload
+fi
+
+exec uvicorn app.main:app --host "$APP_HOST" --port "$APP_PORT"

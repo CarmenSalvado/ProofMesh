@@ -41,6 +41,8 @@ out/
 
 # Environment
 .env
+.env.prod
+.env.prod.local
 .env.local
 .env.*.local
 

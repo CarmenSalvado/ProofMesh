@@ -1,4 +1,4 @@
-.PHONY: dev up down logs migrate shell-backend shell-frontend clean
+.PHONY: dev up down logs migrate shell-backend shell-frontend clean prod-up prod-down prod-logs prod-logs-traefik prod-ps
 
 # Start all services in development mode (migrations run automatically via entrypoint)
 dev: up
@@ -27,6 +27,22 @@ logs-backend:
 
 logs-frontend:
 	docker compose logs -f frontend
+
+# Production with Traefik + Let's Encrypt
+prod-up:
+	docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --build
+
+prod-down:
+	docker compose --env-file .env.prod -f docker-compose.prod.yml down
+
+prod-logs:
+	docker compose --env-file .env.prod -f docker-compose.prod.yml logs -f
+
+prod-logs-traefik:
+	docker compose --env-file .env.prod -f docker-compose.prod.yml logs -f traefik
+
+prod-ps:
+	docker compose --env-file .env.prod -f docker-compose.prod.yml ps
 
 # Run database migrations (also runs automatically on backend start)
 migrate:

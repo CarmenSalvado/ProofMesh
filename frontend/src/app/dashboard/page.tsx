@@ -23,6 +23,11 @@ import {
   SocialUser,
   SocialConnectionsResponse,
   createDiscussion,
+  createComment,
+  createStar,
+  deleteStar,
+  getStars,
+  getDiscussion,
   getTrendingProblems,
   TrendingProblem,
   getPlatformStats,
@@ -123,6 +128,17 @@ function getNodeSnippet(node: LibraryItem) {
   return raw.length > 160 ? `${raw.slice(0, 160)}…` : raw;
 }
 
+function getFeedDiscussionId(item: SocialFeedItem): string | null {
+  const extraDiscussionId = item.extra_data?.discussion_id;
+  if (typeof extraDiscussionId === "string" && extraDiscussionId.trim()) {
+    return extraDiscussionId;
+  }
+  if (item.type === "CREATED_DISCUSSION" && typeof item.target_id === "string" && item.target_id.trim()) {
+    return item.target_id;
+  }
+  return null;
+}
+
 export default function DashboardPage() {
   const { user, isLoading: authLoading } = useAuth();
   const router = useRouter();
@@ -164,6 +180,12 @@ export default function DashboardPage() {
   const [activityOffset, setActivityOffset] = useState(0);
   const [hasMoreActivity, setHasMoreActivity] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [likedDiscussionIds, setLikedDiscussionIds] = useState<Set<string>>(new Set());
+  const [likingDiscussionIds, setLikingDiscussionIds] = useState<Set<string>>(new Set());
+  const [repostingDiscussionIds, setRepostingDiscussionIds] = useState<Set<string>>(new Set());
+  const [openCommentComposerIds, setOpenCommentComposerIds] = useState<Set<string>>(new Set());
+  const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
+  const [commentingDiscussionIds, setCommentingDiscussionIds] = useState<Set<string>>(new Set());
   const feedLoadSentinelRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -176,16 +198,18 @@ export default function DashboardPage() {
     if (!user) return;
     setLoading(true);
     try {
-      const [problemsData, feedData, usersData, trendingData, statsData, connectionsData] = await Promise.all([
+      const [problemsData, feedData, usersData, trendingData, statsData, connectionsData, starsData] = await Promise.all([
         getProblems({ mine: true }),
         getSocialFeed({ scope: feedTab === "following" ? "network" : "global", limit: 20 }),
         getSocialUsers({ limit: 10 }),
         getTrendingProblems(5),
         getPlatformStats(),
         getSocialConnections(),
+        getStars({ target_type: "discussion", limit: 500 }),
       ]);
       setProblems(problemsData.problems);
       setFeedItems(feedData.items);
+      setLikedDiscussionIds(new Set(starsData.stars.map((star) => star.target_id)));
       setSuggestions(usersData.users.filter((u) => u.id !== user.id && !u.is_following));
       setTrending(trendingData.problems);
       setStats(statsData);
@@ -421,7 +445,7 @@ export default function DashboardPage() {
 
   const handlePost = async () => {
     const hasBody = postContent.trim().length > 0 || postAttachments.length > 0;
-    if (!hasBody || posting) return;
+    if (!user || !hasBody || posting) return;
 
     setPosting(true);
     try {
@@ -475,6 +499,205 @@ export default function DashboardPage() {
       console.error("Post failed", err);
     } finally {
       setPosting(false);
+    }
+  };
+
+  const handleToggleLike = async (discussionId: string) => {
+    if (likingDiscussionIds.has(discussionId)) return;
+    const isLiked = likedDiscussionIds.has(discussionId);
+    setLikingDiscussionIds((prev) => {
+      const next = new Set(prev);
+      next.add(discussionId);
+      return next;
+    });
+    try {
+      if (isLiked) {
+        await deleteStar("discussion", discussionId);
+        setLikedDiscussionIds((prev) => {
+          const next = new Set(prev);
+          next.delete(discussionId);
+          return next;
+        });
+      } else {
+        await createStar({ target_type: "discussion", target_id: discussionId });
+        setLikedDiscussionIds((prev) => {
+          const next = new Set(prev);
+          next.add(discussionId);
+          return next;
+        });
+      }
+    } catch (error) {
+      console.error("Failed to toggle like", error);
+    } finally {
+      setLikingDiscussionIds((prev) => {
+        const next = new Set(prev);
+        next.delete(discussionId);
+        return next;
+      });
+    }
+  };
+
+  const toggleCommentComposer = (discussionId: string) => {
+    setOpenCommentComposerIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(discussionId)) {
+        next.delete(discussionId);
+      } else {
+        next.add(discussionId);
+      }
+      return next;
+    });
+  };
+
+  const handleSubmitComment = async (item: SocialFeedItem, discussionId: string) => {
+    const draft = (commentDrafts[discussionId] || "").trim();
+    if (!user || !draft || commentingDiscussionIds.has(discussionId)) return;
+    setCommentingDiscussionIds((prev) => {
+      const next = new Set(prev);
+      next.add(discussionId);
+      return next;
+    });
+    try {
+      const created = await createComment(discussionId, { content: draft });
+      setCommentDrafts((prev) => ({ ...prev, [discussionId]: "" }));
+      setOpenCommentComposerIds((prev) => {
+        const next = new Set(prev);
+        next.delete(discussionId);
+        return next;
+      });
+      const discussionTitle =
+        (item.extra_data?.discussion_title as string | undefined) || created.discussion_title || "a discussion";
+      const optimisticCommentFeedItem: SocialFeedItem = {
+        id: `local-comment-${created.id}`,
+        type: "CREATED_COMMENT",
+        actor: {
+          id: created.author?.id || user.id,
+          username: created.author?.username || user.username,
+          avatar_url: created.author?.avatar_url ?? user.avatar_url,
+        },
+        problem: item.problem || null,
+        target_id: created.id,
+        item_status: null,
+        item_kind: null,
+        verification_status: null,
+        verification_method: null,
+        has_lean_code: null,
+        extra_data: {
+          discussion_id: discussionId,
+          discussion_title: discussionTitle,
+          comment_content: created.content,
+          problem_id:
+            (item.extra_data?.problem_id as string | undefined) ||
+            item.problem?.id ||
+            undefined,
+          problem_title:
+            (item.extra_data?.problem_title as string | undefined) ||
+            item.problem?.title ||
+            undefined,
+        },
+        created_at: created.created_at || new Date().toISOString(),
+      };
+      setFeedItems((prev) => [optimisticCommentFeedItem, ...prev]);
+    } catch (error) {
+      console.error("Failed to comment from feed", error);
+    } finally {
+      setCommentingDiscussionIds((prev) => {
+        const next = new Set(prev);
+        next.delete(discussionId);
+        return next;
+      });
+    }
+  };
+
+  const handleRepost = async (item: SocialFeedItem, discussionId: string) => {
+    if (!user || repostingDiscussionIds.has(discussionId)) return;
+    setRepostingDiscussionIds((prev) => {
+      const next = new Set(prev);
+      next.add(discussionId);
+      return next;
+    });
+    try {
+      const embeddedTitle = item.extra_data?.discussion_title;
+      const embeddedContent = item.extra_data?.discussion_content;
+      let sourceTitle = typeof embeddedTitle === "string" ? embeddedTitle.trim() : "";
+      let sourceContent = typeof embeddedContent === "string" ? embeddedContent : "";
+      let sourceAuthor = item.actor.username;
+      let sourceProblemId = item.problem?.id || undefined;
+
+      if (!sourceTitle || !sourceContent) {
+        const discussion = await getDiscussion(discussionId);
+        sourceTitle = discussion.title;
+        sourceContent = discussion.content;
+        sourceAuthor = discussion.author.username;
+        sourceProblemId = discussion.problem_id || sourceProblemId;
+      }
+
+      const repostTitleBase = `Repost: ${sourceTitle || "Update"}`;
+      const repostTitle =
+        repostTitleBase.length > 100 ? `${repostTitleBase.slice(0, 97)}...` : repostTitleBase;
+      const repostContent = [
+        `Repost from @${sourceAuthor}${sourceTitle ? ` - ${sourceTitle}` : ""}`,
+        "",
+        sourceContent,
+      ].join("\n");
+
+      const created = await createDiscussion({
+        title: repostTitle,
+        content: repostContent,
+        problem_id: sourceProblemId,
+      });
+      const optimisticItem: SocialFeedItem = {
+        id: `local-repost-${created.id}`,
+        type: "CREATED_DISCUSSION",
+        actor: {
+          id: created.author?.id || user.id,
+          username: created.author?.username || user.username,
+          avatar_url: created.author?.avatar_url ?? user.avatar_url,
+        },
+        problem: sourceProblemId
+          ? {
+            id: sourceProblemId,
+            title:
+              (item.extra_data?.problem_title as string | undefined) ||
+              item.problem?.title ||
+              "a problem",
+            visibility: item.problem?.visibility || "public",
+          }
+          : item.problem || null,
+        target_id: created.id,
+        item_status: null,
+        item_kind: null,
+        verification_status: null,
+        verification_method: null,
+        has_lean_code: null,
+        extra_data: {
+          discussion_id: created.id,
+          discussion_title: created.title,
+          discussion_content: repostContent,
+          problem_id: sourceProblemId,
+          problem_title:
+            (item.extra_data?.problem_title as string | undefined) ||
+            item.problem?.title ||
+            undefined,
+        },
+        created_at: created.created_at || new Date().toISOString(),
+      };
+      setFeedItems((prev) => {
+        const withoutDuplicate = prev.filter((feedItem) => {
+          const feedDiscussionId = getFeedDiscussionId(feedItem);
+          return feedItem.target_id !== created.id && feedDiscussionId !== created.id;
+        });
+        return [optimisticItem, ...withoutDuplicate];
+      });
+      setRecentPostId(created.id);
+    } catch (error) {
+      console.error("Failed to repost from feed", error);
+    } finally {
+      setRepostingDiscussionIds((prev) => {
+        const next = new Set(prev);
+        next.delete(discussionId);
+        return next;
+      });
     }
   };
 
@@ -863,8 +1086,14 @@ export default function DashboardPage() {
                 const discussionPayload = extractPostAttachments(discussionContent || "");
                 const discussionCleanContent = discussionPayload.cleanContent;
                 const discussionAttachments = discussionPayload.attachments;
-                const discussionId = (item.extra_data?.discussion_id as string | undefined) || (isDiscussionPost ? item.target_id || undefined : undefined);
+                const discussionId = getFeedDiscussionId(item) || undefined;
                 const discussionHref = discussionId ? `/discussions/${discussionId}` : "#";
+                const isCommentComposerOpen = discussionId ? openCommentComposerIds.has(discussionId) : false;
+                const discussionCommentDraft = discussionId ? (commentDrafts[discussionId] || "") : "";
+                const commentingDiscussion = discussionId ? commentingDiscussionIds.has(discussionId) : false;
+                const likingDiscussion = discussionId ? likingDiscussionIds.has(discussionId) : false;
+                const repostingDiscussion = discussionId ? repostingDiscussionIds.has(discussionId) : false;
+                const isDiscussionLiked = discussionId ? likedDiscussionIds.has(discussionId) : false;
                 const problemTitle =
                   item.problem?.title ||
                   (item.extra_data?.problem_title as string) ||
@@ -997,6 +1226,81 @@ export default function DashboardPage() {
                         {isCommentActivity && commentContent && (
                           <div className="mt-3 rounded-md border border-sky-100 bg-sky-50/60 p-3">
                             <p className="text-sm text-neutral-700 whitespace-pre-wrap">{commentContent}</p>
+                          </div>
+                        )}
+
+                        {discussionId && (
+                          <div className="mt-3 pt-3 border-t border-neutral-100">
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => toggleCommentComposer(discussionId)}
+                                className="inline-flex items-center gap-1.5 px-2 py-1 text-xs rounded-md border border-neutral-200 text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900 transition-colors"
+                              >
+                                <MessageSquare className="w-3.5 h-3.5" />
+                                Comment
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleToggleLike(discussionId)}
+                                disabled={likingDiscussion}
+                                className={`inline-flex items-center gap-1.5 px-2 py-1 text-xs rounded-md border transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${
+                                  isDiscussionLiked
+                                    ? "border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100"
+                                    : "border-neutral-200 text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900"
+                                }`}
+                              >
+                                <Star className={`w-3.5 h-3.5 ${isDiscussionLiked ? "fill-amber-500" : ""}`} />
+                                {isDiscussionLiked ? "Liked" : "Like"}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleRepost(item, discussionId)}
+                                disabled={repostingDiscussion}
+                                className="inline-flex items-center gap-1.5 px-2 py-1 text-xs rounded-md border border-neutral-200 text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                              >
+                                <GitFork className="w-3.5 h-3.5" />
+                                {repostingDiscussion ? "Reposting..." : "Repost"}
+                              </button>
+                              <Link
+                                href={discussionHref}
+                                className="ml-auto text-xs text-indigo-600 hover:text-indigo-700 hover:underline"
+                              >
+                                Open thread
+                              </Link>
+                            </div>
+
+                            {isCommentComposerOpen && (
+                              <div className="mt-3 rounded-md border border-neutral-200 bg-neutral-50 p-3 space-y-2">
+                                <textarea
+                                  rows={2}
+                                  value={discussionCommentDraft}
+                                  onChange={(e) =>
+                                    setCommentDrafts((prev) => ({ ...prev, [discussionId]: e.target.value }))
+                                  }
+                                  className="w-full text-sm border border-neutral-200 rounded-md px-2 py-1.5 resize-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 bg-white"
+                                  placeholder="Write a comment..."
+                                  disabled={commentingDiscussion}
+                                />
+                                <div className="flex justify-end gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleCommentComposer(discussionId)}
+                                    className="px-2.5 py-1 text-xs rounded-md border border-neutral-200 text-neutral-500 hover:text-neutral-700 hover:bg-white transition-colors"
+                                  >
+                                    Cancel
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSubmitComment(item, discussionId)}
+                                    disabled={!discussionCommentDraft.trim() || commentingDiscussion}
+                                    className="px-2.5 py-1 text-xs rounded-md bg-neutral-900 text-white hover:bg-neutral-800 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                                  >
+                                    {commentingDiscussion ? "Posting..." : "Post comment"}
+                                  </button>
+                                </div>
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>

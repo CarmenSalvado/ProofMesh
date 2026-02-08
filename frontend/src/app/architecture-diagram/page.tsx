@@ -51,103 +51,101 @@ type Panel = {
   classes: string;
 };
 
-const BOARD_WIDTH = 1800;
-const BOARD_HEIGHT = 780;
+const BOARD_WIDTH = 1600;
+const BOARD_HEIGHT = 900;
 
-const EXPORT_WIDTH = 1500;
-const EXPORT_HEIGHT = 1000;
-const MAX_EXPORT_BYTES = 5 * 1024 * 1024;
+const EXPORT_WIDTH = 2560;
+const EXPORT_HEIGHT = 1440;
+const MAX_EXPORT_BYTES = 8 * 1024 * 1024;
 
 const DIAGRAM_PANELS: Panel[] = [
   {
     id: "panel-exp",
     title: "Experience Layer",
-    x: 32,
-    y: 200,
-    w: 280,
-    h: 260,
+    x: 30,
+    y: 335, // Moved down slightly to center vertically with new layout
+    w: 200,
+    h: 200, // Reduced height since frontend node is smaller
     classes: "border-indigo-200/70 bg-gradient-to-br from-indigo-100/80 via-slate-50 to-transparent",
   },
   {
     id: "panel-core",
     title: "Core Intelligence",
-    x: 340,
-    y: 84,
-    w: 900,
-    h: 580,
+    x: 270,
+    y: 180, // Moved up to use more vertical space
+    w: 520, // Slightly wider
+    h: 560, // Taller for more vertical spacing
     classes: "border-sky-200/70 bg-gradient-to-br from-sky-100/80 via-slate-50 to-transparent",
   },
   {
     id: "panel-infra",
     title: "Infrastructure & Services",
-    x: 1270,
-    y: 84,
-    w: 500,
-    h: 620,
+    x: 840, // More separation from Core
+    y: 180,
+    w: 730,
+    h: 560,
     classes: "border-emerald-200/70 bg-gradient-to-br from-emerald-100/80 via-slate-50 to-transparent",
   },
 ];
 
 const DIAGRAM_NODES: DiagramNode[] = [
+  // ═══════════════════════════════════════════════════════════════
+  // EXPERIENCE LAYER
+  // ═══════════════════════════════════════════════════════════════
   {
     id: "frontend",
     title: "Frontend",
-    subtitle: "Next.js 16 app · collaborative UI",
+    subtitle: "Next.js · collaborative UI",
     chip: "User Surface",
     icon: "frontend",
     tone: "indigo",
-    x: 52,
-    y: 250,
-    w: 240,
-    h: 160,
+    x: 50,
+    y: 380,
+    w: 160, // Smaller
+    h: 110, // Smaller
   },
+
+  // ═══════════════════════════════════════════════════════════════
+  // CORE INTELLIGENCE (2x3 grid)
+  // ═══════════════════════════════════════════════════════════════
+  // Row 1
   {
     id: "backend",
     title: "Backend API",
-    subtitle: "FastAPI · auth · problems · social",
+    subtitle: "FastAPI · auth · problems",
     chip: "Control Plane",
     icon: "backend",
     tone: "cyan",
-    x: 380,
-    y: 120,
-    w: 260,
-    h: 130,
-  },
-  {
-    id: "mesh",
-    title: "Rho / Mesh Runtime",
-    subtitle: "orchestrator + explorer/formalizer/critic",
-    chip: "AI Orchestration",
-    icon: "mesh",
-    tone: "pink",
-    x: 380,
-    y: 300,
-    w: 260,
-    h: 150,
-  },
-  {
-    id: "worker",
-    title: "Canvas AI Worker",
-    subtitle: "async runs, traces, node generation",
-    chip: "Background Jobs",
-    icon: "worker",
-    tone: "lime",
-    x: 380,
-    y: 510,
-    w: 260,
-    h: 130,
+    x: 330,
+    y: 240, // Higher up
+    w: 155, // Smaller width
+    h: 100, // Reduced height
   },
   {
     id: "realtime",
     title: "Realtime WS",
-    subtitle: "presence + run updates",
+    subtitle: "presence + updates",
     chip: "WebSocket",
     icon: "realtime",
     tone: "indigo",
-    x: 720,
-    y: 120,
-    w: 230,
-    h: 110,
+    x: 575, // More horizontal gap (330+155 = 485 | 575-485=90px gap vs old 60px)
+    y: 240,
+    w: 155,
+    h: 100,
+  },
+
+  // Row 2
+  {
+    id: "mesh",
+    title: "Rho / Mesh",
+    subtitle: "orchestrator + formalizer",
+    chip: "AI Orchestration",
+    icon: "mesh",
+    tone: "pink",
+    x: 330,
+    y: 410, // More vertical gap (240+100=340 | 410-340=70px gap vs old 45px)
+    w: 155,
+    h: 105,
   },
   {
     id: "gemini",
@@ -156,10 +154,24 @@ const DIAGRAM_NODES: DiagramNode[] = [
     chip: "Reasoning Tier",
     icon: "gemini",
     tone: "pink",
-    x: 720,
-    y: 300,
-    w: 230,
-    h: 130,
+    x: 575,
+    y: 410,
+    w: 155,
+    h: 105,
+  },
+
+  // Row 3
+  {
+    id: "worker",
+    title: "Canvas Worker",
+    subtitle: "async runs, traces",
+    chip: "Background Jobs",
+    icon: "worker",
+    tone: "lime",
+    x: 330,
+    y: 585, // More vertical gap
+    w: 155,
+    h: 100,
   },
   {
     id: "redis",
@@ -168,62 +180,108 @@ const DIAGRAM_NODES: DiagramNode[] = [
     chip: "Async Bus",
     icon: "redis",
     tone: "lime",
-    x: 720,
-    y: 510,
-    w: 230,
-    h: 130,
+    x: 575,
+    y: 585,
+    w: 155,
+    h: 100,
   },
+
+  // ═══════════════════════════════════════════════════════════════
+  // INFRASTRUCTURE & SERVICES (3 columns)
+  // ═══════════════════════════════════════════════════════════════
+  // Column 1
   {
     id: "lean",
     title: "Lean Runner",
-    subtitle: "isolated `POST /verify`",
-    chip: "Formal Verification",
+    subtitle: "POST /verify",
+    chip: "Verification",
     icon: "lean",
     tone: "amber",
-    x: 1030,
-    y: 120,
-    w: 200,
-    h: 110,
+    x: 900,
+    y: 260,
+    w: 155,
+    h: 105,
   },
   {
     id: "latex",
-    title: "TeXLive Compiler",
+    title: "TeXLive",
     subtitle: "compile + SyncTeX",
     chip: "LaTeX Service",
     icon: "latex",
     tone: "amber",
-    x: 1030,
-    y: 290,
-    w: 200,
-    h: 110,
+    x: 900,
+    y: 430,
+    w: 155,
+    h: 105,
   },
+
+  // Column 2
   {
     id: "minio",
-    title: "MinIO Object Storage",
-    subtitle: "artifacts · outputs · docs",
+    title: "MinIO Storage",
+    subtitle: "artifacts · outputs",
     chip: "S3-compatible",
     icon: "minio",
     tone: "cyan",
-    x: 1310,
-    y: 120,
-    w: 220,
-    h: 130,
+    x: 1135, // More horizontal gap
+    y: 260,
+    w: 155,
+    h: 105,
   },
   {
     id: "postgres",
     title: "PostgreSQL",
-    subtitle: "users · problems · AI runs",
+    subtitle: "users · problems · runs",
     chip: "Primary DB",
     icon: "postgres",
     tone: "cyan",
-    x: 1310,
-    y: 300,
-    w: 220,
-    h: 130,
+    x: 1135,
+    y: 430,
+    w: 155,
+    h: 105,
+  },
+
+  // Column 3 (External)
+  {
+    id: "artifacts",
+    title: "Artifact Store",
+    subtitle: "proofs · LaTeX · assets",
+    chip: "External",
+    icon: "minio",
+    tone: "lime",
+    x: 1360,
+    y: 350,
+    w: 155,
+    h: 105,
   },
 ];
 
+// Map each node to its containing panel for drag constraints
+const NODE_PANEL_MAP: Record<string, string> = {
+  frontend: "panel-exp",
+  backend: "panel-core",
+  realtime: "panel-core",
+  mesh: "panel-core",
+  gemini: "panel-core",
+  worker: "panel-core",
+  redis: "panel-core",
+  lean: "panel-infra",
+  minio: "panel-infra",
+  latex: "panel-infra",
+  postgres: "panel-infra",
+  artifacts: "panel-infra",
+};
+
+// Get panel bounds for a node
+const getPanelForNode = (nodeId: string): Panel | undefined => {
+  const panelId = NODE_PANEL_MAP[nodeId];
+  return DIAGRAM_PANELS.find(p => p.id === panelId);
+};
+
 const DIAGRAM_LINKS: DiagramLink[] = [
+  // ═══════════════════════════════════════════════════════════════
+  // EXPERIENCE → CORE
+  // ═══════════════════════════════════════════════════════════════
   {
     id: "frontend-backend",
     from: "frontend",
@@ -231,27 +289,22 @@ const DIAGRAM_LINKS: DiagramLink[] = [
     fromSide: "right",
     toSide: "left",
     tone: "indigo",
-    label: "REST API",
+    label: "HTTP/REST",
   },
   {
-    id: "backend-realtime",
-    from: "backend",
+    id: "frontend-realtime",
+    from: "frontend",
     to: "realtime",
     fromSide: "right",
     toSide: "left",
     tone: "indigo",
-    label: "WS gateway",
-  },
-  {
-    id: "realtime-frontend",
-    from: "realtime",
-    to: "frontend",
-    fromSide: "left",
-    toSide: "top",
-    tone: "indigo",
-    label: "live events",
+    label: "WebSocket",
     dashed: true,
   },
+
+  // ═══════════════════════════════════════════════════════════════
+  // CORE INTERNAL
+  // ═══════════════════════════════════════════════════════════════
   {
     id: "backend-mesh",
     from: "backend",
@@ -259,7 +312,7 @@ const DIAGRAM_LINKS: DiagramLink[] = [
     fromSide: "bottom",
     toSide: "top",
     tone: "cyan",
-    label: "orchestration",
+    label: "orchestrate",
   },
   {
     id: "mesh-gemini",
@@ -268,107 +321,125 @@ const DIAGRAM_LINKS: DiagramLink[] = [
     fromSide: "right",
     toSide: "left",
     tone: "pink",
-    label: "prompt + context",
+    label: "reasoning",
   },
   {
-    id: "mesh-lean",
+    id: "mesh-worker",
     from: "mesh",
-    to: "lean",
-    fromSide: "right",
-    toSide: "left",
-    tone: "amber",
-    label: "verify Lean",
-  },
-  {
-    id: "backend-latex",
-    from: "backend",
-    to: "latex",
-    fromSide: "right",
-    toSide: "left",
-    tone: "amber",
-    label: "compile tex",
-  },
-  {
-    id: "backend-redis",
-    from: "backend",
-    to: "redis",
+    to: "worker",
     fromSide: "bottom",
     toSide: "top",
     tone: "lime",
-    label: "enqueue runs",
+    label: "async jobs",
   },
   {
-    id: "redis-worker",
-    from: "redis",
-    to: "worker",
-    fromSide: "left",
-    toSide: "right",
-    tone: "lime",
-    label: "consume jobs",
-  },
-  {
-    id: "worker-mesh",
+    id: "worker-redis",
     from: "worker",
-    to: "mesh",
-    fromSide: "top",
-    toSide: "bottom",
-    tone: "cyan",
-    label: "AI tasks",
+    to: "redis",
+    fromSide: "right",
+    toSide: "left",
+    tone: "lime",
+    label: "cache",
   },
   {
     id: "redis-realtime",
     from: "redis",
     to: "realtime",
-    fromSide: "top",
-    toSide: "bottom",
+    fromSide: "right",
+    toSide: "right", // Curve around right side to avoid Gemini
     tone: "lime",
     label: "pub/sub",
     dashed: true,
   },
+
+  // ═══════════════════════════════════════════════════════════════
+  // CORE → INFRA
+  // ═══════════════════════════════════════════════════════════════
   {
-    id: "backend-minio",
-    from: "backend",
-    to: "minio",
+    id: "mesh-lean",
+    from: "mesh",
+    to: "lean",
+    fromSide: "top", // Go over Gemini
+    toSide: "left",
+    tone: "amber",
+    label: "verify",
+  },
+  {
+    id: "gemini-latex",
+    from: "gemini",
+    to: "latex",
     fromSide: "right",
     toSide: "left",
-    tone: "cyan",
-    label: "file IO",
+    tone: "amber",
+    label: "compile",
   },
   {
     id: "backend-postgres",
     from: "backend",
     to: "postgres",
-    fromSide: "right",
-    toSide: "left",
+    fromSide: "top", // Arc over Realtime
+    toSide: "top",
     tone: "cyan",
-    label: "queries",
+    label: "data",
+  },
+  {
+    id: "realtime-minio",
+    from: "realtime",
+    to: "minio",
+    fromSide: "top", // Arc over Lean
+    toSide: "top",
+    tone: "cyan",
+    label: "sync",
   },
   {
     id: "worker-postgres",
     from: "worker",
     to: "postgres",
+    fromSide: "bottom", // Go under columns
+    toSide: "bottom",
+    tone: "lime",
+    label: "save run",
+  },
+
+  // ═══════════════════════════════════════════════════════════════
+  // INFRA INTERNAL
+  // ═══════════════════════════════════════════════════════════════
+  {
+    id: "lean-minio",
+    from: "lean",
+    to: "minio",
     fromSide: "right",
     toSide: "left",
-    tone: "lime",
-    label: "run state",
+    tone: "amber",
+    label: "logs",
   },
   {
     id: "latex-minio",
     from: "latex",
     to: "minio",
-    fromSide: "bottom",
-    toSide: "top",
+    fromSide: "right",
+    toSide: "left",
     tone: "amber",
-    label: "PDF artifacts",
+    label: "pdf",
   },
   {
-    id: "worker-minio",
-    from: "worker",
-    to: "minio",
+    id: "minio-artifacts",
+    from: "minio",
+    to: "artifacts",
     fromSide: "right",
     toSide: "left",
     tone: "lime",
-    label: "generated assets",
+    label: "export",
+  },
+  {
+    id: "postgres-artifacts",
+    from: "postgres",
+    to: "artifacts",
+    fromSide: "right",
+    toSide: "bottom",
+    tone: "lime",
+    label: "meta",
+    dashed: true,
   },
 ];
 
@@ -429,38 +500,158 @@ const MARKER_COLOR: Record<MarkerTone, string> = {
   indigo: "#9ca8bf",
 };
 
-function anchorPoint(node: DiagramNode, side: Side) {
-  if (side === "left") {
-    return { x: node.x, y: node.y + node.h / 2 };
-  }
-  if (side === "right") {
-    return { x: node.x + node.w, y: node.y + node.h / 2 };
-  }
-  if (side === "top") {
-    return { x: node.x + node.w / 2, y: node.y };
-  }
-  return { x: node.x + node.w / 2, y: node.y + node.h };
-}
+// Dynamic edge path calculation based on node positions
+function getEdgePath(from: DiagramNode, to: DiagramNode, fromSide?: Side, toSide?: Side): { path: string; labelX: number; labelY: number } {
+  // Calculate centers within the board coordinate system (0-1600, 0-900)
+  const fromCenterX = from.x + from.w / 2;
+  const fromCenterY = from.y + from.h / 2;
+  const toCenterX = to.x + to.w / 2;
+  const toCenterY = to.y + to.h / 2;
 
-function bezierPoint(
-  t: number,
-  p0: { x: number; y: number },
-  p1: { x: number; y: number },
-  p2: { x: number; y: number },
-  p3: { x: number; y: number }
-) {
+  let fromX: number, fromY: number;
+  let toX: number, toY: number;
+
+  // Determine exit point
+  if (fromSide) {
+    switch (fromSide) {
+      case "left": fromX = from.x; fromY = fromCenterY; break;
+      case "right": fromX = from.x + from.w; fromY = fromCenterY; break;
+      case "top": fromX = fromCenterX; fromY = from.y; break;
+      case "bottom": fromX = fromCenterX; fromY = from.y + from.h; break;
+    }
+  } else {
+    // Auto-calculate based on angle
+    const angle = Math.atan2(toCenterY - fromCenterY, toCenterX - fromCenterX);
+    const PI = Math.PI;
+    if (angle > -PI / 4 && angle <= PI / 4) { // Right
+      fromX = from.x + from.w; fromY = fromCenterY;
+    } else if (angle > PI / 4 && angle <= 3 * PI / 4) { // Bottom
+      fromX = fromCenterX; fromY = from.y + from.h;
+    } else if (angle > -3 * PI / 4 && angle <= -PI / 4) { // Top
+      fromX = fromCenterX; fromY = from.y;
+    } else { // Left
+      fromX = from.x; fromY = fromCenterY;
+    }
+  }
+
+  // Determine entry point
+  if (toSide) {
+    switch (toSide) {
+      case "left": toX = to.x; toY = toCenterY; break;
+      case "right": toX = to.x + to.w; toY = toCenterY; break;
+      case "top": toX = toCenterX; toY = to.y; break;
+      case "bottom": toX = toCenterX; toY = to.y + to.h; break;
+    }
+  } else {
+    // Auto-calculate (simplified opposite of from, or angle-based)
+    const angle = Math.atan2(fromCenterY - toCenterY, fromCenterX - toCenterX); // vector TO -> FROM
+    const PI = Math.PI;
+    if (angle > -PI / 4 && angle <= PI / 4) { // Right (To is right of From, so enter Left?) No, vector is To->From.
+      // If To -> From is Right, it means From is to the Right of To. So Enter Right.
+      toX = to.x + to.w; toY = toCenterY;
+    } else if (angle > PI / 4 && angle <= 3 * PI / 4) { // Bottom
+      toX = toCenterX; toY = to.y + to.h;
+    } else if (angle > -3 * PI / 4 && angle <= -PI / 4) { // Top
+      toX = toCenterX; toY = to.y;
+    } else { // Left
+      toX = to.x; toY = toCenterY;
+    }
+  }
+
+  // Offset the end point for arrow visibility
+  const edx = toX - fromX;
+  const edy = toY - fromY;
+  const len = Math.sqrt(edx * edx + edy * edy);
+  const arrowOffset = 12;
+  const endX = len > arrowOffset ? toX - (edx / len) * arrowOffset : toX;
+  const endY = len > arrowOffset ? toY - (edy / len) * arrowOffset : toY;
+
+  // Create smooth bezier curve
+  // If sides are specified, map control points to direction
+  const getControlVector = (side: Side | undefined, x: number, y: number, isStart: boolean): { x: number, y: number } => {
+    // If no side specified, infer from position relative to center
+    let s = side;
+    if (!s) {
+      if (x === from.x) s = "left";
+      else if (x === from.x + from.w) s = "right";
+      else if (y === from.y) s = "top";
+      else if (y === from.y + from.h) s = "bottom";
+      else s = "right"; // default
+    }
+
+    // For end point, the vector should point OUT from the node direction (for CP calculation logic below)
+    // Actually standard bezier: CP1 is fromX + dx, CP2 is toX - dx.
+
+    // New Logic: 
+    // Start CP goes OUT from start node.
+    // End CP comes IN to end node (so "out" from the curve perspective means "away from end node").
+
+    const dist = Math.min(Math.abs(toX - fromX), Math.abs(toY - fromY)) * 0.5 + 100; // heuristic
+
+    /* 
+       Let's use a simpler heuristic compatible with existing code structure but using sides.
+       If Side is Right, CP is (x + dist, y).
+       If Side is Left, CP is (x - dist, y).
+       If Side is Top, CP is (x, y - dist).
+       If Side is Bottom, CP is (x, y + dist).
+    */
+
+    // We need to know which "wall" the point is on relative to the node
+    // Since we computed fromX/toX based on side or angle, we can infer direction.
+
+    return { x: 0, y: 0 }; // Placeholder, we'll do it inline below
+  };
+
+  let cp1x: number, cp1y: number, cp2x: number, cp2y: number;
+  const tension = 0.35;
+  const distX = Math.abs(endX - fromX);
+  const distY = Math.abs(endY - fromY);
+  const controlDist = Math.max(distX, distY) * tension;
+
+  // Determine logical directions for control points
+  const getDir = (side: Side | undefined, defaultIsVertical: boolean): { dx: number, dy: number } => {
+    if (side === "left") return { dx: -1, dy: 0 };
+    if (side === "right") return { dx: 1, dy: 0 };
+    if (side === "top") return { dx: 0, dy: -1 };
+    if (side === "bottom") return { dx: 0, dy: 1 };
+    return defaultIsVertical ? { dx: 0, dy: 1 } : { dx: 1, dy: 0 };
+  };
+
+  // Determine sides if not provided, for CP calculation
+  const effFromSide = fromSide || (Math.abs(distY) > Math.abs(distX) ? (endY > fromY ? "bottom" : "top") : (endX > fromX ? "right" : "left"));
+  const effToSide = toSide || (Math.abs(distY) > Math.abs(distX) ? (endY > fromY ? "top" : "bottom") : (endX > fromX ? "left" : "right"));
+
+  const dir1 = getDir(effFromSide, false);
+  const dir2 = getDir(effToSide, false); // For end node, "side" is where it enters. CP should be "out" from that face? No, CP2 is usually "before" the end point.
+  // Standard Bezier: M S C CP1 CP2 E.
+  // CP1 = S + vector_out.
+  // CP2 = E + vector_out_from_E (which is vector_opp_to_E_face).
+
+  // If connection is to "left" side of TO node, it enters from left. So vector at E is (1, 0).
+  // If effToSide is "left", it means we connect to the LEFT face. So we approach from Left. CP2 should be to the Left of E.
+  // So CP2 = E + (dx: -1, 0) * dist.
+
+  const fromDir = getDir(effFromSide, false);
+  const toDir = getDir(effToSide, false);
+
+  cp1x = fromX + fromDir.dx * controlDist;
+  cp1y = fromY + fromDir.dy * controlDist;
+
+  cp2x = endX + toDir.dx * controlDist;
+  cp2y = endY + toDir.dy * controlDist;
+
+
+  // Calculate label position at midpoint
+  const t = 0.5;
   const inv = 1 - t;
-  const x =
-    inv * inv * inv * p0.x +
-    3 * inv * inv * t * p1.x +
-    3 * inv * t * t * p2.x +
-    t * t * t * p3.x;
-  const y =
-    inv * inv * inv * p0.y +
-    3 * inv * inv * t * p1.y +
-    3 * inv * t * t * p2.y +
-    t * t * t * p3.y;
-  return { x, y };
+  const labelX = inv * inv * inv * fromX + 3 * inv * inv * t * cp1x + 3 * inv * t * t * cp2x + t * t * t * endX;
+  const labelY = inv * inv * inv * fromY + 3 * inv * inv * t * cp1y + 3 * inv * t * t * cp2y + t * t * t * endY;
+
+  return {
+    path: `M ${fromX} ${fromY} C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${endX} ${endY}`,
+    labelX,
+    labelY,
+  };
 }
 
 function buildCurve(link: DiagramLink, nodes: Record<string, DiagramNode>) {
@@ -468,36 +659,11 @@ function buildCurve(link: DiagramLink, nodes: Record<string, DiagramNode>) {
   const to = nodes[link.to];
   if (!from || !to) return null;
 
-  const start = anchorPoint(from, link.fromSide);
-  const end = anchorPoint(to, link.toSide);
-
-  const deltaX = end.x - start.x;
-  const deltaY = end.y - start.y;
-  const distance = Math.hypot(deltaX, deltaY);
-  const pull = Math.max(72, Math.min(235, distance * 0.38));
-
-  const fromVec = SIDE_VECTOR[link.fromSide];
-  const toVec = SIDE_VECTOR[link.toSide];
-
-  const c1 = {
-    x: start.x + fromVec.x * pull,
-    y: start.y + fromVec.y * pull,
-  };
-  const c2 = {
-    x: end.x + toVec.x * pull,
-    y: end.y + toVec.y * pull,
-  };
-
-  const label = bezierPoint(0.5, start, c1, c2, end);
-
-  return {
-    path: `M ${start.x} ${start.y} C ${c1.x} ${c1.y}, ${c2.x} ${c2.y}, ${end.x} ${end.y}`,
-    labelX: label.x,
-    labelY: label.y,
-  };
+  return getEdgePath(from, to, link.fromSide, link.toSide);
 }
 
 function nodeStyle(node: DiagramNode) {
+  // Use percentages that map directly to SVG viewBox coordinates
   return {
     left: `${(node.x / BOARD_WIDTH) * 100}%`,
     top: `${(node.y / BOARD_HEIGHT) * 100}%`,
@@ -517,25 +683,136 @@ function panelStyle(panel: Panel) {
 
 export default function ThumbnailPage() {
   const exportRef = useRef<HTMLDivElement>(null);
+  const boardRef = useRef<HTMLDivElement>(null);
   const [exporting, setExporting] = useState(false);
 
-  const nodeMap = useMemo(() => {
-    return DIAGRAM_NODES.reduce<Record<string, DiagramNode>>((acc, node) => {
-      acc[node.id] = node;
-      return acc;
-    }, {});
-  }, []);
+  // State for draggable node positions
+  const [nodePositions, setNodePositions] = useState<Record<string, { x: number; y: number }>>(() => {
+    const positions: Record<string, { x: number; y: number }> = {};
+    DIAGRAM_NODES.forEach((node) => {
+      positions[node.id] = { x: node.x, y: node.y };
+    });
+    return positions;
+  });
 
-  const renderedLinks = useMemo(() => {
-    return DIAGRAM_LINKS.map((link) => {
-      const curve = buildCurve(link, nodeMap);
-      if (!curve) return null;
-      return {
-        ...link,
-        ...curve,
-      };
-    }).filter((item): item is NonNullable<typeof item> => item !== null);
-  }, [nodeMap]);
+  // Drag state
+  const [draggingNode, setDraggingNode] = useState<string | null>(null);
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+
+  // Get node with current position
+  const getNodeWithPosition = (node: DiagramNode) => ({
+    ...node,
+    x: nodePositions[node.id]?.x ?? node.x,
+    y: nodePositions[node.id]?.y ?? node.y,
+  });
+
+  // Build node map with current positions - no memo to force re-render
+  const nodeMap = DIAGRAM_NODES.reduce<Record<string, DiagramNode>>((acc, node) => {
+    acc[node.id] = {
+      ...node,
+      x: nodePositions[node.id]?.x ?? node.x,
+      y: nodePositions[node.id]?.y ?? node.y,
+    };
+    return acc;
+  }, {});
+
+  // Compute rendered links based on current node positions - no memo
+  const renderedLinks = DIAGRAM_LINKS.map((link) => {
+    const curve = buildCurve(link, nodeMap);
+    if (!curve) return null;
+    return {
+      ...link,
+      ...curve,
+    };
+  }).filter((item): item is NonNullable<typeof item> => item !== null);
+
+  // Drag handlers
+  const handleMouseDown = (e: React.MouseEvent, nodeId: string) => {
+    if (!boardRef.current) return;
+    e.preventDefault();
+
+    const boardRect = boardRef.current.getBoundingClientRect();
+    const nodePos = nodePositions[nodeId];
+
+    // Calculate mouse position relative to board in board coordinates
+    const mouseXInBoard = ((e.clientX - boardRect.left) / boardRect.width) * BOARD_WIDTH;
+    const mouseYInBoard = ((e.clientY - boardRect.top) / boardRect.height) * BOARD_HEIGHT;
+
+    setDragOffset({
+      x: mouseXInBoard - nodePos.x,
+      y: mouseYInBoard - nodePos.y,
+    });
+    setDraggingNode(nodeId);
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (!draggingNode || !boardRef.current) return;
+
+    const boardRect = boardRef.current.getBoundingClientRect();
+    const node = DIAGRAM_NODES.find(n => n.id === draggingNode);
+    const panel = getPanelForNode(draggingNode);
+
+    if (!node) return;
+
+    // Calculate new position in board coordinates
+    const mouseXInBoard = ((e.clientX - boardRect.left) / boardRect.width) * BOARD_WIDTH;
+    const mouseYInBoard = ((e.clientY - boardRect.top) / boardRect.height) * BOARD_HEIGHT;
+
+    let newX = mouseXInBoard - dragOffset.x;
+    let newY = mouseYInBoard - dragOffset.y;
+
+    // Constrain to panel bounds if panel exists (with padding for title)
+    if (panel) {
+      const padding = 30; // Increased visual padding
+      const titlePadding = 45; // Increased title padding
+      const minX = panel.x + padding;
+      const maxX = panel.x + panel.w - node.w - padding;
+      const minY = panel.y + titlePadding;
+      const maxY = panel.y + panel.h - node.h - padding;
+
+      newX = Math.max(minX, Math.min(maxX, newX));
+      newY = Math.max(minY, Math.min(maxY, newY));
+    } else {
+      // Fallback to board bounds
+      newX = Math.max(0, Math.min(BOARD_WIDTH - node.w, newX));
+      newY = Math.max(0, Math.min(BOARD_HEIGHT - node.h, newY));
+    }
+
+    setNodePositions((prev) => ({
+      ...prev,
+      [draggingNode]: { x: Math.round(newX), y: Math.round(newY) },
+    }));
+  };
+
+  const handleMouseUp = () => {
+    if (draggingNode) {
+      // Log the updated positions for easy copy-paste
+      console.log("=== UPDATED NODE POSITIONS ===");
+      console.log(JSON.stringify(nodePositions, null, 2));
+      console.log("==============================");
+    }
+    setDraggingNode(null);
+  };
+
+  // Export positions to clipboard
+  const copyPositionsToClipboard = () => {
+    const code = DIAGRAM_NODES.map((node) => {
+      const pos = nodePositions[node.id];
+      return `    x: ${pos.x},\n    y: ${pos.y},`;
+    }).join("\n\n");
+
+    const fullExport = Object.entries(nodePositions)
+      .map(([id, pos]) => `"${id}": { x: ${pos.x}, y: ${pos.y} }`)
+      .join(",\n");
+
+    navigator.clipboard.writeText(fullExport);
+    alert("¡Posiciones copiadas al portapapeles! Revisa la consola para el código completo.");
+    console.log("=== COPY THIS TO UPDATE DIAGRAM_NODES ===");
+    DIAGRAM_NODES.forEach((node) => {
+      const pos = nodePositions[node.id];
+      console.log(`${node.id}: x: ${pos.x}, y: ${pos.y}`);
+    });
+  };
 
   const dataUrlToBlob = async (dataUrl: string) => {
     const res = await fetch(dataUrl);
@@ -597,9 +874,9 @@ export default function ThumbnailPage() {
 
   return (
     <main className="min-h-screen bg-neutral-100 p-6 md:p-10 text-neutral-900">
-      <div className="mx-auto w-full max-w-[1480px] space-y-3">
+      <div className="mx-auto w-full max-w-[2200px] space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-neutral-300 bg-white px-3 py-2">
-          <div className="text-xs text-neutral-600">Export 3:2 (1500x1000) · architecture poster · max 5MB target</div>
+          <div className="text-xs text-neutral-600">Export 2K (2560×1440) · architecture poster · max 8MB target</div>
           <div className="flex items-center gap-2">
             <button
               type="button"
@@ -617,14 +894,27 @@ export default function ThumbnailPage() {
             >
               {exporting ? "Exporting..." : "Download JPG"}
             </button>
+            <button
+              type="button"
+              onClick={copyPositionsToClipboard}
+              className="rounded-md border border-lime-200 bg-lime-50 px-3 py-1.5 text-xs font-medium text-lime-700 hover:bg-lime-100"
+            >
+              📋 Copy Positions
+            </button>
           </div>
         </div>
 
         <div
           ref={exportRef}
-          className="relative aspect-[3/2] overflow-hidden rounded-3xl border border-neutral-300 bg-neutral-100 p-5 shadow-[0_36px_90px_-38px_rgba(0,0,0,0.38)]"
+          className="relative aspect-video overflow-hidden rounded-3xl border border-neutral-300 bg-neutral-100 p-5 shadow-[0_36px_90px_-38px_rgba(0,0,0,0.38)]"
         >
-          <div className="relative h-full w-full overflow-hidden rounded-2xl border border-neutral-300 bg-[radial-gradient(circle_at_12%_14%,rgba(186,230,253,0.65),transparent_34%),radial-gradient(circle_at_86%_85%,rgba(217,249,157,0.45),transparent_38%),radial-gradient(circle_at_65%_20%,rgba(245,208,254,0.55),transparent_36%),linear-gradient(145deg,#fcfcfd_0%,#f7f7f8_45%,#f5f5f4_100%)]">
+          <div
+            ref={boardRef}
+            className="relative h-full w-full overflow-hidden rounded-2xl border border-neutral-300 bg-[radial-gradient(circle_at_12%_14%,rgba(186,230,253,0.65),transparent_34%),radial-gradient(circle_at_86%_85%,rgba(217,249,157,0.45),transparent_38%),radial-gradient(circle_at_65%_20%,rgba(245,208,254,0.55),transparent_36%),linear-gradient(145deg,#fcfcfd_0%,#f7f7f8_45%,#f5f5f4_100%)]"
+            onMouseMove={handleMouseMove}
+            onMouseUp={handleMouseUp}
+            onMouseLeave={handleMouseUp}
+          >
             <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(rgba(10,10,10,0.04)_1px,transparent_1px),linear-gradient(90deg,rgba(10,10,10,0.04)_1px,transparent_1px)] bg-[size:34px_34px]" />
             <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.52),transparent_58%)]" />
 
@@ -650,7 +940,7 @@ export default function ThumbnailPage() {
               </div>
             </div>
 
-            <div className="pointer-events-none absolute inset-0 top-[102px]">
+            <div className="pointer-events-none absolute inset-0">
               {DIAGRAM_PANELS.map((panel) => (
                 <div
                   key={panel.id}
@@ -690,7 +980,7 @@ export default function ThumbnailPage() {
               {renderedLinks.map((link) => {
                 const color = MARKER_COLOR[link.tone];
                 return (
-                  <g key={link.id}>
+                  <g key={`${link.id}-${link.path.substring(0, 50)}`}>
                     <path
                       d={link.path}
                       fill="none"
@@ -733,12 +1023,15 @@ export default function ThumbnailPage() {
               {DIAGRAM_NODES.map((node) => {
                 const Icon = ICON_MAP[node.icon];
                 const tone = NODE_TONE_STYLES[node.tone];
+                const currentNode = getNodeWithPosition(node);
+                const isDragging = draggingNode === node.id;
 
                 return (
                   <article
                     key={node.id}
-                    className={`absolute rounded-2xl border p-3 shadow-[0_14px_32px_-26px_rgba(0,0,0,0.45)] ${tone.shell}`}
-                    style={nodeStyle(node)}
+                    className={`absolute rounded-2xl border p-3 shadow-[0_14px_32px_-26px_rgba(0,0,0,0.45)] transition-shadow ${tone.shell} ${isDragging ? 'shadow-2xl ring-2 ring-cyan-400 z-50' : 'hover:shadow-xl cursor-grab'}`}
+                    style={nodeStyle(currentNode)}
+                    onMouseDown={(e) => handleMouseDown(e, node.id)}
                   >
                     <div className="mb-2 flex items-start justify-between gap-3">
                       <span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.11em] ${tone.chip}`}>

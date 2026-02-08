@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
-import { MessageSquare, CheckCircle2, ChevronRight, Plus } from "lucide-react";
+import { MessageSquare, CheckCircle2, Plus } from "lucide-react";
 import { getDiscussions, Discussion } from "@/lib/api";
 
 function formatRelativeTime(iso: string) {
@@ -80,11 +80,13 @@ export function DiscussionsSidebar({ className = "", problemId }: DiscussionsSid
         <div className="space-y-3">
           {discussions.map((discussion, idx) => (
             <div key={discussion.id}>
-              <Link href={`/discussions/${discussion.id}`} className="block group">
+              <div className="group">
                 <div className="flex items-start gap-2">
-                  <h4 className="text-xs font-medium text-neutral-700 group-hover:text-indigo-600 line-clamp-2 flex-1">
-                    {discussion.title}
-                  </h4>
+                  <Link href={`/discussions/${discussion.id}`} className="flex-1 min-w-0">
+                    <h4 className="text-xs font-medium text-neutral-700 group-hover:text-indigo-600 line-clamp-2">
+                      {discussion.title}
+                    </h4>
+                  </Link>
                   {discussion.is_resolved && (
                     <CheckCircle2 className="w-3 h-3 text-emerald-600 flex-shrink-0 mt-0.5" />
                   )}
@@ -102,7 +104,7 @@ export function DiscussionsSidebar({ className = "", problemId }: DiscussionsSid
                   <span>·</span>
                   <span>{formatRelativeTime(discussion.created_at)}</span>
                 </div>
-              </Link>
+              </div>
               {idx < discussions.length - 1 && <div className="h-px bg-neutral-200 w-full mt-3" />}
             </div>
           ))}

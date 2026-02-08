@@ -12,6 +12,7 @@ It combines a LaTeX lab, a visual proof canvas, a knowledge library, and AI-assi
 - `lean-runner/`: isolated Lean 4 execution service.
 - `latex-compiler/`: isolated TeXLive compilation + SyncTeX lookup service.
 - `docker-compose.yml`: local development stack.
+- `docker-compose.prod.yml`: production stack with Traefik + HTTPS.
 - `Makefile`: common development commands.
 
 ## Architecture at a Glance
@@ -114,6 +115,45 @@ Then open:
 - API docs: `http://localhost:8080/docs`
 - MinIO Console: `http://localhost:9001`
 
+## Production Deploy (Traefik + HTTPS)
+
+This repository now includes a production stack with Traefik and automatic Let's Encrypt certificates (ACME).  
+You do not need a separate Certbot container.
+
+1. Create your production env file:
+
+```bash
+cp .env.prod.example .env.prod
+```
+
+2. Update `.env.prod`:
+- `APP_DOMAIN`, `API_DOMAIN`
+- `TRAEFIK_ACME_EMAIL`
+- strong secrets/passwords (`POSTGRES_PASSWORD`, `MINIO_ROOT_PASSWORD`, `JWT_SECRET_KEY`, API keys)
+- `CORS_ORIGINS` with your frontend domain
+
+3. Point DNS A/AAAA records of those domains to your VPS/public IP.
+
+4. Deploy:
+
+```bash
+make prod-up
+```
+
+5. Check certificate provisioning/logs:
+
+```bash
+make prod-logs-traefik
+```
+
+Useful production commands:
+
+```bash
+make prod-ps
+make prod-logs
+make prod-down
+```
+
 ## Common Commands
 
 ```bash
@@ -123,6 +163,12 @@ make down
 make logs
 make logs-backend
 make logs-frontend
+
+# production
+make prod-up
+make prod-ps
+make prod-logs
+make prod-down
 
 # database
 make migrate
