@@ -518,7 +518,54 @@ function encodePath(path: string): string {
 
 type ApiFetchOptions = RequestInit & {
 	suppressErrorLog?: boolean;
+	skipAuthRefresh?: boolean;
 };
+
+let tokenRefreshInFlight: Promise<string | null> | null = null;
+
+async function requestAccessTokenRefresh(): Promise<string | null> {
+	if (typeof window === "undefined") return null;
+
+	const refreshToken = localStorage.getItem("refresh_token");
+	if (!refreshToken) return null;
+
+	try {
+		const response = await fetch(`${API_BASE_URL}/api/auth/refresh`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ refresh_token: refreshToken }),
+		});
+
+		if (!response.ok) {
+			localStorage.removeItem("access_token");
+			localStorage.removeItem("refresh_token");
+			return null;
+		}
+
+		const tokens = await response.json();
+		const nextAccessToken = tokens?.access_token as string | undefined;
+		const nextRefreshToken = tokens?.refresh_token as string | undefined;
+
+		if (!nextAccessToken) return null;
+
+		localStorage.setItem("access_token", nextAccessToken);
+		if (nextRefreshToken) {
+			localStorage.setItem("refresh_token", nextRefreshToken);
+		}
+		return nextAccessToken;
+	} catch {
+		return null;
+	}
+}
+
+async function refreshAccessTokenOnce(): Promise<string | null> {
+	if (!tokenRefreshInFlight) {
+		tokenRefreshInFlight = requestAccessTokenRefresh().finally(() => {
+			tokenRefreshInFlight = null;
+		});
+	}
+	return tokenRefreshInFlight;
+}
 
 // Generic fetch wrapper
 async function apiFetch<T>(
@@ -526,7 +573,7 @@ async function apiFetch<T>(
 	options: ApiFetchOptions = {}
 ): Promise<T> {
 	const url = `${API_BASE_URL}/api${endpoint}`;
-	const { suppressErrorLog, ...requestOptions } = options;
+	const { suppressErrorLog, skipAuthRefresh = false, ...requestOptions } = options;
 	const authHeaders = getAuthHeaders();
 
 	const isFormData =
@@ -553,16 +600,29 @@ async function apiFetch<T>(
 
 	// Check if we have auth
 	const hasAuth = typeof authHeaders === 'object' && 'Authorization' in authHeaders;
+	const canAttemptRefresh = !skipAuthRefresh && !endpoint.startsWith("/auth/");
 
 	try {
-		const response = await fetch(url, {
-			...requestOptions,
-			headers,
-		});
+		const doRequest = (requestHeaders: HeadersInit) =>
+			fetch(url, {
+				...requestOptions,
+				headers: requestHeaders,
+			});
+
+		let response = await doRequest(headers);
+
+		// Try one token refresh on 401 before failing (for expired access tokens).
+		if (response.status === 401 && hasAuth && canAttemptRefresh) {
+			const refreshedAccessToken = await refreshAccessTokenOnce();
+			if (refreshedAccessToken) {
+				(headers as Record<string, string>)["Authorization"] = `Bearer ${refreshedAccessToken}`;
+				response = await doRequest(headers);
+			}
+		}
 
 		if (!response.ok) {
 			let errorDetail = "Unknown error";
-			let errorData: any = {};
+			let errorData: Record<string, unknown> = {};
 
 			const formatErrorDetail = (detail: unknown) => {
 				if (!detail) return null;
@@ -590,8 +650,12 @@ async function apiFetch<T>(
 			try {
 				const contentType = response.headers.get("content-type") || "";
 				if (contentType.includes("application/json")) {
-					errorData = await response.json();
-					const formatted = formatErrorDetail(errorData.detail ?? errorData.message);
+					const parsed = await response.json();
+					errorData = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+					const formatted = formatErrorDetail(
+						(errorData as { detail?: unknown; message?: unknown }).detail
+						?? (errorData as { detail?: unknown; message?: unknown }).message
+					);
 					errorDetail = formatted || `API Error: ${response.status}`;
 				} else {
 					const text = await response.text();
@@ -617,13 +681,15 @@ async function apiFetch<T>(
 				});
 			}
 
-			// Check for authentication errors
-			if (response.status === 401 || response.status === 403) {
+			// Handle auth vs permission failures separately.
+			if (response.status === 401) {
 				console.error("Authentication failed. Token may be invalid or expired.");
-				// Clear invalid token
 				if (typeof window !== "undefined") {
 					localStorage.removeItem("access_token");
+					localStorage.removeItem("refresh_token");
 				}
+			} else if (response.status === 403) {
+				console.error("Request forbidden. Current user lacks permission for this action.");
 			}
 
 			const detailMessage = typeof errorDetail === "string" ? errorDetail : JSON.stringify(errorDetail);

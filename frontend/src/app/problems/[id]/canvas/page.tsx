@@ -326,6 +326,10 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
     () => shareNodeIds.map((id) => nodes.find((node) => node.id === id)).filter(Boolean) as CanvasNode[],
     [nodes, shareNodeIds]
   );
+  const isProblemOwner = useMemo(
+    () => Boolean(user && problem && user.id === problem.author.id),
+    [user, problem]
+  );
 
   const loadData = useCallback(async (options?: { showLoading?: boolean }) => {
     const showLoading = options?.showLoading ?? true;
@@ -1113,7 +1117,7 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
     ) => {
       // Status is already uppercase, pass directly
       // Convert leanCode to lean_code for API
-      const apiData: any = {
+      const apiData: Parameters<typeof updateLibraryItem>[2] = {
         title: data.title,
         content: data.content,
         formula: data.formula,
@@ -1540,6 +1544,7 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
               collaboration?.sendCursorMove?.(x, y, `canvas:${problemId}`);
             }}
             collaborators={canvasCollaborators}
+            readOnly={!isProblemOwner}
           />
 
           {/* Node Detail Panel (Edit + Comments) */}
@@ -1562,8 +1567,12 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
           allNodes={nodes}
           isVisible={aiBarVisible}
           onToggle={() => setAiBarVisible(!aiBarVisible)}
-          onCreateNode={(data: { type: string; title: string; content: string; formula?: string; x?: number; y?: number; dependencies?: string[]; authors?: Array<{ type: "human" | "agent"; id: string; name?: string }>; source?: { file_path?: string; cell_id?: string; agent_run_id?: string } }) => handleCreateNode({ ...data, dependencies: data.dependencies || [] })}
-          onUpdateNode={(nodeId: string, updates: { formula?: string; leanCode?: string; status?: "PROPOSED" | "VERIFIED" | "REJECTED"; verification?: { method: string; logs: string; status: string }; dependencies?: string[] }) => handleQuickUpdateNode(nodeId, updates)}
+          onCreateNode={isProblemOwner
+            ? ((data: { type: string; title: string; content: string; formula?: string; x?: number; y?: number; dependencies?: string[]; authors?: Array<{ type: "human" | "agent"; id: string; name?: string }>; source?: { file_path?: string; cell_id?: string; agent_run_id?: string } }) => handleCreateNode({ ...data, dependencies: data.dependencies || [] }))
+            : undefined}
+          onUpdateNode={isProblemOwner
+            ? ((nodeId: string, updates: { formula?: string; leanCode?: string; status?: "PROPOSED" | "VERIFIED" | "REJECTED"; verification?: { method: string; logs: string; status: string }; dependencies?: string[] }) => handleQuickUpdateNode(nodeId, updates))
+            : undefined}
           onCreateBlock={handleCreateBlock}
         />
       </div>
