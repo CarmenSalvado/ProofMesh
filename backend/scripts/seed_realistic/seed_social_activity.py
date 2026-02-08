@@ -5,7 +5,7 @@ import asyncio
 import hashlib
 import random
 from datetime import datetime, timedelta
-from sqlalchemy import select, func
+from sqlalchemy import select, func, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import async_session_maker
@@ -411,6 +411,7 @@ async def seed_stars():
         print("Creating/adjusting stars with realistic long-tail distribution...")
         
         stars_created = 0
+        stars_removed = 0
 
         # Existing star state to keep idempotency and avoid duplicates.
         existing_problem_pairs = set()
@@ -459,6 +460,7 @@ async def seed_stars():
             ranked_problems.append((problem, weighted_score))
 
         ranked_problems.sort(key=lambda item: item[1], reverse=True)
+        problem_by_id = {problem.id: problem for problem, _score in ranked_problems}
         ranked_problem_ids = [problem.id for problem, _score in ranked_problems]
         ranked_index = {problem_id: idx for idx, problem_id in enumerate(ranked_problem_ids)}
         total_problems = max(1, len(ranked_problem_ids))
@@ -466,8 +468,8 @@ async def seed_stars():
         mid_cut = max(top_cut + 1, int(total_problems * 0.45))
 
         # 1) Ensure each user has a realistic amount of starred problems.
-        max_user_target = min(len(all_problems), 24)
-        min_user_target = min(6, max_user_target)
+        max_user_target = min(len(all_problems), 14)
+        min_user_target = min(4, max_user_target)
 
         for user in all_users:
             current = user_starred_problems.get(user.id, set())
@@ -511,46 +513,89 @@ async def seed_stars():
                 user_starred_problems.setdefault(user.id, set()).add(problem.id)
                 stars_created += 1
 
-        # 2) Ensure trending candidates have visibly higher star counts (still bounded by total users).
+        # 2) Ensure trending candidates have visibly higher star counts (still bounded by total users),
+        # while avoiding one author monopolizing the top slots.
         user_ids = [user.id for user in all_users]
         max_users = len(user_ids)
+        author_top_load: dict = {}
+        author_mid_load: dict = {}
 
         for idx, problem_id in enumerate(ranked_problem_ids):
+            problem = problem_by_id.get(problem_id)
+            if not problem:
+                continue
+
+            author_id = problem.author_id
+            tier = "long"
             if idx < top_cut:
-                low = min(max_users, max(16, int(max_users * 0.35)))
-                high = min(max_users, max(low, int(max_users * 0.62)))
+                if author_top_load.get(author_id, 0) < 2:
+                    tier = "top"
+                    author_top_load[author_id] = author_top_load.get(author_id, 0) + 1
+                else:
+                    tier = "mid"
+                    author_mid_load[author_id] = author_mid_load.get(author_id, 0) + 1
             elif idx < mid_cut:
-                low = min(max_users, max(8, int(max_users * 0.18)))
-                high = min(max_users, max(low, int(max_users * 0.38)))
+                if author_mid_load.get(author_id, 0) < 4:
+                    tier = "mid"
+                    author_mid_load[author_id] = author_mid_load.get(author_id, 0) + 1
+                else:
+                    tier = "long"
+
+            if tier == "top":
+                low = min(max_users, max(12, int(max_users * 0.18)))
+                high = min(max_users, max(low, int(max_users * 0.34)))
+            elif tier == "mid":
+                low = min(max_users, max(6, int(max_users * 0.08)))
+                high = min(max_users, max(low, int(max_users * 0.22)))
             else:
-                low = min(max_users, 2)
-                high = min(max_users, 10)
+                low = min(max_users, 1)
+                high = min(max_users, 8)
 
             target_for_problem = stable_range(str(problem_id), low, high)
             current_starrers = problem_star_users.get(problem_id, set())
+
+            if len(current_starrers) > target_for_problem:
+                ordered_starrers = sorted(
+                    current_starrers,
+                    key=lambda uid: stable_bucket(f"{problem_id}:{uid}", 10_000_000),
+                )
+                to_remove = ordered_starrers[target_for_problem:]
+                if to_remove:
+                    await db.execute(
+                        delete(Star).where(
+                            Star.target_type == StarTargetType.PROBLEM,
+                            Star.target_id == problem_id,
+                            Star.user_id.in_(to_remove),
+                        )
+                    )
+                    for user_id in to_remove:
+                        existing_problem_pairs.discard((user_id, problem_id))
+                        user_starred_problems.setdefault(user_id, set()).discard(problem_id)
+                    problem_star_users[problem_id] = set(ordered_starrers[:target_for_problem])
+                    current_starrers = problem_star_users[problem_id]
+                    stars_removed += len(to_remove)
+
             missing = max(0, target_for_problem - len(current_starrers))
-            if missing <= 0:
-                continue
-
-            available_user_ids = [uid for uid in user_ids if uid not in current_starrers]
-            if not available_user_ids:
-                continue
-
-            random.shuffle(available_user_ids)
-            for user_id in available_user_ids[:missing]:
-                pair = (user_id, problem_id)
-                if pair in existing_problem_pairs:
+            if missing > 0:
+                available_user_ids = [uid for uid in user_ids if uid not in current_starrers]
+                if not available_user_ids:
                     continue
-                db.add(Star(
-                    user_id=user_id,
-                    target_type=StarTargetType.PROBLEM,
-                    target_id=problem_id,
-                    created_at=random_past_time(100, 1),
-                ))
-                existing_problem_pairs.add(pair)
-                problem_star_users.setdefault(problem_id, set()).add(user_id)
-                user_starred_problems.setdefault(user_id, set()).add(problem_id)
-                stars_created += 1
+
+                random.shuffle(available_user_ids)
+                for user_id in available_user_ids[:missing]:
+                    pair = (user_id, problem_id)
+                    if pair in existing_problem_pairs:
+                        continue
+                    db.add(Star(
+                        user_id=user_id,
+                        target_type=StarTargetType.PROBLEM,
+                        target_id=problem_id,
+                        created_at=random_past_time(100, 1),
+                    ))
+                    existing_problem_pairs.add(pair)
+                    problem_star_users.setdefault(problem_id, set()).add(user_id)
+                    user_starred_problems.setdefault(user_id, set()).add(problem_id)
+                    stars_created += 1
 
         # 3) Library-item stars from a minority of users.
         if all_items:
@@ -585,6 +630,7 @@ async def seed_stars():
         
         await db.commit()
         print(f"✓ Created {stars_created} stars")
+        print(f"✓ Rebalanced stars removed (-{stars_removed})")
 
 
 async def seed_discussions():
