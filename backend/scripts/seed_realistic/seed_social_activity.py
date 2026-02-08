@@ -101,6 +101,29 @@ def user_mention(user: User) -> str:
     return f"@{user.username}"
 
 
+def discussion_activity_payload(discussion: Discussion) -> dict:
+    payload = {
+        "discussion_id": str(discussion.id),
+        "discussion_title": discussion.title,
+        "discussion_content": discussion.content,
+    }
+    if discussion.problem_id:
+        payload["problem_id"] = str(discussion.problem_id)
+    return payload
+
+
+def comment_activity_payload(comment: Comment, discussion: Discussion) -> dict:
+    payload = {
+        "discussion_id": str(discussion.id),
+        "discussion_title": discussion.title,
+        "comment_content": comment.content,
+        "parent_id": str(comment.parent_id) if comment.parent_id else None,
+    }
+    if discussion.problem_id:
+        payload["problem_id"] = str(discussion.problem_id)
+    return payload
+
+
 def random_past_time(days_ago_max: int, days_ago_min: int = 0) -> datetime:
     """Generate a random datetime between days_ago_min and days_ago_max days ago."""
     days = random.randint(days_ago_min, days_ago_max)
@@ -302,6 +325,13 @@ async def seed_discussions():
             
             db.add(discussion)
             await db.flush()  # Get discussion.id
+            db.add(Activity(
+                user_id=author.id,
+                type=ActivityType.CREATED_DISCUSSION,
+                target_id=discussion.id,
+                extra_data=discussion_activity_payload(discussion),
+                created_at=created_at,
+            ))
             
             discussions_created += 1
             
@@ -355,6 +385,13 @@ async def seed_discussions():
                 
                 db.add(comment)
                 await db.flush()  # Get comment.id
+                db.add(Activity(
+                    user_id=commenter.id,
+                    type=ActivityType.CREATED_COMMENT,
+                    target_id=comment.id,
+                    extra_data=comment_activity_payload(comment, discussion),
+                    created_at=comment_created_at,
+                ))
                 
                 prev_comment_id = comment.id
                 comments_created += 1
@@ -479,6 +516,13 @@ async def seed_lucia_spotlight():
             )
             db.add(discussion)
             await db.flush()
+            db.add(Activity(
+                user_id=lucia.id,
+                type=ActivityType.CREATED_DISCUSSION,
+                target_id=discussion.id,
+                extra_data=discussion_activity_payload(discussion),
+                created_at=created_at,
+            ))
             lucia_discussions.append(discussion)
             created_lucia_discussions += 1
 
@@ -513,6 +557,13 @@ async def seed_lucia_spotlight():
             )
             db.add(discussion)
             await db.flush()
+            db.add(Activity(
+                user_id=author.id,
+                type=ActivityType.CREATED_DISCUSSION,
+                target_id=discussion.id,
+                extra_data=discussion_activity_payload(discussion),
+                created_at=created_at,
+            ))
             existing_reaction_threads.append(discussion)
             created_reaction_threads += 1
 
@@ -564,6 +615,13 @@ async def seed_lucia_spotlight():
                     updated_at=comment_created_at,
                 )
                 db.add(comment)
+                db.add(Activity(
+                    user_id=commenter.id,
+                    type=ActivityType.CREATED_COMMENT,
+                    target_id=comment.id,
+                    extra_data=comment_activity_payload(comment, discussion),
+                    created_at=comment_created_at,
+                ))
                 comments_added += 1
                 discussion.updated_at = max(discussion.updated_at, comment_created_at)
 
@@ -605,28 +663,96 @@ async def seed_lucia_spotlight():
 async def seed_additional_activities():
     """Create additional activity records for various actions."""
     async with async_session_maker() as db:
-        result = await db.execute(select(User))
-        all_users = result.scalars().all()
-        
         result = await db.execute(select(Problem))
         all_problems = result.scalars().all()
-        
-        result = await db.execute(select(Star))
-        all_stars = result.scalars().all()
-        
-        if not all_users or not all_problems:
+        if not all_problems:
             print("⚠ Need users and problems first")
             return
         
         print(f"Creating additional activity records...")
         
         activities_created = 0
-        
-        # Follow activities
-        result = await db.execute(select(Follow))
+
+        # Build indexes to avoid activity duplicates on repeated runs.
+        discussion_activity_ids = set()
+        comment_activity_ids = set()
+        follow_activity_pairs = set()
+        result = await db.execute(select(Activity))
+        for activity in result.scalars().all():
+            if activity.type == ActivityType.CREATED_DISCUSSION and activity.target_id:
+                discussion_activity_ids.add(activity.target_id)
+            elif activity.type == ActivityType.CREATED_COMMENT and activity.target_id:
+                comment_activity_ids.add(activity.target_id)
+            elif activity.type == ActivityType.FOLLOWED_USER and activity.target_id:
+                follow_activity_pairs.add((activity.user_id, activity.target_id))
+
+        # Backfill discussion activities (newest first).
+        result = await db.execute(
+            select(Discussion).order_by(Discussion.created_at.desc()).limit(220)
+        )
+        for discussion in result.scalars().all():
+            if discussion.id in discussion_activity_ids:
+                continue
+            db.add(Activity(
+                user_id=discussion.author_id,
+                type=ActivityType.CREATED_DISCUSSION,
+                target_id=discussion.id,
+                extra_data=discussion_activity_payload(discussion),
+                created_at=discussion.created_at,
+            ))
+            discussion_activity_ids.add(discussion.id)
+            activities_created += 1
+
+        # Backfill comment activities, prioritizing comments on Lucia's threads.
+        lucia_discussion_ids = set()
+        lucia_user_result = await db.execute(select(User).where(User.username == LUCIA_USERNAME))
+        lucia = lucia_user_result.scalar_one_or_none()
+        if lucia:
+            lucia_disc_result = await db.execute(
+                select(Discussion.id).where(Discussion.author_id == lucia.id)
+            )
+            lucia_discussion_ids = {row[0] for row in lucia_disc_result.all()}
+
+        comment_rows_result = await db.execute(
+            select(Comment, Discussion)
+            .join(Discussion, Comment.discussion_id == Discussion.id)
+            .order_by(Comment.created_at.desc())
+            .limit(900)
+        )
+        comment_rows = comment_rows_result.all()
+        comment_rows.sort(
+            key=lambda row: (
+                row[0].discussion_id in lucia_discussion_ids,
+                row[0].created_at,
+            ),
+            reverse=True,
+        )
+
+        comment_activity_budget = 420
+        for comment, discussion in comment_rows:
+            if comment.id in comment_activity_ids:
+                continue
+            db.add(Activity(
+                user_id=comment.author_id,
+                type=ActivityType.CREATED_COMMENT,
+                target_id=comment.id,
+                extra_data=comment_activity_payload(comment, discussion),
+                created_at=comment.created_at,
+            ))
+            comment_activity_ids.add(comment.id)
+            activities_created += 1
+            comment_activity_budget -= 1
+            if comment_activity_budget <= 0:
+                break
+
+        # Follow activities (older follows only to reduce Discover noise).
+        result = await db.execute(select(Follow).order_by(Follow.created_at.asc()))
         all_follows = result.scalars().all()
-        
-        for follow in all_follows[:200]:  # Limit
+
+        for follow in all_follows[:80]:
+            follow_pair = (follow.follower_id, follow.following_id)
+            if follow_pair in follow_activity_pairs:
+                continue
             db.add(Activity(
                 user_id=follow.follower_id,
                 type=ActivityType.FOLLOWED_USER,
@@ -636,6 +762,7 @@ async def seed_additional_activities():
                 },
                 created_at=follow.created_at,
             ))
+            follow_activity_pairs.add(follow_pair)
             activities_created += 1
             
             # Notification

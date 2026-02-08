@@ -33,6 +33,59 @@ from .utils import get_follow_sets
 router = APIRouter()
 
 
+def _feed_score(activity: Activity) -> float:
+    """Score activities for Discover feed ranking."""
+    timestamp = activity.created_at.timestamp() if activity.created_at else 0.0
+
+    # Prefer conversational proof activity in Discover.
+    if activity.type == ActivityType.CREATED_COMMENT:
+        return timestamp + 7 * 24 * 60 * 60
+    if activity.type == ActivityType.CREATED_DISCUSSION:
+        return timestamp + 2 * 24 * 60 * 60
+    if activity.type == ActivityType.FOLLOWED_USER:
+        return timestamp - 30 * 24 * 60 * 60
+    return timestamp
+
+
+def _prioritize_global_activities(
+    activities: list[Activity],
+    *,
+    limit: int,
+    offset: int,
+) -> list[Activity]:
+    """Prefer comments/discussions and avoid follow-event dominance at the top."""
+    if not activities:
+        return []
+
+    ranked = sorted(
+        activities,
+        key=lambda activity: (_feed_score(activity), activity.created_at),
+        reverse=True,
+    )
+
+    # Build enough rows for current page while capping FOLLOWED_USER noise.
+    desired_count = offset + limit
+    follow_cap = max(1, desired_count // 6)  # ~16% follow events max in early window
+    follow_used = 0
+    selected: list[Activity] = []
+    deferred_follows: list[Activity] = []
+
+    for activity in ranked:
+        if activity.type == ActivityType.FOLLOWED_USER and follow_used >= follow_cap:
+            deferred_follows.append(activity)
+            continue
+        selected.append(activity)
+        if activity.type == ActivityType.FOLLOWED_USER:
+            follow_used += 1
+        if len(selected) >= desired_count:
+            break
+
+    if len(selected) < desired_count and deferred_follows:
+        selected.extend(deferred_follows[: desired_count - len(selected)])
+
+    return selected[offset : offset + limit]
+
+
 @router.get("/feed", response_model=FeedResponse)
 async def get_feed(
     scope: str = Query(default="network", pattern="^(network|global)$"),
@@ -49,10 +102,16 @@ async def get_feed(
     query = select(Activity).options(selectinload(Activity.user)).order_by(Activity.created_at.desc())
     if scope == "network":
         query = query.where(Activity.user_id.in_(ids))
-    query = query.limit(limit).offset(offset)
+        query = query.limit(limit).offset(offset)
+    else:
+        # Pull a larger window for Discover so we can re-rank toward comments/discussions.
+        window_limit = min(600, max(120, (offset + limit) * 6))
+        query = query.limit(window_limit).offset(0)
 
     result = await db.execute(query)
     activities = result.scalars().all()
+    if scope == "global":
+        activities = _prioritize_global_activities(activities, limit=limit, offset=offset)
 
     problem_ids: set[UUID] = set()
     discussion_ids: set[UUID] = set()
