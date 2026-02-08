@@ -72,6 +72,8 @@ def _prioritize_global_activities(
     deferred_comments: list[Activity] = []
     comments_per_discussion: dict[str, int] = {}
     comment_cap_per_discussion = 2
+    comments_per_problem: dict[str, int] = {}
+    comment_cap_per_problem = max(2, desired_count // 4)
 
     def discussion_key(activity: Activity) -> str | None:
         data = activity.extra_data or {}
@@ -80,13 +82,24 @@ def _prioritize_global_activities(
             return discussion_id
         return None
 
+    def problem_key(activity: Activity) -> str | None:
+        data = activity.extra_data or {}
+        problem_id = data.get("problem_id")
+        if isinstance(problem_id, str) and problem_id.strip():
+            return problem_id
+        return None
+
     for activity in ranked:
         if activity.type == ActivityType.FOLLOWED_USER and follow_used >= follow_cap:
             deferred_follows.append(activity)
             continue
         if activity.type == ActivityType.CREATED_COMMENT:
             key = discussion_key(activity)
+            problem_id = problem_key(activity)
             if key and comments_per_discussion.get(key, 0) >= comment_cap_per_discussion:
+                deferred_comments.append(activity)
+                continue
+            if problem_id and comments_per_problem.get(problem_id, 0) >= comment_cap_per_problem:
                 deferred_comments.append(activity)
                 continue
         selected.append(activity)
@@ -94,8 +107,11 @@ def _prioritize_global_activities(
             follow_used += 1
         elif activity.type == ActivityType.CREATED_COMMENT:
             key = discussion_key(activity)
+            problem_id = problem_key(activity)
             if key:
                 comments_per_discussion[key] = comments_per_discussion.get(key, 0) + 1
+            if problem_id:
+                comments_per_problem[problem_id] = comments_per_problem.get(problem_id, 0) + 1
         if len(selected) >= desired_count:
             break
 
