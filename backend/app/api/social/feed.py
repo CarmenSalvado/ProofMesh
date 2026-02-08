@@ -69,19 +69,47 @@ def _prioritize_global_activities(
     follow_used = 0
     selected: list[Activity] = []
     deferred_follows: list[Activity] = []
+    deferred_comments: list[Activity] = []
+    comments_per_discussion: dict[str, int] = {}
+    comment_cap_per_discussion = 2
+
+    def discussion_key(activity: Activity) -> str | None:
+        data = activity.extra_data or {}
+        discussion_id = data.get("discussion_id")
+        if isinstance(discussion_id, str) and discussion_id.strip():
+            return discussion_id
+        return None
 
     for activity in ranked:
         if activity.type == ActivityType.FOLLOWED_USER and follow_used >= follow_cap:
             deferred_follows.append(activity)
             continue
+        if activity.type == ActivityType.CREATED_COMMENT:
+            key = discussion_key(activity)
+            if key and comments_per_discussion.get(key, 0) >= comment_cap_per_discussion:
+                deferred_comments.append(activity)
+                continue
         selected.append(activity)
         if activity.type == ActivityType.FOLLOWED_USER:
             follow_used += 1
+        elif activity.type == ActivityType.CREATED_COMMENT:
+            key = discussion_key(activity)
+            if key:
+                comments_per_discussion[key] = comments_per_discussion.get(key, 0) + 1
         if len(selected) >= desired_count:
             break
 
+    if len(selected) < desired_count and deferred_comments:
+        for activity in deferred_comments:
+            selected.append(activity)
+            if len(selected) >= desired_count:
+                break
+
     if len(selected) < desired_count and deferred_follows:
-        selected.extend(deferred_follows[: desired_count - len(selected)])
+        for activity in deferred_follows:
+            selected.append(activity)
+            if len(selected) >= desired_count:
+                break
 
     return selected[offset : offset + limit]
 

@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import async_session_maker
 from app.models.user import User
-from app.models.problem import Problem
+from app.models.problem import Problem, ProblemVisibility, ProblemDifficulty
 from app.models.library_item import LibraryItem
 from app.models.follow import Follow
 from app.models.star import Star, StarTargetType
@@ -17,6 +17,7 @@ from app.models.discussion import Discussion
 from app.models.comment import Comment
 from app.models.activity import Activity, ActivityType
 from app.models.notification import Notification, NotificationType
+from app.models.team import Team, TeamMember, TeamProblem, TeamRole
 
 
 # Discussion title templates
@@ -76,13 +77,80 @@ LUCIA_REACTION_TITLES = [
     "Follow-up after Lucia's argument on {}",
 ]
 
-LUCIA_REACTION_COMMENTS = [
-    "Great thread {}. Your framing clarifies the bottleneck.",
-    "Strong point, {}. I think the key extension is in the compactness step.",
-    "Reacting to {}: the strategy looks promising, especially around the boundary case.",
-    "{} this is one of the clearest discussion threads on the topic.",
-    "I tested your idea, {}. It seems to hold in the key subcase.",
-    "Following up on {} with a possible refinement of the final lemma.",
+LUCIA_PROBLEM_TEMPLATES = [
+    (
+        "Probabilistic stability in {}",
+        "Develop concentration bounds and robust stability criteria for {} under sparse perturbations.",
+        ["probability", "stability", "combinatorics"],
+        ProblemDifficulty.HARD,
+    ),
+    (
+        "Boundary behavior for {} processes",
+        "Study boundary regularity and extremal behavior for {} via coupling and entropy methods.",
+        ["probability", "analysis", "boundary"],
+        ProblemDifficulty.MEDIUM,
+    ),
+    (
+        "Spectral fingerprints of {}",
+        "Relate spectral gaps and mixing diagnostics for {} to explicit geometric invariants.",
+        ["spectral", "graph-theory", "ergodic"],
+        ProblemDifficulty.MEDIUM,
+    ),
+    (
+        "Asymptotic regimes in {}",
+        "Characterize phase transitions and asymptotic expansions for {} across critical scales.",
+        ["asymptotics", "random-structures", "theory"],
+        ProblemDifficulty.HARD,
+    ),
+    (
+        "Computational heuristics for {} conjectures",
+        "Benchmark practical heuristics for {} and derive reliability certificates on sampled instances.",
+        ["algorithms", "experimental-math", "conjectures"],
+        ProblemDifficulty.EASY,
+    ),
+]
+
+LUCIA_MATH_OBJECTS = [
+    "random simplicial complexes",
+    "weighted expanders",
+    "Markov kernels on manifolds",
+    "sparse hypergraphs",
+    "non-reversible random walks",
+    "multiscale percolation models",
+    "low-discrepancy graph families",
+]
+
+LUCIA_COMMENT_OPENERS = [
+    "Great direction",
+    "Nice framing",
+    "Interesting reduction",
+    "Useful decomposition",
+    "Strong draft",
+    "Promising route",
+    "Clear setup",
+    "Good stress test",
+]
+
+LUCIA_COMMENT_MIDDLES = [
+    "the bottleneck seems to be the compactness passage",
+    "the tight step is the variance control in the final estimate",
+    "I would pressure-test the normalization assumptions",
+    "the bridge from local to global bounds needs one extra lemma",
+    "the boundary case with sparse support still looks delicate",
+    "the coupling argument might need a quantitative remainder term",
+    "the spectral approximation is convincing but needs explicit constants",
+    "the finite-sample regime deserves a separate proposition",
+]
+
+LUCIA_COMMENT_ACTIONS = [
+    "Could you pin down the exact threshold you expect?",
+    "Maybe add a counterexample sketch for the edge case.",
+    "Can we isolate this in a standalone lemma before the main theorem?",
+    "I suggest documenting where the argument breaks without regularity.",
+    "It would help to include a small numerical sanity check.",
+    "Would a bootstrap step simplify the final argument?",
+    "Please state the dependence on dimensions explicitly.",
+    "Could we compare this against the previous benchmark proof?",
 ]
 
 
@@ -122,6 +190,39 @@ def comment_activity_payload(comment: Comment, discussion: Discussion) -> dict:
     if discussion.problem_id:
         payload["problem_id"] = str(discussion.problem_id)
     return payload
+
+
+def slugify_team_name(name: str) -> str:
+    return (
+        name.strip()
+        .lower()
+        .replace("&", "and")
+        .replace("'", "")
+        .replace(".", "")
+        .replace(" ", "-")
+    )
+
+
+def build_lucia_reaction_comment(
+    *,
+    lucia: User,
+    discussion: Discussion,
+    all_problems: list[Problem],
+) -> str:
+    opener = random.choice(LUCIA_COMMENT_OPENERS)
+    middle = random.choice(LUCIA_COMMENT_MIDDLES)
+    action = random.choice(LUCIA_COMMENT_ACTIONS)
+    comment = f"{opener}, {user_mention(lucia)}: {middle}. {action}"
+
+    linked_problem = None
+    if discussion.problem_id:
+        linked_problem = next((problem for problem in all_problems if problem.id == discussion.problem_id), None)
+    if not linked_problem and all_problems:
+        linked_problem = random.choice(all_problems)
+    if linked_problem and random.random() < 0.65:
+        comment += f" {project_token(linked_problem)}"
+
+    return comment
 
 
 def random_past_time(days_ago_max: int, days_ago_min: int = 0) -> datetime:
@@ -489,7 +590,127 @@ async def seed_lucia_spotlight():
             ))
             follows_added += 1
 
-        # 2) Ensure Lucia has enough authored discussions.
+        # 2) Ensure Lucia has authored problems with varied themes.
+        result = await db.execute(select(Problem).where(Problem.author_id == lucia.id))
+        lucia_problems = result.scalars().all()
+        lucia_problem_titles = {problem.title for problem in lucia_problems}
+        created_lucia_problems = 0
+
+        target_lucia_problems = min(10, max(5, len(all_problems) // 20))
+        template_idx = 0
+        attempts = 0
+        while len(lucia_problems) < target_lucia_problems and attempts < 80:
+            attempts += 1
+            template = LUCIA_PROBLEM_TEMPLATES[template_idx % len(LUCIA_PROBLEM_TEMPLATES)]
+            template_idx += 1
+            math_object = random.choice(LUCIA_MATH_OBJECTS)
+            title = template[0].format(math_object)
+            if title in lucia_problem_titles:
+                continue
+
+            description = template[1].format(math_object)
+            tags = template[2]
+            difficulty = template[3]
+            created_at = random_past_time(100, 4)
+
+            problem = Problem(
+                title=title,
+                description=description,
+                author_id=lucia.id,
+                visibility=ProblemVisibility.PUBLIC,
+                difficulty=difficulty,
+                tags=tags,
+                created_at=created_at,
+                updated_at=created_at,
+            )
+            db.add(problem)
+            await db.flush()
+            db.add(Activity(
+                user_id=lucia.id,
+                type=ActivityType.CREATED_PROBLEM,
+                target_id=problem.id,
+                extra_data={"problem_id": str(problem.id), "problem_title": problem.title},
+                created_at=created_at,
+            ))
+            lucia_problems.append(problem)
+            all_problems.append(problem)
+            lucia_problem_titles.add(problem.title)
+            created_lucia_problems += 1
+
+        # 3) Ensure Lucia participates in several research teams and projects.
+        teams_result = await db.execute(select(Team))
+        all_teams = teams_result.scalars().all()
+        memberships_result = await db.execute(select(TeamMember).where(TeamMember.user_id == lucia.id))
+        lucia_memberships = memberships_result.scalars().all()
+        lucia_team_ids = {membership.team_id for membership in lucia_memberships}
+        teams_joined = 0
+        team_problem_links_added = 0
+
+        if all_teams:
+            target_team_memberships = min(6, max(3, len(all_teams) // 6))
+            missing_slots = max(0, target_team_memberships - len(lucia_team_ids))
+            candidate_teams = [team for team in all_teams if team.id not in lucia_team_ids and team.is_public]
+            if len(candidate_teams) < missing_slots:
+                candidate_teams = [team for team in all_teams if team.id not in lucia_team_ids]
+            random.shuffle(candidate_teams)
+
+            for idx, team in enumerate(candidate_teams[:missing_slots]):
+                joined_at = random_past_time(95, 2)
+                role = TeamRole.ADMIN if idx == 0 else TeamRole.MEMBER
+                db.add(TeamMember(
+                    team_id=team.id,
+                    user_id=lucia.id,
+                    role=role,
+                    joined_at=joined_at,
+                ))
+                db.add(Activity(
+                    user_id=lucia.id,
+                    type=ActivityType.TEAM_JOIN,
+                    target_id=team.id,
+                    extra_data={
+                        "team_id": str(team.id),
+                        "team_name": team.name,
+                        "team_slug": team.slug or slugify_team_name(team.name),
+                    },
+                    created_at=joined_at,
+                ))
+                lucia_team_ids.add(team.id)
+                teams_joined += 1
+
+            if lucia_team_ids and lucia_problems:
+                existing_team_problem_result = await db.execute(
+                    select(TeamProblem).where(
+                        TeamProblem.team_id.in_(lucia_team_ids),
+                        TeamProblem.problem_id.in_([problem.id for problem in lucia_problems]),
+                    )
+                )
+                existing_team_problem_pairs = {
+                    (entry.team_id, entry.problem_id)
+                    for entry in existing_team_problem_result.scalars().all()
+                }
+
+                for team_id in lucia_team_ids:
+                    team_problem_pool = lucia_problems[:]
+                    random.shuffle(team_problem_pool)
+                    desired_links = min(len(team_problem_pool), random.randint(1, 3))
+                    linked = 0
+                    for problem in team_problem_pool:
+                        pair = (team_id, problem.id)
+                        if pair in existing_team_problem_pairs:
+                            continue
+                        db.add(TeamProblem(
+                            team_id=team_id,
+                            problem_id=problem.id,
+                            added_by_id=lucia.id,
+                            added_at=random_past_time(75, 1),
+                        ))
+                        existing_team_problem_pairs.add(pair)
+                        team_problem_links_added += 1
+                        linked += 1
+                        if linked >= desired_links:
+                            break
+
+        # 4) Ensure Lucia has enough authored discussions.
         result = await db.execute(select(Discussion).where(Discussion.author_id == lucia.id))
         lucia_discussions = result.scalars().all()
 
@@ -526,7 +747,7 @@ async def seed_lucia_spotlight():
             lucia_discussions.append(discussion)
             created_lucia_discussions += 1
 
-        # 3) Ensure many reaction threads mention Lucia.
+        # 5) Ensure many reaction threads mention Lucia.
         result = await db.execute(select(Discussion))
         all_discussions = result.scalars().all()
         existing_reaction_threads = [
@@ -567,7 +788,7 @@ async def seed_lucia_spotlight():
             existing_reaction_threads.append(discussion)
             created_reaction_threads += 1
 
-        # 4) Ensure Lucia discussions have many comments and stars from others.
+        # 6) Ensure Lucia discussions have many comments and stars from others.
         lucia_discussion_ids = [discussion.id for discussion in lucia_discussions]
         comments_by_discussion: dict = {discussion_id: [] for discussion_id in lucia_discussion_ids}
         stars_by_discussion: dict = {discussion_id: set() for discussion_id in lucia_discussion_ids}
@@ -593,18 +814,33 @@ async def seed_lucia_spotlight():
 
         for discussion in lucia_discussions:
             current_comments = comments_by_discussion.get(discussion.id, [])
-            target_comments = random.randint(12, 24)
+            target_comments = random.randint(10, 20)
             missing_comments = max(0, target_comments - len(current_comments))
+            existing_comment_texts = {comment.content.strip() for comment in current_comments}
 
             for _ in range(missing_comments):
                 commenter = random.choice(other_users)
                 comment_created_at = discussion.created_at + timedelta(
-                    hours=random.randint(1, 72),
+                    hours=random.randint(1, 120),
                     minutes=random.randint(0, 59),
                 )
-                comment_text = random.choice(LUCIA_REACTION_COMMENTS).format(user_mention(lucia))
-                if random.random() < 0.7:
-                    comment_text += f" {project_token(random.choice(all_problems))}"
+                comment_text = ""
+                for _attempt in range(8):
+                    candidate = build_lucia_reaction_comment(
+                        lucia=lucia,
+                        discussion=discussion,
+                        all_problems=all_problems,
+                    )
+                    if candidate not in existing_comment_texts:
+                        comment_text = candidate
+                        break
+                if not comment_text:
+                    comment_text = build_lucia_reaction_comment(
+                        lucia=lucia,
+                        discussion=discussion,
+                        all_problems=all_problems,
+                    )
+                existing_comment_texts.add(comment_text)
 
                 comment = Comment(
                     discussion_id=discussion.id,
@@ -654,6 +890,9 @@ async def seed_lucia_spotlight():
 
         await db.commit()
         print(f"✓ Lucia followers ensured (+{follows_added})")
+        print(f"✓ Lucia authored problems ensured (+{created_lucia_problems})")
+        print(f"✓ Lucia team memberships ensured (+{teams_joined})")
+        print(f"✓ Lucia team-project links ensured (+{team_problem_links_added})")
         print(f"✓ Lucia discussions ensured (+{created_lucia_discussions})")
         print(f"✓ Lucia reaction threads ensured (+{created_reaction_threads})")
         print(f"✓ Lucia discussion comments added (+{comments_added})")
@@ -728,9 +967,14 @@ async def seed_additional_activities():
             reverse=True,
         )
 
-        comment_activity_budget = 420
+        comment_activity_budget = 280
+        per_discussion_budget = 4
+        discussion_comment_activity_count: dict = {}
         for comment, discussion in comment_rows:
             if comment.id in comment_activity_ids:
+                continue
+            current_discussion_count = discussion_comment_activity_count.get(comment.discussion_id, 0)
+            if current_discussion_count >= per_discussion_budget:
                 continue
             db.add(Activity(
                 user_id=comment.author_id,
@@ -740,6 +984,7 @@ async def seed_additional_activities():
                 created_at=comment.created_at,
             ))
             comment_activity_ids.add(comment.id)
+            discussion_comment_activity_count[comment.discussion_id] = current_discussion_count + 1
             activities_created += 1
             comment_activity_budget -= 1
             if comment_activity_budget <= 0:
