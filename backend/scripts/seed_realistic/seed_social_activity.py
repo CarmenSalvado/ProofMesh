@@ -59,6 +59,32 @@ COMMENT_TEMPLATES = [
     "One approach is to use {}. Let me know if you want more details.",
 ]
 
+LUCIA_USERNAME = "lucia_mora"
+
+LUCIA_SPOTLIGHT_TITLES = [
+    "Lucia's conjecture thread: {}",
+    "Community review for Lucia's approach to {}",
+    "Feedback requested on Lucia's writeup of {}",
+    "Can we strengthen Lucia's argument on {}?",
+    "Lucia's roadmap for {} - critique welcome",
+]
+
+LUCIA_REACTION_TITLES = [
+    "Reacting to Lucia's latest notes on {}",
+    "Building on Lucia's thread about {}",
+    "Question for @lucia_mora on {}",
+    "Follow-up after Lucia's argument on {}",
+]
+
+LUCIA_REACTION_COMMENTS = [
+    "Great thread {}. Your framing clarifies the bottleneck.",
+    "Strong point, {}. I think the key extension is in the compactness step.",
+    "Reacting to {}: the strategy looks promising, especially around the boundary case.",
+    "{} this is one of the clearest discussion threads on the topic.",
+    "I tested your idea, {}. It seems to hold in the key subcase.",
+    "Following up on {} with a possible refinement of the final lemma.",
+]
+
 
 def sanitize_project_title(title: str) -> str:
     """Keep project token syntax stable even with unusual characters in titles."""
@@ -374,6 +400,208 @@ async def seed_discussions():
         print(f"✓ Created {comments_created} comments")
 
 
+async def seed_lucia_spotlight():
+    """Ensure Lucia Mora is the central profile in seeded social activity."""
+    async with async_session_maker() as db:
+        result = await db.execute(select(User).where(User.username == LUCIA_USERNAME))
+        lucia = result.scalar_one_or_none()
+        if not lucia:
+            print("⚠ Lucia demo user not found. Run seed_users first.")
+            return
+
+        result = await db.execute(select(User))
+        all_users = result.scalars().all()
+        other_users = [user for user in all_users if user.id != lucia.id]
+
+        result = await db.execute(select(Problem))
+        all_problems = result.scalars().all()
+
+        if not other_users or not all_problems:
+            print("⚠ Need users/problems before Lucia spotlight seeding.")
+            return
+
+        print("Boosting Lucia-centered social activity...")
+
+        # 1) Ensure Lucia has many followers.
+        result = await db.execute(select(Follow).where(Follow.following_id == lucia.id))
+        existing_lucia_follows = result.scalars().all()
+        existing_follower_ids = {follow.follower_id for follow in existing_lucia_follows}
+
+        target_followers = min(len(other_users), max(20, int(len(other_users) * 0.75)))
+        missing_followers = [user for user in other_users if user.id not in existing_follower_ids]
+        random.shuffle(missing_followers)
+        follows_added = 0
+
+        for follower in missing_followers[: max(0, target_followers - len(existing_follower_ids))]:
+            created_at = random_past_time(120, 2)
+            db.add(Follow(
+                follower_id=follower.id,
+                following_id=lucia.id,
+                created_at=created_at,
+            ))
+            db.add(Notification(
+                user_id=lucia.id,
+                type=NotificationType.FOLLOW,
+                title=f"{follower.username} followed you",
+                content=f"{follower.username} started following you",
+                actor_id=follower.id,
+                target_type="user",
+                target_id=lucia.id,
+                is_read=random.random() < 0.25,
+                created_at=created_at,
+            ))
+            follows_added += 1
+
+        # 2) Ensure Lucia has enough authored discussions.
+        result = await db.execute(select(Discussion).where(Discussion.author_id == lucia.id))
+        lucia_discussions = result.scalars().all()
+
+        target_lucia_discussions = min(24, max(12, len(all_problems) // 4))
+        created_lucia_discussions = 0
+
+        for _ in range(max(0, target_lucia_discussions - len(lucia_discussions))):
+            problem = random.choice(all_problems)
+            peer = random.choice(other_users)
+            created_at = random_past_time(90, 1)
+
+            discussion = Discussion(
+                title=random.choice(LUCIA_SPOTLIGHT_TITLES).format(problem.title[:42]),
+                content=(
+                    f"I'm sharing this draft for review. {user_mention(peer)} I'd love your critique.\n\n"
+                    f"Main context: {project_token(problem)}\n\n"
+                    "Please challenge assumptions and edge cases directly in replies."
+                ),
+                author_id=lucia.id,
+                problem_id=problem.id,
+                is_pinned=random.random() < 0.08,
+                created_at=created_at,
+                updated_at=created_at,
+            )
+            db.add(discussion)
+            await db.flush()
+            lucia_discussions.append(discussion)
+            created_lucia_discussions += 1
+
+        # 3) Ensure many reaction threads mention Lucia.
+        result = await db.execute(select(Discussion))
+        all_discussions = result.scalars().all()
+        existing_reaction_threads = [
+            discussion for discussion in all_discussions
+            if discussion.author_id != lucia.id and user_mention(lucia) in discussion.content
+        ]
+
+        target_reaction_threads = min(30, max(10, len(all_problems) // 3))
+        created_reaction_threads = 0
+
+        for _ in range(max(0, target_reaction_threads - len(existing_reaction_threads))):
+            author = random.choice(other_users)
+            problem = random.choice(all_problems)
+            created_at = random_past_time(75, 1)
+
+            discussion = Discussion(
+                title=random.choice(LUCIA_REACTION_TITLES).format(problem.title[:40]),
+                content=(
+                    f"I've been following {user_mention(lucia)} and wanted to react to her latest thread.\n\n"
+                    f"Reference project: {project_token(problem)}\n\n"
+                    f"{user_mention(lucia)} does this extension align with your intended direction?"
+                ),
+                author_id=author.id,
+                problem_id=problem.id,
+                is_pinned=False,
+                created_at=created_at,
+                updated_at=created_at,
+            )
+            db.add(discussion)
+            await db.flush()
+            existing_reaction_threads.append(discussion)
+            created_reaction_threads += 1
+
+        # 4) Ensure Lucia discussions have many comments and stars from others.
+        lucia_discussion_ids = [discussion.id for discussion in lucia_discussions]
+        comments_by_discussion: dict = {discussion_id: [] for discussion_id in lucia_discussion_ids}
+        stars_by_discussion: dict = {discussion_id: set() for discussion_id in lucia_discussion_ids}
+
+        if lucia_discussion_ids:
+            result = await db.execute(
+                select(Comment).where(Comment.discussion_id.in_(lucia_discussion_ids))
+            )
+            for comment in result.scalars().all():
+                comments_by_discussion.setdefault(comment.discussion_id, []).append(comment)
+
+            result = await db.execute(
+                select(Star).where(
+                    Star.target_type == StarTargetType.DISCUSSION,
+                    Star.target_id.in_(lucia_discussion_ids),
+                )
+            )
+            for star in result.scalars().all():
+                stars_by_discussion.setdefault(star.target_id, set()).add(star.user_id)
+
+        comments_added = 0
+        stars_added = 0
+
+        for discussion in lucia_discussions:
+            current_comments = comments_by_discussion.get(discussion.id, [])
+            target_comments = random.randint(12, 24)
+            missing_comments = max(0, target_comments - len(current_comments))
+
+            for _ in range(missing_comments):
+                commenter = random.choice(other_users)
+                comment_created_at = discussion.created_at + timedelta(
+                    hours=random.randint(1, 72),
+                    minutes=random.randint(0, 59),
+                )
+                comment_text = random.choice(LUCIA_REACTION_COMMENTS).format(user_mention(lucia))
+                if random.random() < 0.7:
+                    comment_text += f" {project_token(random.choice(all_problems))}"
+
+                comment = Comment(
+                    discussion_id=discussion.id,
+                    author_id=commenter.id,
+                    content=comment_text,
+                    parent_id=None,
+                    created_at=comment_created_at,
+                    updated_at=comment_created_at,
+                )
+                db.add(comment)
+                comments_added += 1
+                discussion.updated_at = max(discussion.updated_at, comment_created_at)
+
+                db.add(Notification(
+                    user_id=lucia.id,
+                    type=NotificationType.NEW_COMMENT,
+                    title=f"{commenter.username} reacted to your discussion",
+                    content=comment_text[:200],
+                    actor_id=commenter.id,
+                    target_type="discussion",
+                    target_id=discussion.id,
+                    extra_data={"discussion_id": str(discussion.id)},
+                    is_read=random.random() < 0.35,
+                    created_at=comment_created_at,
+                ))
+
+            existing_starrers = stars_by_discussion.get(discussion.id, set())
+            target_stars = min(len(other_users), random.randint(10, min(35, len(other_users))))
+            missing_starrers = [user for user in other_users if user.id not in existing_starrers]
+            random.shuffle(missing_starrers)
+
+            for starrer in missing_starrers[: max(0, target_stars - len(existing_starrers))]:
+                db.add(Star(
+                    user_id=starrer.id,
+                    target_type=StarTargetType.DISCUSSION,
+                    target_id=discussion.id,
+                    created_at=random_past_time(110, 2),
+                ))
+                stars_added += 1
+
+        await db.commit()
+        print(f"✓ Lucia followers ensured (+{follows_added})")
+        print(f"✓ Lucia discussions ensured (+{created_lucia_discussions})")
+        print(f"✓ Lucia reaction threads ensured (+{created_reaction_threads})")
+        print(f"✓ Lucia discussion comments added (+{comments_added})")
+        print(f"✓ Lucia discussion stars added (+{stars_added})")
+
+
 async def seed_additional_activities():
     """Create additional activity records for various actions."""
     async with async_session_maker() as db:
@@ -437,6 +665,7 @@ async def seed_social_activity():
     await seed_follows()
     await seed_stars()
     await seed_discussions()
+    await seed_lucia_spotlight()
     await seed_additional_activities()
 
 
