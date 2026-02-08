@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select, func
@@ -60,11 +61,14 @@ async def get_trending_problems(
         )
         lib_count = lib_result.scalar() or 0
         
-        score = recent_activity * 5 + lib_count
-        
+        star_signal = math.sqrt(star_count) * 2.2
+        score = recent_activity * 5 + lib_count * 1.2 + star_signal
+
         trend_label = None
         if recent_activity >= 5:
             trend_label = "Hot"
+        elif star_count >= 20:
+            trend_label = "Rising"
         elif recent_activity >= 3:
             trend_label = f"+{recent_activity * 10}%"
         elif lib_count >= 3:

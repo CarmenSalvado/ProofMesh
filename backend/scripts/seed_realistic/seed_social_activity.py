@@ -2,9 +2,10 @@
 Seed social activity - follows, stars, discussions, comments, activities, notifications.
 """
 import asyncio
+import hashlib
 import random
 from datetime import datetime, timedelta
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import async_session_maker
@@ -58,6 +59,59 @@ COMMENT_TEMPLATES = [
     "I'm also interested in this. Following!",
     "Thanks for posting this - very helpful discussion.",
     "One approach is to use {}. Let me know if you want more details.",
+]
+
+COMMUNITY_DISCUSSION_TITLES = [
+    "Notes on extending {} to noisy data",
+    "Anyone validating assumptions in {}?",
+    "Practical constraints when proving {}",
+    "Counterexample search for {}",
+    "Refining the argument behind {}",
+    "Can we simplify the main step in {}?",
+    "What breaks first in {} under perturbation?",
+    "Benchmarking approaches for {}",
+]
+
+COMMUNITY_DISCUSSION_PROMPTS = [
+    "We tested a variant and saw a mismatch in a boundary case. Looking for independent checks.",
+    "I'm trying to connect this with a previous theorem from a different area.",
+    "There is progress, but one reduction still feels too implicit.",
+    "Would like feedback on whether this assumption is genuinely necessary.",
+    "The method works numerically, still unsure about a clean proof skeleton.",
+    "I think there is a shorter route if we isolate one lemma first.",
+]
+
+COMMUNITY_COMMENT_OPENERS = [
+    "Nice thread",
+    "Good catch",
+    "Interesting angle",
+    "This looks solid",
+    "Useful update",
+    "Strong point",
+    "Reasonable concern",
+    "Worth testing",
+]
+
+COMMUNITY_COMMENT_MIDDLES = [
+    "the key risk is hidden in the transition step",
+    "the edge case with sparse inputs needs a direct bound",
+    "this could be cleaner with one auxiliary lemma",
+    "the constant tracking should be explicit before finalizing",
+    "the midpoint estimate is convincing but maybe not tight",
+    "a short sanity-check experiment would help here",
+    "the same pattern appears in a related project",
+    "the idea is good, but the normalization assumption is strong",
+]
+
+COMMUNITY_COMMENT_ACTIONS = [
+    "Could you post the exact condition set you used?",
+    "Try adding a short proof sketch for the delicate case.",
+    "It may help to separate this into two claims.",
+    "Can you compare this with the baseline route?",
+    "Would you share where the argument fails without that hypothesis?",
+    "Please pin the numerical range for the constants.",
+    "A concise example might make the intuition clearer.",
+    "Maybe tag one teammate for an independent check.",
 ]
 
 LUCIA_USERNAME = "lucia_mora"
@@ -232,12 +286,71 @@ def build_lucia_reaction_comment(
     return comment
 
 
+def build_community_comment(
+    *,
+    target_user: User,
+    problem: Problem | None,
+) -> str:
+    opener = random.choice(COMMUNITY_COMMENT_OPENERS)
+    middle = random.choice(COMMUNITY_COMMENT_MIDDLES)
+    action = random.choice(COMMUNITY_COMMENT_ACTIONS)
+    comment = f"{opener}, {user_mention(target_user)}: {middle}. {action}"
+    if problem and random.random() < 0.55:
+        comment += f" {project_token(problem)}"
+    return comment
+
+
 def random_past_time(days_ago_max: int, days_ago_min: int = 0) -> datetime:
     """Generate a random datetime between days_ago_min and days_ago_max days ago."""
     days = random.randint(days_ago_min, days_ago_max)
     hours = random.randint(0, 23)
     minutes = random.randint(0, 59)
     return datetime.utcnow() - timedelta(days=days, hours=hours, minutes=minutes)
+
+
+def stable_bucket(seed_value: str, modulo: int) -> int:
+    """Deterministic bucket selection, stable across runs."""
+    digest = hashlib.sha256(seed_value.encode("utf-8")).hexdigest()
+    return int(digest[:12], 16) % max(1, modulo)
+
+
+def stable_range(seed_value: str, low: int, high: int) -> int:
+    """Deterministic integer in [low, high]."""
+    if high <= low:
+        return low
+    return low + stable_bucket(seed_value, high - low + 1)
+
+
+def weighted_pick_without_replacement(items: list, weights: list[float], k: int) -> list:
+    """Simple weighted sampling without replacement."""
+    if not items or k <= 0:
+        return []
+
+    picked = []
+    pool_items = items[:]
+    pool_weights = [max(0.001, float(w)) for w in weights]
+
+    k = min(k, len(pool_items))
+    for _ in range(k):
+        total = sum(pool_weights)
+        if total <= 0:
+            picked.append(pool_items.pop(0))
+            pool_weights.pop(0)
+            continue
+
+        r = random.random() * total
+        cumulative = 0.0
+        idx = len(pool_items) - 1
+        for i, weight in enumerate(pool_weights):
+            cumulative += weight
+            if r <= cumulative:
+                idx = i
+                break
+
+        picked.append(pool_items.pop(idx))
+        pool_weights.pop(idx)
+
+    return picked
 
 
 async def seed_follows():
@@ -282,13 +395,6 @@ async def seed_follows():
 async def seed_stars():
     """Create star/like records."""
     async with async_session_maker() as db:
-        # Check existing
-        result = await db.execute(select(Star))
-        existing = result.scalars().all()
-        if len(existing) > 100:
-            print(f"✓ Already have {len(existing)} stars, skipping")
-            return
-        
         result = await db.execute(select(User))
         all_users = result.scalars().all()
         
@@ -302,38 +408,179 @@ async def seed_stars():
             print("⚠ Need users and problems first")
             return
         
-        print(f"Creating stars...")
+        print("Creating/adjusting stars with realistic long-tail distribution...")
         
         stars_created = 0
-        
-        # Each user stars 3-15 problems
+
+        # Existing star state to keep idempotency and avoid duplicates.
+        existing_problem_pairs = set()
+        existing_item_pairs = set()
+        problem_star_users: dict = {problem.id: set() for problem in all_problems}
+        user_starred_problems: dict = {user.id: set() for user in all_users}
+
+        result = await db.execute(
+            select(Star).where(Star.target_type == StarTargetType.PROBLEM)
+        )
+        for star in result.scalars().all():
+            pair = (star.user_id, star.target_id)
+            existing_problem_pairs.add(pair)
+            if star.target_id in problem_star_users:
+                problem_star_users[star.target_id].add(star.user_id)
+            if star.user_id in user_starred_problems:
+                user_starred_problems[star.user_id].add(star.target_id)
+
+        result = await db.execute(
+            select(Star).where(Star.target_type == StarTargetType.LIBRARY_ITEM)
+        )
+        for star in result.scalars().all():
+            existing_item_pairs.add((star.user_id, star.target_id))
+
+        # Use discussion volume + recency as popularity signal for realistic star concentration.
+        result = await db.execute(
+            select(Discussion.problem_id, func.count(Discussion.id))
+            .where(Discussion.problem_id.is_not(None))
+            .group_by(Discussion.problem_id)
+        )
+        discussion_counts = {problem_id: count for problem_id, count in result.all() if problem_id}
+        author_problem_count: dict = {}
+        for problem in all_problems:
+            author_problem_count[problem.author_id] = author_problem_count.get(problem.author_id, 0) + 1
+
+        now = datetime.utcnow()
+        ranked_problems = []
+        for problem in all_problems:
+            age_days = max(0, (now - problem.created_at).days) if problem.created_at else 180
+            recency_score = max(0, 90 - age_days) / 12.0
+            discussion_score = discussion_counts.get(problem.id, 0) * 2.5
+            existing_star_score = len(problem_star_users.get(problem.id, set())) * 0.6
+            author_load = author_problem_count.get(problem.author_id, 1)
+            author_penalty = 1.0 + max(0, author_load - 3) * 0.08
+            weighted_score = (recency_score + discussion_score + existing_star_score) / author_penalty
+            ranked_problems.append((problem, weighted_score))
+
+        ranked_problems.sort(key=lambda item: item[1], reverse=True)
+        ranked_problem_ids = [problem.id for problem, _score in ranked_problems]
+        ranked_index = {problem_id: idx for idx, problem_id in enumerate(ranked_problem_ids)}
+        total_problems = max(1, len(ranked_problem_ids))
+        top_cut = max(3, int(total_problems * 0.12))
+        mid_cut = max(top_cut + 1, int(total_problems * 0.45))
+
+        # 1) Ensure each user has a realistic amount of starred problems.
+        max_user_target = min(len(all_problems), 24)
+        min_user_target = min(6, max_user_target)
+
         for user in all_users:
-            min_problem_stars = 1 if len(all_problems) < 3 else 3
-            max_problem_stars = min(15, len(all_problems))
-            num_problem_stars = random.randint(min_problem_stars, max_problem_stars)
-            starred_problems = random.sample(all_problems, k=num_problem_stars)
-            
-            for problem in starred_problems:
+            current = user_starred_problems.get(user.id, set())
+            target_count = stable_range(
+                str(user.id),
+                min_user_target,
+                max(min_user_target, max_user_target),
+            )
+            missing = max(0, target_count - len(current))
+            if missing <= 0:
+                continue
+
+            candidates = [problem for problem in all_problems if problem.id not in current]
+            if not candidates:
+                continue
+
+            candidate_weights = []
+            for problem in candidates:
+                idx = ranked_index.get(problem.id, total_problems)
+                if idx < top_cut:
+                    weight = 7.5
+                elif idx < mid_cut:
+                    weight = 3.8
+                else:
+                    weight = 1.5
+                candidate_weights.append(weight)
+
+            picked = weighted_pick_without_replacement(candidates, candidate_weights, missing)
+            for problem in picked:
+                pair = (user.id, problem.id)
+                if pair in existing_problem_pairs:
+                    continue
                 db.add(Star(
                     user_id=user.id,
                     target_type=StarTargetType.PROBLEM,
                     target_id=problem.id,
-                    created_at=random_past_time(200, 5),
+                    created_at=random_past_time(140, 2),
                 ))
+                existing_problem_pairs.add(pair)
+                problem_star_users.setdefault(problem.id, set()).add(user.id)
+                user_starred_problems.setdefault(user.id, set()).add(problem.id)
                 stars_created += 1
-            
-            # 30% of users star some library items
-            if all_items and random.random() < 0.3:
-                num_item_stars = random.randint(1, min(5, len(all_items)))
-                starred_items = random.sample(all_items, k=num_item_stars)
-                
-                for item in starred_items:
+
+        # 2) Ensure trending candidates have visibly higher star counts (still bounded by total users).
+        user_ids = [user.id for user in all_users]
+        max_users = len(user_ids)
+
+        for idx, problem_id in enumerate(ranked_problem_ids):
+            if idx < top_cut:
+                low = min(max_users, max(16, int(max_users * 0.35)))
+                high = min(max_users, max(low, int(max_users * 0.62)))
+            elif idx < mid_cut:
+                low = min(max_users, max(8, int(max_users * 0.18)))
+                high = min(max_users, max(low, int(max_users * 0.38)))
+            else:
+                low = min(max_users, 2)
+                high = min(max_users, 10)
+
+            target_for_problem = stable_range(str(problem_id), low, high)
+            current_starrers = problem_star_users.get(problem_id, set())
+            missing = max(0, target_for_problem - len(current_starrers))
+            if missing <= 0:
+                continue
+
+            available_user_ids = [uid for uid in user_ids if uid not in current_starrers]
+            if not available_user_ids:
+                continue
+
+            random.shuffle(available_user_ids)
+            for user_id in available_user_ids[:missing]:
+                pair = (user_id, problem_id)
+                if pair in existing_problem_pairs:
+                    continue
+                db.add(Star(
+                    user_id=user_id,
+                    target_type=StarTargetType.PROBLEM,
+                    target_id=problem_id,
+                    created_at=random_past_time(100, 1),
+                ))
+                existing_problem_pairs.add(pair)
+                problem_star_users.setdefault(problem_id, set()).add(user_id)
+                user_starred_problems.setdefault(user_id, set()).add(problem_id)
+                stars_created += 1
+
+        # 3) Library-item stars from a minority of users.
+        if all_items:
+            max_item_stars = min(6, len(all_items))
+            for user in all_users:
+                if stable_bucket(str(user.id), 100) >= 38:
+                    continue
+
+                target_items = stable_range(f"item-{user.id}", 1, max(1, max_item_stars))
+                available_items = [
+                    item for item in all_items if (user.id, item.id) not in existing_item_pairs
+                ]
+                if not available_items:
+                    continue
+
+                picked_items = random.sample(
+                    available_items,
+                    k=min(target_items, len(available_items)),
+                )
+                for item in picked_items:
+                    pair = (user.id, item.id)
+                    if pair in existing_item_pairs:
+                        continue
                     db.add(Star(
                         user_id=user.id,
                         target_type=StarTargetType.LIBRARY_ITEM,
                         target_id=item.id,
-                        created_at=random_past_time(150, 5),
+                        created_at=random_past_time(120, 3),
                     ))
+                    existing_item_pairs.add(pair)
                     stars_created += 1
         
         await db.commit()
@@ -546,7 +793,7 @@ async def seed_discussions():
 
 
 async def seed_lucia_spotlight():
-    """Ensure Lucia Mora is the central profile in seeded social activity."""
+    """Ensure Lucia Mora has visibility without dominating the full community feed."""
     async with async_session_maker() as db:
         result = await db.execute(select(User).where(User.username == LUCIA_USERNAME))
         lucia = result.scalar_one_or_none()
@@ -565,14 +812,14 @@ async def seed_lucia_spotlight():
             print("⚠ Need users/problems before Lucia spotlight seeding.")
             return
 
-        print("Boosting Lucia-centered social activity...")
+        print("Balancing Lucia spotlight within broader community activity...")
 
         # 1) Ensure Lucia has many followers.
         result = await db.execute(select(Follow).where(Follow.following_id == lucia.id))
         existing_lucia_follows = result.scalars().all()
         existing_follower_ids = {follow.follower_id for follow in existing_lucia_follows}
 
-        target_followers = min(len(other_users), max(20, int(len(other_users) * 0.75)))
+        target_followers = min(len(other_users), max(10, int(len(other_users) * 0.35)))
         missing_followers = [user for user in other_users if user.id not in existing_follower_ids]
         random.shuffle(missing_followers)
         follows_added = 0
@@ -603,7 +850,7 @@ async def seed_lucia_spotlight():
         lucia_problem_titles = {problem.title for problem in lucia_problems}
         created_lucia_problems = 0
 
-        target_lucia_problems = min(10, max(5, len(all_problems) // 20))
+        target_lucia_problems = min(6, max(3, len(all_problems) // 35))
         template_idx = 0
         attempts = 0
         while len(lucia_problems) < target_lucia_problems and attempts < 80:
@@ -688,7 +935,7 @@ async def seed_lucia_spotlight():
                 ))
 
         if all_teams:
-            target_team_memberships = min(6, max(3, len(all_teams) // 6))
+            target_team_memberships = min(4, max(2, len(all_teams) // 8))
             missing_slots = max(0, target_team_memberships - len(lucia_team_ids))
             candidate_teams = [team for team in all_teams if team.id not in lucia_team_ids and team.is_public]
             if len(candidate_teams) < missing_slots:
@@ -758,7 +1005,7 @@ async def seed_lucia_spotlight():
         topic_pool = lucia_problems[:] if lucia_problems else all_problems[:]
         random.shuffle(topic_pool)
 
-        for problem in topic_pool[: min(5, len(topic_pool))]:
+        for problem in topic_pool[: min(2, len(topic_pool))]:
             team_name = None
             if lucia_team_ids:
                 team = team_by_id.get(random.choice(list(lucia_team_ids)))
@@ -803,7 +1050,7 @@ async def seed_lucia_spotlight():
             ))
             fresh_discussions_created += 1
 
-            commenters = random.sample(other_users, k=min(len(other_users), random.randint(2, 4)))
+            commenters = random.sample(other_users, k=min(len(other_users), random.randint(1, 3)))
             for commenter in commenters:
                 comment_created_at = created_at + timedelta(
                     hours=random.randint(1, 36),
@@ -850,7 +1097,7 @@ async def seed_lucia_spotlight():
         result = await db.execute(select(Discussion).where(Discussion.author_id == lucia.id))
         lucia_discussions = result.scalars().all()
 
-        target_lucia_discussions = min(24, max(12, len(all_problems) // 4))
+        target_lucia_discussions = min(10, max(4, len(all_problems) // 10))
         created_lucia_discussions = 0
 
         for _ in range(max(0, target_lucia_discussions - len(lucia_discussions))):
@@ -891,7 +1138,7 @@ async def seed_lucia_spotlight():
             if discussion.author_id != lucia.id and user_mention(lucia) in discussion.content
         ]
 
-        target_reaction_threads = min(30, max(10, len(all_problems) // 3))
+        target_reaction_threads = min(8, max(3, len(all_problems) // 16))
         created_reaction_threads = 0
 
         for _ in range(max(0, target_reaction_threads - len(existing_reaction_threads))):
@@ -950,7 +1197,7 @@ async def seed_lucia_spotlight():
 
         for discussion in lucia_discussions:
             current_comments = comments_by_discussion.get(discussion.id, [])
-            target_comments = random.randint(10, 20)
+            target_comments = random.randint(4, 9)
             missing_comments = max(0, target_comments - len(current_comments))
             existing_comment_texts = {comment.content.strip() for comment in current_comments}
 
@@ -1011,7 +1258,7 @@ async def seed_lucia_spotlight():
                 ))
 
             existing_starrers = stars_by_discussion.get(discussion.id, set())
-            target_stars = min(len(other_users), random.randint(10, min(35, len(other_users))))
+            target_stars = min(len(other_users), random.randint(3, min(14, len(other_users))))
             missing_starrers = [user for user in other_users if user.id not in existing_starrers]
             random.shuffle(missing_starrers)
 
@@ -1036,6 +1283,182 @@ async def seed_lucia_spotlight():
         print(f"✓ Lucia reaction threads ensured (+{created_reaction_threads})")
         print(f"✓ Lucia discussion comments added (+{comments_added})")
         print(f"✓ Lucia discussion stars added (+{stars_added})")
+
+
+async def seed_community_pulse():
+    """Create fresh multi-author activity so feed feels alive across many users."""
+    async with async_session_maker() as db:
+        result = await db.execute(select(User))
+        all_users = result.scalars().all()
+        if len(all_users) < 10:
+            print("⚠ Need users first")
+            return
+
+        result = await db.execute(select(Problem))
+        all_problems = result.scalars().all()
+        if not all_problems:
+            print("⚠ Need problems first")
+            return
+
+        lucia_result = await db.execute(select(User).where(User.username == LUCIA_USERNAME))
+        lucia = lucia_result.scalar_one_or_none()
+
+        # Keep Lucia present but cap her contribution in this community pass.
+        community_users = [user for user in all_users if not lucia or user.id != lucia.id]
+        if len(community_users) < 8:
+            community_users = all_users[:]
+
+        recent_cutoff = datetime.utcnow() - timedelta(days=14)
+        recent_discussions_result = await db.execute(
+            select(Discussion).where(Discussion.created_at >= recent_cutoff)
+        )
+        recent_discussions = recent_discussions_result.scalars().all()
+        recent_non_lucia = [
+            discussion for discussion in recent_discussions
+            if not lucia or discussion.author_id != lucia.id
+        ]
+        existing_titles = {discussion.title.strip() for discussion in recent_discussions}
+
+        author_load: dict = {}
+        for discussion in recent_non_lucia:
+            author_load[discussion.author_id] = author_load.get(discussion.author_id, 0) + 1
+
+        target_recent_non_lucia = min(60, max(26, len(community_users) // 2))
+        discussions_needed = max(0, target_recent_non_lucia - len(recent_non_lucia))
+        discussions_to_create = min(24, discussions_needed)
+
+        if discussions_to_create == 0:
+            print("✓ Community pulse already healthy, skipping new community discussions")
+            return
+
+        print(f"Creating community pulse activity (+{discussions_to_create} discussions target)...")
+
+        discussions_created = 0
+        comments_created = 0
+        stars_created = 0
+
+        for _ in range(discussions_to_create):
+            # Prioritize users with lower recent author load.
+            sorted_users = sorted(
+                community_users,
+                key=lambda user: (author_load.get(user.id, 0), stable_bucket(str(user.id), 1000)),
+            )
+            candidate_pool = sorted_users[: max(6, len(sorted_users) // 3)]
+            author = random.choice(candidate_pool if candidate_pool else community_users)
+            author_load[author.id] = author_load.get(author.id, 0) + 1
+
+            problem = random.choice(all_problems)
+            title = random.choice(COMMUNITY_DISCUSSION_TITLES).format(problem.title[:44])
+            if title in existing_titles:
+                title = f"{title} #{stable_range(str(datetime.utcnow().timestamp()), 2, 99)}"
+            existing_titles.add(title)
+
+            prompt = random.choice(COMMUNITY_DISCUSSION_PROMPTS)
+            mention_candidates = [user for user in community_users if user.id != author.id]
+            mention_target = random.choice(mention_candidates) if mention_candidates else None
+
+            content = (
+                f"{prompt}\n\n"
+                f"Current project: {project_token(problem)}\n\n"
+                f"{user_mention(mention_target)} could you take a pass on this?"
+                if mention_target
+                else f"{prompt}\n\nCurrent project: {project_token(problem)}"
+            )
+
+            created_at = random_past_time(10, 0)
+            discussion = Discussion(
+                title=title,
+                content=content,
+                author_id=author.id,
+                problem_id=problem.id,
+                is_pinned=False,
+                created_at=created_at,
+                updated_at=created_at,
+            )
+            db.add(discussion)
+            await db.flush()
+
+            db.add(Activity(
+                user_id=author.id,
+                type=ActivityType.CREATED_DISCUSSION,
+                target_id=discussion.id,
+                extra_data=discussion_activity_payload(discussion),
+                created_at=created_at,
+            ))
+            discussions_created += 1
+
+            commenters_pool = [user for user in community_users if user.id != author.id]
+            random.shuffle(commenters_pool)
+            num_comments = min(len(commenters_pool), random.randint(2, 6))
+            existing_comment_texts = set()
+
+            for commenter in commenters_pool[:num_comments]:
+                comment_created_at = created_at + timedelta(
+                    hours=random.randint(1, 48),
+                    minutes=random.randint(0, 59),
+                )
+                comment_text = ""
+                for _attempt in range(6):
+                    candidate = build_community_comment(
+                        target_user=author,
+                        problem=problem if random.random() < 0.7 else None,
+                    )
+                    if candidate not in existing_comment_texts:
+                        comment_text = candidate
+                        break
+                if not comment_text:
+                    comment_text = build_community_comment(target_user=author, problem=problem)
+                existing_comment_texts.add(comment_text)
+
+                comment = Comment(
+                    discussion_id=discussion.id,
+                    author_id=commenter.id,
+                    content=comment_text,
+                    parent_id=None,
+                    created_at=comment_created_at,
+                    updated_at=comment_created_at,
+                )
+                db.add(comment)
+                db.add(Activity(
+                    user_id=commenter.id,
+                    type=ActivityType.CREATED_COMMENT,
+                    target_id=comment.id,
+                    extra_data=comment_activity_payload(comment, discussion),
+                    created_at=comment_created_at,
+                ))
+                discussion.updated_at = max(discussion.updated_at, comment_created_at)
+                comments_created += 1
+
+                db.add(Notification(
+                    user_id=author.id,
+                    type=NotificationType.NEW_COMMENT,
+                    title=f"{commenter.username} commented on your discussion",
+                    content=comment_text[:200],
+                    actor_id=commenter.id,
+                    target_type="discussion",
+                    target_id=discussion.id,
+                    extra_data={"discussion_id": str(discussion.id)},
+                    is_read=random.random() < 0.45,
+                    created_at=comment_created_at,
+                ))
+
+            # A few stars to signal traction but not on every thread.
+            if random.random() < 0.65:
+                starrers = [user for user in community_users if user.id != author.id]
+                random.shuffle(starrers)
+                for starrer in starrers[: random.randint(2, min(8, len(starrers)))]:
+                    db.add(Star(
+                        user_id=starrer.id,
+                        target_type=StarTargetType.DISCUSSION,
+                        target_id=discussion.id,
+                        created_at=random_past_time(14, 0),
+                    ))
+                    stars_created += 1
+
+        await db.commit()
+        print(f"✓ Community discussions created (+{discussions_created})")
+        print(f"✓ Community comments created (+{comments_created})")
+        print(f"✓ Community discussion stars created (+{stars_created})")
 
 
 async def seed_additional_activities():
@@ -1081,16 +1504,7 @@ async def seed_additional_activities():
             discussion_activity_ids.add(discussion.id)
             activities_created += 1
 
-        # Backfill comment activities, prioritizing comments on Lucia's threads.
-        lucia_discussion_ids = set()
-        lucia_user_result = await db.execute(select(User).where(User.username == LUCIA_USERNAME))
-        lucia = lucia_user_result.scalar_one_or_none()
-        if lucia:
-            lucia_disc_result = await db.execute(
-                select(Discussion.id).where(Discussion.author_id == lucia.id)
-            )
-            lucia_discussion_ids = {row[0] for row in lucia_disc_result.all()}
-
+        # Backfill comment activities, newest-first with per-discussion caps.
         comment_rows_result = await db.execute(
             select(Comment, Discussion)
             .join(Discussion, Comment.discussion_id == Discussion.id)
@@ -1098,13 +1512,6 @@ async def seed_additional_activities():
             .limit(900)
         )
         comment_rows = comment_rows_result.all()
-        comment_rows.sort(
-            key=lambda row: (
-                row[0].discussion_id in lucia_discussion_ids,
-                row[0].created_at,
-            ),
-            reverse=True,
-        )
 
         comment_activity_budget = 280
         per_discussion_budget = 4
@@ -1177,6 +1584,7 @@ async def seed_social_activity():
     await seed_stars()
     await seed_discussions()
     await seed_lucia_spotlight()
+    await seed_community_pulse()
     await seed_additional_activities()
 
 
