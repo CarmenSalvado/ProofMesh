@@ -30,6 +30,36 @@ export interface Problem {
 	is_owner?: boolean;
 }
 
+export interface ProblemPermissionMember {
+	id: string;
+	username: string;
+	avatar_url?: string | null;
+	role: TeamRole;
+}
+
+export interface ProblemPermissionTeam {
+	id: string;
+	name: string;
+	slug: string;
+	description?: string | null;
+	my_role?: TeamRole | null;
+	can_manage_members: boolean;
+	members: ProblemPermissionMember[];
+}
+
+export interface ProblemPermissions {
+	problem_id: string;
+	problem_title: string;
+	visibility: "public" | "private";
+	owner: AuthorInfo;
+	access_level: "viewer" | "editor" | "admin" | "owner";
+	can_edit: boolean;
+	can_admin: boolean;
+	is_owner: boolean;
+	actions: string[];
+	teams: ProblemPermissionTeam[];
+}
+
 export interface LibraryItem {
 	id: string;
 	problem_id: string;
@@ -428,6 +458,10 @@ export interface TeamAddProblem {
 	problem_id: string;
 }
 
+export interface TeamMemberRoleUpdate {
+	role: TeamRole;
+}
+
 export interface SocialProblemContribution {
 	problem_id: string;
 	problem_title: string;
@@ -809,6 +843,10 @@ export async function getProblem(
 	options?: { suppressErrorLog?: boolean }
 ): Promise<Problem> {
 	return apiFetch(`/problems/${problemId}`, options);
+}
+
+export async function getProblemPermissions(problemId: string): Promise<ProblemPermissions> {
+	return apiFetch(`/problems/${problemId}/permissions`);
 }
 
 export async function createProblem(data: {
@@ -1462,6 +1500,17 @@ export async function inviteTeamMember(slug: string, data: TeamInvite): Promise<
 
 export async function removeTeamMember(slug: string, userId: string): Promise<void> {
 	return apiFetch(`/social/teams/${slug}/members/${userId}`, { method: "DELETE" });
+}
+
+export async function updateTeamMemberRole(
+	slug: string,
+	userId: string,
+	data: TeamMemberRoleUpdate
+): Promise<{ status: string; role: TeamRole }> {
+	return apiFetch(`/social/teams/${slug}/members/${userId}/role`, {
+		method: "PATCH",
+		body: JSON.stringify(data),
+	});
 }
 
 export async function addTeamProblem(slug: string, problemId: string): Promise<{ status: string }> {

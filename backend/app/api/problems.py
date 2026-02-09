@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.problem import Problem, ProblemVisibility, ProblemDifficulty
-from app.models.team import TeamMember, TeamProblem, TeamRole
+from app.models.team import Team, TeamMember, TeamProblem, TeamRole
 from app.models.star import Star, StarTargetType
 from app.models.activity import Activity, ActivityType
 from app.models.library_item import LibraryItem
@@ -30,6 +30,9 @@ from app.schemas.problem import (
     ProblemResponse,
     ProblemListResponse,
     AuthorInfo,
+    ProblemPermissionsResponse,
+    ProblemPermissionTeam,
+    ProblemPermissionMember,
 )
 
 router = APIRouter(prefix="/api/problems", tags=["problems"])
@@ -493,6 +496,106 @@ async def get_problem(
     )
     star_count = stars_result.scalar() or 0
     return problem_to_response(problem, star_count, access=access, library_count=library_count)
+
+
+@router.get("/{problem_id}/permissions", response_model=ProblemPermissionsResponse)
+async def get_problem_permissions(
+    problem_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User | None = Depends(get_current_user_optional),
+):
+    """Get effective permissions and team-role context for a problem."""
+    problem = await verify_problem_access(problem_id, db, current_user, load_author=True)
+    access = await get_problem_access_info(problem, db, current_user)
+    if access is None:
+        raise HTTPException(status_code=404, detail="Problem not found")
+
+    team_result = await db.execute(
+        select(Team)
+        .join(TeamProblem, TeamProblem.team_id == Team.id)
+        .where(TeamProblem.problem_id == problem.id)
+        .order_by(Team.name.asc())
+    )
+    teams = team_result.scalars().all()
+    team_ids = [team.id for team in teams]
+
+    my_roles_by_team: dict[UUID, TeamRole] = {}
+    if current_user and team_ids:
+        my_roles_result = await db.execute(
+            select(TeamMember.team_id, TeamMember.role).where(
+                TeamMember.user_id == current_user.id,
+                TeamMember.team_id.in_(team_ids),
+            )
+        )
+        my_roles_by_team = {team_id: role for team_id, role in my_roles_result.all() if role is not None}
+
+    members_by_team: dict[UUID, list[TeamMember]] = defaultdict(list)
+    if team_ids:
+        members_result = await db.execute(
+            select(TeamMember)
+            .options(selectinload(TeamMember.user))
+            .where(TeamMember.team_id.in_(team_ids))
+            .order_by(TeamMember.joined_at.asc())
+        )
+        for member in members_result.scalars().all():
+            members_by_team[member.team_id].append(member)
+
+    teams_payload: list[ProblemPermissionTeam] = []
+    for team in teams:
+        my_role = my_roles_by_team.get(team.id)
+        can_manage_members = access.is_owner or my_role in {TeamRole.OWNER, TeamRole.ADMIN}
+        can_view_members = access.is_owner or my_role is not None
+        members_payload: list[ProblemPermissionMember] = []
+        if can_view_members:
+            members_payload = [
+                ProblemPermissionMember(
+                    id=member.user.id,
+                    username=member.user.username,
+                    avatar_url=member.user.avatar_url,
+                    role=member.role.value,
+                )
+                for member in members_by_team.get(team.id, [])
+                if member.user is not None
+            ]
+
+        teams_payload.append(
+            ProblemPermissionTeam(
+                id=team.id,
+                name=team.name,
+                slug=team.slug,
+                description=team.description,
+                my_role=my_role.value if my_role else None,
+                can_manage_members=can_manage_members,
+                members=members_payload,
+            )
+        )
+
+    actions = ["view"]
+    if access.can_edit:
+        actions.extend(["edit_library", "edit_workspace", "edit_canvas"])
+    if access.can_admin:
+        actions.append("manage_problem")
+    if access.is_owner:
+        actions.extend(["change_visibility", "delete_problem"])
+    if any(team.can_manage_members for team in teams_payload):
+        actions.append("manage_team_members")
+
+    return ProblemPermissionsResponse(
+        problem_id=problem.id,
+        problem_title=problem.title,
+        visibility=problem.visibility,
+        owner=AuthorInfo(
+            id=problem.author.id,
+            username=problem.author.username,
+            avatar_url=problem.author.avatar_url,
+        ),
+        access_level=access.level.value,
+        can_edit=access.can_edit,
+        can_admin=access.can_admin,
+        is_owner=access.is_owner,
+        actions=actions,
+        teams=teams_payload,
+    )
 
 
 @router.patch("/{problem_id}", response_model=ProblemResponse)

@@ -3,7 +3,16 @@
 import { use, useEffect, useState, useCallback, useMemo } from "react";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth";
-import { getProblem, getLibraryItems, Problem, LibraryItem } from "@/lib/api";
+import {
+  getProblem,
+  getLibraryItems,
+  getProblemPermissions,
+  updateTeamMemberRole,
+  Problem,
+  ProblemPermissions,
+  LibraryItem,
+  TeamRole,
+} from "@/lib/api";
 import { DashboardNavbar } from "@/components/layout/DashboardNavbar";
 import { StarButton } from "@/components/social";
 import {
@@ -48,9 +57,11 @@ export default function ProblemPage({ params }: PageProps) {
   const { isLoading: authLoading } = useAuth();
   const { id: problemId } = use(params);
   const [problem, setProblem] = useState<Problem | null>(null);
+  const [permissions, setPermissions] = useState<ProblemPermissions | null>(null);
   const [libraryItems, setLibraryItems] = useState<LibraryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [updatingRoleKey, setUpdatingRoleKey] = useState<string | null>(null);
 
   const groupedItems = useMemo(() => {
     const groups = {
@@ -78,11 +89,15 @@ export default function ProblemPage({ params }: PageProps) {
       setLoading(true);
       setError(null);
 
-      const problemData = await getProblem(problemId, { suppressErrorLog: true });
-      const libraryData = await getLibraryItems(problemId, undefined, { suppressErrorLog: true });
+      const [problemData, libraryData, permissionsData] = await Promise.all([
+        getProblem(problemId, { suppressErrorLog: true }),
+        getLibraryItems(problemId, undefined, { suppressErrorLog: true }),
+        getProblemPermissions(problemId).catch(() => null),
+      ]);
 
       setProblem(problemData);
       setLibraryItems(libraryData.items);
+      setPermissions(permissionsData);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to load problem";
       if (message.includes("HTTP 404")) {
@@ -94,6 +109,23 @@ export default function ProblemPage({ params }: PageProps) {
       setLoading(false);
     }
   }, [problemId]);
+
+  const handleUpdateRole = useCallback(
+    async (teamSlug: string, userId: string, role: TeamRole) => {
+      const key = `${teamSlug}:${userId}`;
+      setUpdatingRoleKey(key);
+      try {
+        await updateTeamMemberRole(teamSlug, userId, { role });
+        const updated = await getProblemPermissions(problemId);
+        setPermissions(updated);
+      } catch (err) {
+        console.error("Failed to update role", err);
+      } finally {
+        setUpdatingRoleKey(null);
+      }
+    },
+    [problemId]
+  );
 
   useEffect(() => {
     if (problemId) {
@@ -256,6 +288,90 @@ export default function ProblemPage({ params }: PageProps) {
             </div>
           </div>
         </div>
+
+        {permissions && (
+          <div className="max-w-6xl mx-auto px-8 pt-6">
+            <div className="bg-white rounded-xl border border-neutral-200 p-5 shadow-sm">
+              <div className="flex items-center justify-between gap-3 mb-3">
+                <h2 className="text-sm font-semibold text-neutral-900">Access & Permissions</h2>
+                <span className="text-xs text-neutral-500">
+                  You can: {permissions.actions.join(", ")}
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 mb-4">
+                <span className="text-xs px-2 py-1 rounded-full bg-neutral-100 text-neutral-700">
+                  Level: {permissions.access_level}
+                </span>
+                <span className={`text-xs px-2 py-1 rounded-full ${permissions.can_edit ? "bg-emerald-50 text-emerald-700" : "bg-neutral-100 text-neutral-600"}`}>
+                  {permissions.can_edit ? "Can edit" : "Read-only"}
+                </span>
+                <span className={`text-xs px-2 py-1 rounded-full ${permissions.can_admin ? "bg-blue-50 text-blue-700" : "bg-neutral-100 text-neutral-600"}`}>
+                  {permissions.can_admin ? "Can admin" : "No admin"}
+                </span>
+              </div>
+
+              {permissions.teams.length === 0 ? (
+                <p className="text-xs text-neutral-500">This problem is not linked to any team.</p>
+              ) : (
+                <div className="space-y-3">
+                  {permissions.teams.map((team) => (
+                    <div key={team.id} className="border border-neutral-200 rounded-lg p-3">
+                      <div className="flex items-center justify-between gap-3 mb-2">
+                        <div>
+                          <Link href={`/teams/${team.slug}`} className="text-sm font-medium text-neutral-900 hover:text-indigo-600">
+                            {team.name}
+                          </Link>
+                          <p className="text-xs text-neutral-500">
+                            @{team.slug} {team.my_role ? `· your role: ${team.my_role}` : ""}
+                          </p>
+                        </div>
+                        <Link href={`/teams/${team.slug}`} className="text-xs text-indigo-600 hover:text-indigo-700">
+                          Manage team
+                        </Link>
+                      </div>
+
+                      {team.members.length > 0 && (
+                        <div className="space-y-1.5">
+                          {team.members.map((member) => {
+                            const roleKey = `${team.slug}:${member.id}`;
+                            const canManageRole =
+                              team.can_manage_members &&
+                              member.role !== "owner" &&
+                              permissions.access_level === "owner";
+                            return (
+                              <div key={member.id} className="flex items-center justify-between text-xs">
+                                <span className="text-neutral-700">
+                                  {member.username} <span className="text-neutral-400">({member.role})</span>
+                                </span>
+                                {canManageRole ? (
+                                  <select
+                                    value={member.role}
+                                    onChange={(event) =>
+                                      void handleUpdateRole(
+                                        team.slug,
+                                        member.id,
+                                        event.target.value as TeamRole
+                                      )
+                                    }
+                                    disabled={updatingRoleKey === roleKey}
+                                    className="border border-neutral-200 rounded px-2 py-0.5 bg-white text-neutral-700 disabled:opacity-60"
+                                  >
+                                    <option value="member">member</option>
+                                    <option value="admin">admin</option>
+                                  </select>
+                                ) : null}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Problem Space */}
         <div className="max-w-6xl mx-auto px-8 py-8">

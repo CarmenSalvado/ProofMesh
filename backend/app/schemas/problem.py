@@ -62,3 +62,33 @@ class ProblemResponse(BaseModel):
 class ProblemListResponse(BaseModel):
     problems: list[ProblemResponse]
     total: int
+
+
+class ProblemPermissionMember(BaseModel):
+    id: UUID
+    username: str
+    avatar_url: str | None = None
+    role: str
+
+
+class ProblemPermissionTeam(BaseModel):
+    id: UUID
+    name: str
+    slug: str
+    description: str | None = None
+    my_role: str | None = None
+    can_manage_members: bool = False
+    members: list[ProblemPermissionMember] = []
+
+
+class ProblemPermissionsResponse(BaseModel):
+    problem_id: UUID
+    problem_title: str
+    visibility: ProblemVisibility
+    owner: AuthorInfo
+    access_level: str
+    can_edit: bool
+    can_admin: bool
+    is_owner: bool
+    actions: list[str]
+    teams: list[ProblemPermissionTeam] = []

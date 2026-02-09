@@ -198,6 +198,7 @@ export default function DashboardPage() {
     visibility: "private" | "public";
     lastActivityAt?: string | null;
     isOwned: boolean;
+    canEdit: boolean;
     libraryItemCount: number;
   }>>([]);
   const [showFollowingModal, setShowFollowingModal] = useState(false);
@@ -300,6 +301,7 @@ export default function DashboardPage() {
         visibility: "private" | "public";
         lastActivityAt?: string | null;
         isOwned: boolean;
+        canEdit: boolean;
         libraryItemCount: number;
       }>();
       problemsData.problems.forEach((problem) => {
@@ -309,6 +311,7 @@ export default function DashboardPage() {
           visibility: problem.visibility,
           lastActivityAt: problem.updated_at,
           isOwned: true,
+          canEdit: problem.can_edit ?? true,
           libraryItemCount: problem.library_item_count || 0,
         });
       });
@@ -328,6 +331,7 @@ export default function DashboardPage() {
           visibility: contribution.visibility === "private" ? "private" : "public",
           lastActivityAt: contribution.last_activity_at || null,
           isOwned: false,
+          canEdit: false,
           libraryItemCount: contribution.total_contributions || 0,
         });
       });
@@ -364,6 +368,7 @@ export default function DashboardPage() {
             existing.lastActivityAt = item.created_at;
           }
           existing.isOwned = existing.isOwned || ownProblemIds.has(problemId);
+          existing.canEdit = existing.canEdit || ownProblemIds.has(problemId);
           return;
         }
 
@@ -373,10 +378,12 @@ export default function DashboardPage() {
           visibility,
           lastActivityAt: item.created_at,
           isOwned: ownProblemIds.has(problemId),
+          canEdit: ownProblemIds.has(problemId),
           libraryItemCount: 0,
         });
       });
       const sortedRecentProofs = Array.from(recentProofMap.values()).sort((a, b) => {
+        if (a.canEdit !== b.canEdit) return a.canEdit ? -1 : 1;
         const aTs = parseTimestamp(a.lastActivityAt);
         const bTs = parseTimestamp(b.lastActivityAt);
         return (bTs || 0) - (aTs || 0);
@@ -908,8 +915,8 @@ export default function DashboardPage() {
     }
   }, [activityOffset, feedTab, hasMoreActivity, loadingMore]);
 
-  const filteredRecentProofs = recentProofs.filter((p) =>
-    p.title.toLowerCase().includes(repoFilter.toLowerCase())
+  const filteredRecentProofs = recentProofs.filter(
+    (p) => p.canEdit && p.title.toLowerCase().includes(repoFilter.toLowerCase())
   );
 
   const filteredCanvasNodes = useMemo(() => {
@@ -1074,6 +1081,15 @@ export default function DashboardPage() {
                   )}
                   <span className="text-sm font-medium text-neutral-700 group-hover:text-indigo-600 truncate">
                     {problem.title}
+                  </span>
+                  <span
+                    className={`text-[10px] px-1.5 py-0.5 rounded-full ${
+                      problem.isOwned
+                        ? "bg-indigo-50 text-indigo-700"
+                        : "bg-emerald-50 text-emerald-700"
+                    }`}
+                  >
+                    {problem.isOwned ? "owner" : "collab"}
                   </span>
                   {problem.libraryItemCount > 0 && (
                     <span className="ml-auto w-1.5 h-1.5 rounded-full bg-emerald-500" />

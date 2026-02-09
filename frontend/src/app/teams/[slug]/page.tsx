@@ -10,6 +10,7 @@ import {
   deleteTeam,
   inviteTeamMember,
   removeTeamMember,
+  updateTeamMemberRole,
   leaveTeam,
   getProblems,
   addTeamProblem,
@@ -93,6 +94,7 @@ export default function TeamDetailPage() {
   const [userProblems, setUserProblems] = useState<Problem[]>([]);
   const [loadingProblems, setLoadingProblems] = useState(false);
   const [removingProblemId, setRemovingProblemId] = useState<string | null>(null);
+  const [updatingRoleUserId, setUpdatingRoleUserId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -171,6 +173,19 @@ export default function TeamDetailPage() {
       await loadTeam();
     } catch (err) {
       console.error("Remove member failed", err);
+    }
+  };
+
+  const handleUpdateMemberRole = async (userId: string, role: TeamRole) => {
+    if (!team || !isOwner) return;
+    setUpdatingRoleUserId(userId);
+    try {
+      await updateTeamMemberRole(team.slug, userId, { role });
+      await loadTeam();
+    } catch (err) {
+      console.error("Update member role failed", err);
+    } finally {
+      setUpdatingRoleUserId(null);
     }
   };
 
@@ -378,18 +393,37 @@ export default function TeamDetailPage() {
                           </span>
                           {ROLE_ICONS[member.role as TeamRole]}
                         </div>
-                        <span className="text-xs text-neutral-500">
-                          {ROLE_LABELS[member.role as TeamRole]}
-                        </span>
+                        {isOwner && member.role !== "owner" && member.user.id !== user.id ? (
+                          <select
+                            value={member.role}
+                            onChange={(event) =>
+                              void handleUpdateMemberRole(member.user.id, event.target.value as TeamRole)
+                            }
+                            disabled={updatingRoleUserId === member.user.id}
+                            className="text-xs text-neutral-600 border border-neutral-200 rounded px-1.5 py-0.5 bg-white disabled:opacity-60"
+                          >
+                            <option value="member">Member</option>
+                            <option value="admin">Admin</option>
+                          </select>
+                        ) : (
+                          <span className="text-xs text-neutral-500">
+                            {ROLE_LABELS[member.role as TeamRole]}
+                          </span>
+                        )}
                       </div>
                     </div>
                     {canManage && member.role !== "owner" && member.user.id !== user.id && (
-                      <button
-                        onClick={() => handleRemoveMember(member.user.id)}
-                        className="p-1 text-neutral-400 hover:text-red-500 transition-colors"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
+                      <div className="flex items-center gap-2">
+                        {updatingRoleUserId === member.user.id && (
+                          <span className="text-[10px] text-neutral-400">Saving...</span>
+                        )}
+                        <button
+                          onClick={() => handleRemoveMember(member.user.id)}
+                          className="p-1 text-neutral-400 hover:text-red-500 transition-colors"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
                     )}
                   </div>
                 ))}

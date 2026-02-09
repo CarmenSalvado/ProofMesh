@@ -290,6 +290,10 @@ class TeamAddProblem(BaseModel):
     problem_id: UUID
 
 
+class TeamMemberRoleUpdate(BaseModel):
+    role: str  # admin or member
+
+
 # ========================
 # Trending Schemas
 # ========================

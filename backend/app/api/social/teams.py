@@ -24,6 +24,7 @@ from app.schemas.social import (
     TeamProblemResponse,
     TeamInvite,
     TeamAddProblem,
+    TeamMemberRoleUpdate,
 )
 from .utils import get_follow_sets, build_social_user
 
@@ -536,6 +537,61 @@ async def remove_team_member(
     await db.commit()
     
     return {"status": "removed"}
+
+
+@router.patch("/teams/{slug}/members/{user_id}/role")
+async def update_team_member_role(
+    slug: str,
+    user_id: UUID,
+    data: TeamMemberRoleUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Update a team member role (owner/admin with restrictions)."""
+    team_result = await db.execute(select(Team).where(Team.slug == slug))
+    team = team_result.scalar_one_or_none()
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+
+    current_member_result = await db.execute(
+        select(TeamMember).where(
+            TeamMember.team_id == team.id,
+            TeamMember.user_id == current_user.id,
+        )
+    )
+    current_member = current_member_result.scalar_one_or_none()
+    if not current_member or current_member.role not in [TeamRole.OWNER, TeamRole.ADMIN]:
+        raise HTTPException(status_code=403, detail="Not authorized to update member roles")
+
+    target_member_result = await db.execute(
+        select(TeamMember).where(
+            TeamMember.team_id == team.id,
+            TeamMember.user_id == user_id,
+        )
+    )
+    target_member = target_member_result.scalar_one_or_none()
+    if not target_member:
+        raise HTTPException(status_code=404, detail="Member not found")
+    if target_member.role == TeamRole.OWNER:
+        raise HTTPException(status_code=400, detail="Cannot change role of the team owner")
+
+    if data.role not in {"admin", "member"}:
+        raise HTTPException(status_code=400, detail="Role must be admin or member")
+    next_role = TeamRole.ADMIN if data.role == "admin" else TeamRole.MEMBER
+
+    # Admins can moderate members but cannot promote/demote admins.
+    if current_member.role == TeamRole.ADMIN:
+        if target_member.role != TeamRole.MEMBER:
+            raise HTTPException(status_code=403, detail="Admins cannot modify admin roles")
+        if next_role != TeamRole.MEMBER:
+            raise HTTPException(status_code=403, detail="Admins cannot promote members to admin")
+
+    if target_member.role == next_role:
+        return {"status": "unchanged", "role": target_member.role.value}
+
+    target_member.role = next_role
+    await db.commit()
+    return {"status": "updated", "role": target_member.role.value}
 
 
 @router.post("/teams/{slug}/leave")
