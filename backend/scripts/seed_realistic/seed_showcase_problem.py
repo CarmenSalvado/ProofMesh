@@ -48,8 +48,8 @@ SHOWCASE_DESCRIPTION = (
     "2) track constants cleanly enough to implement parameter selection,\n"
     "3) extend from Gaussian to sparse/sign projections,\n"
     "4) include the matching lower bound idea (why k must be Ω(ε^-2 log n)).\n\n"
-    "Challenging for humans because it mixes concentration + union bounds + nets + careful bookkeeping, "
-    "but very solvable for an LLM that can keep the structure straight."
+    "Challenging because it mixes concentration + union bounds + nets + careful bookkeeping, "
+    "and forces you to keep constants under control."
 )
 
 
@@ -265,13 +265,24 @@ def showcase_items() -> list[dict]:
 
 
 def _layout_positions(n: int) -> list[tuple[float, float]]:
-    # Simple, readable canvas grid.
+    # A readable but slightly messy canvas layout. Keep it deterministic so the
+    # nodes don't jump around between runs, while avoiding a perfect grid feel.
     cols = 3
     positions: list[tuple[float, float]] = []
+    rng = random.Random(13371337)
     for i in range(n):
         r = i // cols
         c = i % cols
-        positions.append((140 + c * 360, 140 + r * 250))
+        base_x = 140 + c * 360
+        base_y = 140 + r * 250
+
+        # Per-row drift + per-node jitter gives an "organic" layout.
+        row_dx = rng.randint(-55, 55)
+        row_dy = rng.randint(-35, 35)
+        jx = rng.randint(-95, 95)
+        jy = rng.randint(-75, 75)
+
+        positions.append((base_x + row_dx + jx, base_y + row_dy + jy))
     return positions
 
 
