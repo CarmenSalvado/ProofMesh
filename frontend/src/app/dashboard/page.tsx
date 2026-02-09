@@ -80,25 +80,36 @@ function parseTimestamp(iso?: string | null) {
     normalized = normalized.replace(" ", "T");
   }
   const hasTimezone = /[zZ]|[+-]\d{2}:\d{2}$/.test(normalized);
-  if (!hasTimezone) {
-    normalized = `${normalized}Z`;
+  if (hasTimezone) {
+    const time = Date.parse(normalized);
+    return Number.isNaN(time) ? null : time;
   }
-  const time = Date.parse(normalized);
-  return Number.isNaN(time) ? null : time;
+
+  // Some backend timestamps are naive (no timezone). Try both interpretations
+  // and keep the one closest to "now" to avoid fixed timezone drift (e.g. +1h).
+  const asUtc = Date.parse(`${normalized}Z`);
+  const asLocal = Date.parse(normalized);
+
+  if (Number.isNaN(asUtc) && Number.isNaN(asLocal)) return null;
+  if (Number.isNaN(asUtc)) return asLocal;
+  if (Number.isNaN(asLocal)) return asUtc;
+
+  const now = Date.now();
+  return Math.abs(now - asUtc) <= Math.abs(now - asLocal) ? asUtc : asLocal;
 }
 
 function formatRelativeTime(iso?: string | null) {
   const then = parseTimestamp(iso);
   if (!then) return "just now";
-  const now = Date.now();
-  const diff = Math.max(0, now - then);
-  const minutes = Math.floor(diff / 60000);
-  const hours = Math.floor(diff / 3600000);
-  const days = Math.floor(diff / 86400000);
+  const diff = then - Date.now();
+  const absDiff = Math.abs(diff);
+  const minutes = Math.floor(absDiff / 60000);
+  const hours = Math.floor(absDiff / 3600000);
+  const days = Math.floor(absDiff / 86400000);
   if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  if (hours < 24) return `${hours}h ago`;
-  return `${days}d ago`;
+  if (days >= 1) return diff < 0 ? `${days}d ago` : `in ${days}d`;
+  if (hours >= 1) return diff < 0 ? `${hours}h ago` : `in ${hours}h`;
+  return diff < 0 ? `${minutes}m ago` : `in ${minutes}m`;
 }
 
 function getInitials(name: string) {
@@ -140,6 +151,15 @@ function getFeedDiscussionId(item: SocialFeedItem): string | null {
     return item.target_id;
   }
   return null;
+}
+
+function getFeedLikeTargetId(item: SocialFeedItem): string | null {
+  const isCommentActivity =
+    item.type === "CREATED_COMMENT" || Boolean(item.extra_data?.comment_content);
+  if (isCommentActivity && typeof item.target_id === "string" && item.target_id.trim()) {
+    return item.target_id;
+  }
+  return getFeedDiscussionId(item);
 }
 
 function renderRichSocialText(text: string) {
@@ -683,27 +703,27 @@ export default function DashboardPage() {
     }
   };
 
-  const handleToggleLike = async (discussionId: string) => {
-    if (likingDiscussionIds.has(discussionId)) return;
-    const isLiked = likedDiscussionIds.has(discussionId);
+  const handleToggleLike = async (likeTargetId: string) => {
+    if (likingDiscussionIds.has(likeTargetId)) return;
+    const isLiked = likedDiscussionIds.has(likeTargetId);
     setLikingDiscussionIds((prev) => {
       const next = new Set(prev);
-      next.add(discussionId);
+      next.add(likeTargetId);
       return next;
     });
     try {
       if (isLiked) {
-        await deleteStar("discussion", discussionId);
+        await deleteStar("discussion", likeTargetId);
         setLikedDiscussionIds((prev) => {
           const next = new Set(prev);
-          next.delete(discussionId);
+          next.delete(likeTargetId);
           return next;
         });
       } else {
-        await createStar({ target_type: "discussion", target_id: discussionId });
+        await createStar({ target_type: "discussion", target_id: likeTargetId });
         setLikedDiscussionIds((prev) => {
           const next = new Set(prev);
-          next.add(discussionId);
+          next.add(likeTargetId);
           return next;
         });
       }
@@ -712,7 +732,7 @@ export default function DashboardPage() {
     } finally {
       setLikingDiscussionIds((prev) => {
         const next = new Set(prev);
-        next.delete(discussionId);
+        next.delete(likeTargetId);
         return next;
       });
     }
@@ -1278,12 +1298,13 @@ export default function DashboardPage() {
                 const discussionAttachments = discussionPayload.attachments;
                 const discussionId = getFeedDiscussionId(item) || undefined;
                 const discussionHref = discussionId ? `/discussions/${discussionId}` : "#";
+                const likeTargetId = getFeedLikeTargetId(item);
                 const isCommentComposerOpen = discussionId ? openCommentComposerIds.has(discussionId) : false;
                 const discussionCommentDraft = discussionId ? (commentDrafts[discussionId] || "") : "";
                 const commentingDiscussion = discussionId ? commentingDiscussionIds.has(discussionId) : false;
-                const likingDiscussion = discussionId ? likingDiscussionIds.has(discussionId) : false;
+                const likingDiscussion = likeTargetId ? likingDiscussionIds.has(likeTargetId) : false;
                 const repostingDiscussion = discussionId ? repostingDiscussionIds.has(discussionId) : false;
-                const isDiscussionLiked = discussionId ? likedDiscussionIds.has(discussionId) : false;
+                const isDiscussionLiked = likeTargetId ? likedDiscussionIds.has(likeTargetId) : false;
                 const isOwnPost = item.actor.id === user.id;
                 const problemTitle =
                   item.problem?.title ||
@@ -1438,19 +1459,21 @@ export default function DashboardPage() {
                                 <MessageSquare className="w-3.5 h-3.5" />
                                 Comment
                               </button>
-                              <button
-                                type="button"
-                                onClick={() => handleToggleLike(discussionId)}
-                                disabled={likingDiscussion}
-                                className={`inline-flex items-center gap-1.5 px-2 py-1 text-xs rounded-md border transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${
-                                  isDiscussionLiked
-                                    ? "border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100"
-                                    : "border-neutral-200 text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900"
-                                }`}
-                              >
-                                <Star className={`w-3.5 h-3.5 ${isDiscussionLiked ? "fill-amber-500" : ""}`} />
-                                {isDiscussionLiked ? "Liked" : "Like"}
-                              </button>
+                              {likeTargetId && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleToggleLike(likeTargetId)}
+                                  disabled={likingDiscussion}
+                                  className={`inline-flex items-center gap-1.5 px-2 py-1 text-xs rounded-md border transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${
+                                    isDiscussionLiked
+                                      ? "border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100"
+                                      : "border-neutral-200 text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900"
+                                  }`}
+                                >
+                                  <Star className={`w-3.5 h-3.5 ${isDiscussionLiked ? "fill-amber-500" : ""}`} />
+                                  {isDiscussionLiked ? "Liked" : "Like"}
+                                </button>
+                              )}
                               <button
                                 type="button"
                                 onClick={() => handleRepost(item, discussionId)}

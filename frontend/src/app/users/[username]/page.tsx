@@ -14,6 +14,8 @@ import {
 } from "@/lib/api";
 import { DashboardNavbar } from "@/components/layout/DashboardNavbar";
 
+const PROJECT_LINK_TOKEN_REGEX = /^\[\[project:([^|\]]+)\|([^\]]+)\]\]$/i;
+
 function formatRelativeTime(iso?: string | null) {
   if (!iso) return "just now";
   const ts = Date.parse(iso);
@@ -26,6 +28,47 @@ function formatRelativeTime(iso?: string | null) {
   if (minutes < 60) return `${minutes}m ago`;
   if (hours < 24) return `${hours}h ago`;
   return `${days}d ago`;
+}
+
+function renderRichSocialText(text: string) {
+  const parts = text.split(/(\[\[project:[^\]|]+\|[^\]]+\]\]|@[A-Za-z0-9._-]+)/g);
+  return parts.map((part, idx) => {
+    if (!part) return null;
+
+    const projectMatch = part.match(PROJECT_LINK_TOKEN_REGEX);
+    if (projectMatch) {
+      const [, projectId, projectTitle] = projectMatch;
+      return (
+        <Link
+          key={`project-${idx}`}
+          href={`/problems/${encodeURIComponent(projectId)}`}
+          title={`Open project ${projectTitle}`}
+          className="inline-flex items-center rounded-full border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-900 shadow-[inset_0_0_0_1px_rgba(16,185,129,0.08)] transition hover:bg-emerald-100"
+        >
+          #{projectTitle}
+        </Link>
+      );
+    }
+
+    if (!part.startsWith("@")) return <span key={`text-${idx}`}>{part}</span>;
+
+    const isRho = part.toLowerCase() === "@rho";
+    const mentionedUsername = part.slice(1).trim();
+    return (
+      <Link
+        key={`mention-${idx}`}
+        href={`/users/${encodeURIComponent(mentionedUsername)}`}
+        title={`Open profile @${mentionedUsername}`}
+        className={
+          isRho
+            ? "inline-flex items-center rounded-full border border-violet-300 bg-violet-100 px-2 py-0.5 text-[11px] font-semibold text-violet-900 shadow-[inset_0_0_0_1px_rgba(139,92,246,0.15)] transition hover:bg-violet-200"
+            : "inline-flex items-center rounded-full border border-indigo-300 bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-900 shadow-[inset_0_0_0_1px_rgba(99,102,241,0.08)] transition hover:bg-indigo-100"
+        }
+      >
+        {part}
+      </Link>
+    );
+  });
 }
 
 function UserAvatar({
@@ -201,10 +244,9 @@ export default function UserProfilePage() {
           ) : (
             <div className="space-y-3">
               {userDiscussions.map((discussion) => (
-                <Link
+                <div
                   key={discussion.id}
-                  href={`/discussions/${discussion.id}`}
-                  className="block p-4 bg-white border border-neutral-200 rounded-lg hover:border-neutral-300 transition-colors"
+                  className="p-4 bg-white border border-neutral-200 rounded-lg hover:border-neutral-300 transition-colors"
                 >
                   <div className="flex items-center gap-2 mb-2">
                     <UserAvatar
@@ -216,16 +258,23 @@ export default function UserProfilePage() {
                     <span className="text-xs text-neutral-500">@{discussion.author.username}</span>
                   </div>
                   <div className="flex items-start justify-between gap-4">
-                    <h3 className="font-medium text-neutral-900">{discussion.title}</h3>
+                    <Link
+                      href={`/discussions/${discussion.id}`}
+                      className="font-medium text-neutral-900 hover:text-indigo-700"
+                    >
+                      {discussion.title}
+                    </Link>
                     <span className="text-xs text-neutral-400 whitespace-nowrap">
                       {formatRelativeTime(discussion.created_at)}
                     </span>
                   </div>
-                  <p className="text-sm text-neutral-600 mt-1 line-clamp-2">{discussion.content}</p>
+                  <p className="text-sm text-neutral-600 mt-2 line-clamp-2 leading-6">
+                    {renderRichSocialText(discussion.content)}
+                  </p>
                   <p className="text-xs text-neutral-500 mt-2">
                     {discussion.comment_count} replies
                   </p>
-                </Link>
+                </div>
               ))}
             </div>
           )}
@@ -240,10 +289,9 @@ export default function UserProfilePage() {
           ) : (
             <div className="space-y-3">
               {userComments.map((comment) => (
-                <Link
+                <div
                   key={comment.id}
-                  href={`/discussions/${comment.discussion_id}`}
-                  className="block p-4 bg-white border border-neutral-200 rounded-lg hover:border-neutral-300 transition-colors"
+                  className="p-4 bg-white border border-neutral-200 rounded-lg hover:border-neutral-300 transition-colors"
                 >
                   <div className="flex items-center gap-2 mb-2">
                     <UserAvatar
@@ -255,15 +303,20 @@ export default function UserProfilePage() {
                     <span className="text-xs text-neutral-500">@{comment.author.username}</span>
                   </div>
                   <div className="flex items-start justify-between gap-4">
-                    <p className="text-sm font-medium text-neutral-900">
+                    <Link
+                      href={`/discussions/${comment.discussion_id}`}
+                      className="text-sm font-medium text-neutral-900 hover:text-indigo-700"
+                    >
                       {comment.discussion_title || "Discussion"}
-                    </p>
+                    </Link>
                     <span className="text-xs text-neutral-400 whitespace-nowrap">
                       {formatRelativeTime(comment.created_at)}
                     </span>
                   </div>
-                  <p className="text-sm text-neutral-600 mt-2 line-clamp-3">{comment.content}</p>
-                </Link>
+                  <p className="text-sm text-neutral-600 mt-2 line-clamp-3 leading-6">
+                    {renderRichSocialText(comment.content)}
+                  </p>
+                </div>
               ))}
             </div>
           )}
