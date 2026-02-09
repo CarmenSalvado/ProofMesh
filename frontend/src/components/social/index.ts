@@ -4,3 +4,4 @@ export { DiscussionsSidebar } from "./DiscussionsSidebar";
 export { StarButton, StarButtonCompact } from "./StarButton";
 export { PostAttachmentCard } from "./PostAttachmentCard";
 export { RichSocialText } from "./RichSocialText";
+export { RichSocialMarkdown } from "./RichSocialMarkdown";

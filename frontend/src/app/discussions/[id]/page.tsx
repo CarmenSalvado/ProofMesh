@@ -20,7 +20,7 @@ import {
 import { extractPostAttachments } from "@/lib/postAttachments";
 import { DashboardNavbar } from "@/components/layout/DashboardNavbar";
 import { PostAttachmentCard } from "@/components/social";
-import { RichSocialText } from "@/components/social/RichSocialText";
+import { RichSocialMarkdown } from "@/components/social/RichSocialMarkdown";
 import {
   MessageSquare,
   CheckCircle2,
@@ -103,7 +103,7 @@ function getAutocompleteContext(text: string, cursor: number): AutocompleteConte
 }
 
 function highlightMentions(text: string) {
-  return <RichSocialText text={text} />;
+  return <RichSocialMarkdown text={text} className="text-neutral-700" />;
 }
 
 export default function DiscussionDetailPage() {
@@ -539,7 +539,7 @@ export default function DiscussionDetailPage() {
                 <span className="text-xs text-neutral-400">{formatRelativeTime(comment.created_at)}</span>
               </div>
 
-              <p className="text-sm text-neutral-700 whitespace-pre-wrap">{highlightMentions(comment.content)}</p>
+              <div className="text-sm break-words">{highlightMentions(comment.content)}</div>
 
               {!isRho && (
                 <button
@@ -708,7 +708,7 @@ export default function DiscussionDetailPage() {
             </div>
 
             <div className="prose prose-sm max-w-none text-neutral-700 space-y-3">
-              {discussionContent && <p className="whitespace-pre-wrap">{highlightMentions(discussionContent)}</p>}
+              {discussionContent && <div>{highlightMentions(discussionContent)}</div>}
               {discussionAttachments.length > 0 && (
                 <div className="space-y-2">
                   {discussionAttachments.map((attachment, index) => (
