@@ -30,24 +30,34 @@ from .utils import get_follow_sets, build_social_user
 router = APIRouter()
 RHO_USERNAME = "rho"
 RHO_EMAIL = "rho@proofmesh.ai"
+RHO_AVATAR_URL = "https://api.dicebear.com/9.x/bottts-neutral/svg?seed=proofmesh-rho"
 
 
 async def ensure_rho_user(db: AsyncSession) -> tuple[User, bool]:
     result = await db.execute(select(User).where(func.lower(User.username) == RHO_USERNAME))
     rho_user = result.scalar_one_or_none()
     if rho_user:
-        return rho_user, False
+        changed = False
+        if not rho_user.avatar_url:
+            rho_user.avatar_url = RHO_AVATAR_URL
+            changed = True
+        return rho_user, changed
 
     result = await db.execute(select(User).where(User.email == RHO_EMAIL))
     rho_user = result.scalar_one_or_none()
     if rho_user:
-        return rho_user, False
+        changed = False
+        if not rho_user.avatar_url:
+            rho_user.avatar_url = RHO_AVATAR_URL
+            changed = True
+        return rho_user, changed
 
     rho_user = User(
         email=RHO_EMAIL,
         username=RHO_USERNAME,
         password_hash=get_password_hash(f"rho-{datetime.utcnow().isoformat()}"),
         bio="AI mathematical assistant (Gemini-backed)",
+        avatar_url=RHO_AVATAR_URL,
     )
     db.add(rho_user)
     await db.flush()

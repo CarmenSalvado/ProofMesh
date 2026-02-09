@@ -2,12 +2,15 @@
 
 import { use, useEffect, useState, useCallback, useMemo } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
 import {
   getProblem,
   getLibraryItems,
   getProblemPermissions,
   updateTeamMemberRole,
+  deleteProblem,
+  forkProblem,
   Problem,
   ProblemPermissions,
   LibraryItem,
@@ -34,6 +37,8 @@ import {
   Users,
   FolderOpen,
   LayoutGrid,
+  GitFork,
+  Trash2,
 } from "lucide-react";
 
 interface PageProps {
@@ -55,6 +60,7 @@ const KIND_META: Record<string, { label: string; icon: typeof BookOpen; color: s
 
 export default function ProblemPage({ params }: PageProps) {
   const { isLoading: authLoading } = useAuth();
+  const router = useRouter();
   const { id: problemId } = use(params);
   const [problem, setProblem] = useState<Problem | null>(null);
   const [permissions, setPermissions] = useState<ProblemPermissions | null>(null);
@@ -62,6 +68,8 @@ export default function ProblemPage({ params }: PageProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [updatingRoleKey, setUpdatingRoleKey] = useState<string | null>(null);
+  const [actionBusy, setActionBusy] = useState<"fork" | "delete" | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const groupedItems = useMemo(() => {
     const groups = {
@@ -127,6 +135,40 @@ export default function ProblemPage({ params }: PageProps) {
     [problemId]
   );
 
+  const handleFork = useCallback(async () => {
+    if (!problem) return;
+    setActionError(null);
+    setActionBusy("fork");
+    try {
+      const forked = await forkProblem(problem.id);
+      router.push(`/problems/${forked.id}`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to fork problem";
+      setActionError(message);
+    } finally {
+      setActionBusy(null);
+    }
+  }, [problem, router]);
+
+  const handleDelete = useCallback(async () => {
+    if (!problem) return;
+    const confirmed = window.confirm(
+      `Delete problem "${problem.title}"? This action cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    setActionError(null);
+    setActionBusy("delete");
+    try {
+      await deleteProblem(problem.id);
+      router.push("/dashboard");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to delete problem";
+      setActionError(message);
+      setActionBusy(null);
+    }
+  }, [problem, router]);
+
   useEffect(() => {
     if (problemId) {
       loadData();
@@ -162,6 +204,17 @@ export default function ProblemPage({ params }: PageProps) {
   }
 
   if (!problem) return null;
+
+  const canFork =
+    permissions?.actions.includes("fork_problem") ??
+    (problem.access_level === "viewer" ||
+      problem.access_level === "editor" ||
+      problem.access_level === "admin" ||
+      problem.access_level === "owner" ||
+      problem.visibility === "public");
+  const canDelete =
+    permissions?.actions.includes("delete_problem") ??
+    Boolean(problem.can_admin || problem.is_owner);
 
   const sectionData = [
     { key: "resources", label: "Resources", icon: ExternalLink, color: "text-blue-600", bg: "bg-blue-50" },
@@ -285,7 +338,32 @@ export default function ProblemPage({ params }: PageProps) {
                 size="md"
                 showCount={true}
               />
+              {canFork && (
+                <button
+                  type="button"
+                  onClick={() => void handleFork()}
+                  disabled={actionBusy !== null}
+                  className="inline-flex items-center gap-2 px-4 py-2.5 bg-white border border-neutral-200 text-neutral-700 text-sm font-medium rounded-lg hover:bg-neutral-50 hover:border-neutral-300 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  <GitFork className="w-4 h-4" />
+                  {actionBusy === "fork" ? "Forking..." : "Fork to My Workspace"}
+                </button>
+              )}
+              {canDelete && (
+                <button
+                  type="button"
+                  onClick={() => void handleDelete()}
+                  disabled={actionBusy !== null}
+                  className="inline-flex items-center gap-2 px-4 py-2.5 bg-white border border-red-200 text-red-700 text-sm font-medium rounded-lg hover:bg-red-50 hover:border-red-300 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  {actionBusy === "delete" ? "Deleting..." : "Delete Problem"}
+                </button>
+              )}
             </div>
+            {actionError && (
+              <p className="mt-3 text-sm text-red-600">{actionError}</p>
+            )}
           </div>
         </div>
 

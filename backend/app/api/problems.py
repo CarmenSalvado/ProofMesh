@@ -570,13 +570,13 @@ async def get_problem_permissions(
             )
         )
 
-    actions = ["view"]
+    actions = ["view", "fork_problem"]
     if access.can_edit:
         actions.extend(["edit_library", "edit_workspace", "edit_canvas"])
     if access.can_admin:
-        actions.append("manage_problem")
+        actions.extend(["manage_problem", "delete_problem"])
     if access.is_owner:
-        actions.extend(["change_visibility", "delete_problem"])
+        actions.append("change_visibility")
     if any(team.can_manage_members for team in teams_payload):
         actions.append("manage_team_members")
 

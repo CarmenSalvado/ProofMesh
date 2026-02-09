@@ -62,6 +62,7 @@ router = APIRouter(prefix="/api/social", tags=["social"])
 
 RHO_USERNAME = "rho"
 RHO_EMAIL = "rho@proofmesh.ai"
+RHO_AVATAR_URL = "https://api.dicebear.com/9.x/bottts-neutral/svg?seed=proofmesh-rho"
 RHO_MENTION_PATTERN = re.compile(r"(?:^|\s)@rho\b", flags=re.IGNORECASE)
 
 
@@ -73,11 +74,15 @@ async def get_or_create_rho_user(db: AsyncSession) -> User:
     result = await db.execute(select(User).where(User.username == RHO_USERNAME))
     rho_user = result.scalar_one_or_none()
     if rho_user:
+        if not rho_user.avatar_url:
+            rho_user.avatar_url = RHO_AVATAR_URL
         return rho_user
 
     result = await db.execute(select(User).where(User.email == RHO_EMAIL))
     rho_user = result.scalar_one_or_none()
     if rho_user:
+        if not rho_user.avatar_url:
+            rho_user.avatar_url = RHO_AVATAR_URL
         return rho_user
 
     rho_user = User(
@@ -85,6 +90,7 @@ async def get_or_create_rho_user(db: AsyncSession) -> User:
         username=RHO_USERNAME,
         password_hash=get_password_hash(f"rho-{datetime.utcnow().isoformat()}"),
         bio="AI mathematical assistant (Gemini-backed)",
+        avatar_url=RHO_AVATAR_URL,
     )
     db.add(rho_user)
     await db.flush()
