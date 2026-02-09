@@ -28,6 +28,36 @@ function formatRelativeTime(iso?: string | null) {
   return `${days}d ago`;
 }
 
+function UserAvatar({
+  username,
+  avatarUrl,
+  className,
+  textClassName,
+}: {
+  username: string;
+  avatarUrl?: string | null;
+  className: string;
+  textClassName: string;
+}) {
+  if (avatarUrl) {
+    return (
+      <img
+        src={avatarUrl}
+        alt={username}
+        className={`${className} rounded-full object-cover`}
+      />
+    );
+  }
+
+  return (
+    <div
+      className={`${className} rounded-full bg-gradient-to-br from-indigo-100 to-cyan-100 flex items-center justify-center font-bold text-indigo-700`}
+    >
+      <span className={textClassName}>{username.slice(0, 2).toUpperCase()}</span>
+    </div>
+  );
+}
+
 export default function UserProfilePage() {
   const params = useParams();
   const username = params.username as string;
@@ -99,9 +129,12 @@ export default function UserProfilePage() {
       <div className="border-b border-neutral-200">
         <div className="max-w-4xl mx-auto px-4 py-6">
           <div className="flex items-start gap-6">
-            <div className="w-24 h-24 rounded-full bg-gradient-to-br from-indigo-100 to-cyan-100 flex items-center justify-center text-3xl font-bold text-indigo-700">
-              {username.slice(0, 2).toUpperCase()}
-            </div>
+            <UserAvatar
+              username={user.username}
+              avatarUrl={user.avatar_url}
+              className="w-24 h-24"
+              textClassName="text-3xl"
+            />
             <div className="flex-1">
               <h1 className="text-2xl font-semibold text-neutral-900">{user.username}</h1>
               <p className="text-neutral-500">@{user.username.toLowerCase()}</p>
@@ -140,6 +173,15 @@ export default function UserProfilePage() {
                   href={`/problems/${problem.id}`}
                   className="block p-4 bg-white border border-neutral-200 rounded-lg hover:border-neutral-300 transition-colors"
                 >
+                  <div className="flex items-center gap-2 mb-1">
+                    <UserAvatar
+                      username={problem.author.username}
+                      avatarUrl={problem.author.avatar_url}
+                      className="w-6 h-6"
+                      textClassName="text-[10px]"
+                    />
+                    <span className="text-xs text-neutral-500">@{problem.author.username}</span>
+                  </div>
                   <h3 className="font-medium text-neutral-900">{problem.title}</h3>
                   <p className="text-sm text-neutral-500 mt-1 line-clamp-2">
                     {problem.description || "No description"}
@@ -164,6 +206,15 @@ export default function UserProfilePage() {
                   href={`/discussions/${discussion.id}`}
                   className="block p-4 bg-white border border-neutral-200 rounded-lg hover:border-neutral-300 transition-colors"
                 >
+                  <div className="flex items-center gap-2 mb-2">
+                    <UserAvatar
+                      username={discussion.author.username}
+                      avatarUrl={discussion.author.avatar_url}
+                      className="w-6 h-6"
+                      textClassName="text-[10px]"
+                    />
+                    <span className="text-xs text-neutral-500">@{discussion.author.username}</span>
+                  </div>
                   <div className="flex items-start justify-between gap-4">
                     <h3 className="font-medium text-neutral-900">{discussion.title}</h3>
                     <span className="text-xs text-neutral-400 whitespace-nowrap">
@@ -194,6 +245,15 @@ export default function UserProfilePage() {
                   href={`/discussions/${comment.discussion_id}`}
                   className="block p-4 bg-white border border-neutral-200 rounded-lg hover:border-neutral-300 transition-colors"
                 >
+                  <div className="flex items-center gap-2 mb-2">
+                    <UserAvatar
+                      username={comment.author.username}
+                      avatarUrl={comment.author.avatar_url}
+                      className="w-6 h-6"
+                      textClassName="text-[10px]"
+                    />
+                    <span className="text-xs text-neutral-500">@{comment.author.username}</span>
+                  </div>
                   <div className="flex items-start justify-between gap-4">
                     <p className="text-sm font-medium text-neutral-900">
                       {comment.discussion_title || "Discussion"}
