@@ -3,6 +3,7 @@ import { Geist_Mono, Newsreader } from "next/font/google";
 import { GeistPixelSquare } from "geist/font/pixel";
 import "./globals.css";
 import { AuthProvider } from "@/lib/auth";
+import { GeminiWordStyler } from "@/components/ui/GeminiWordStyler";
 
 const geistPixelSquare = GeistPixelSquare;
 
@@ -42,7 +43,10 @@ export default function RootLayout({
       <body
         className={`${geistPixelSquare.className} ${geistPixelSquare.variable} ${geistMono.variable} ${newsreader.variable}`}
       >
-        <AuthProvider>{children}</AuthProvider>
+        <AuthProvider>
+          <GeminiWordStyler />
+          {children}
+        </AuthProvider>
       </body>
     </html>
   );
