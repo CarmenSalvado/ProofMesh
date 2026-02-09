@@ -27,7 +27,7 @@ MIN_CONFIDENCE_THRESHOLD = 0.3
 
 
 @dataclass
-class Canvas:
+class Canvas``:
     """
     Simple canvas abstraction for blocks of mathematical content.
     In a real app, this would connect to the UI.
