@@ -211,6 +211,7 @@ export default function DashboardPage() {
   const [trending, setTrending] = useState<TrendingProblem[]>([]);
   const [stats, setStats] = useState<PlatformStats | null>(null);
   const [followingCount, setFollowingCount] = useState<number>(0);
+  const [followersCount, setFollowersCount] = useState<number>(0);
   const [connections, setConnections] = useState<SocialConnectionsResponse | null>(null);
   const [recentProofs, setRecentProofs] = useState<Array<{
     id: string;
@@ -222,6 +223,7 @@ export default function DashboardPage() {
     libraryItemCount: number;
   }>>([]);
   const [showFollowingModal, setShowFollowingModal] = useState(false);
+  const [connectionsModalTab, setConnectionsModalTab] = useState<"following" | "followers">("following");
   const [loading, setLoading] = useState(true);
   const [feedTab, setFeedTab] = useState<"following" | "discover">("discover");
   const [repoFilter, setRepoFilter] = useState("");
@@ -416,6 +418,7 @@ export default function DashboardPage() {
       setStats(statsData);
       setConnections(connectionsData);
       setFollowingCount(connectionsData.total_following);
+      setFollowersCount(connectionsData.total_followers);
       setActivityOffset(0);
       setHasMoreActivity(feedData.items.length >= 20);
     } catch (err) {
@@ -538,7 +541,14 @@ export default function DashboardPage() {
     try {
       await followUser(userId);
       setSuggestions((prev) => prev.filter((u) => u.id !== userId));
-      setFollowingCount((prev) => prev + 1);
+      const connectionsData = await getSocialConnections().catch(() => null);
+      if (connectionsData) {
+        setConnections(connectionsData);
+        setFollowingCount(connectionsData.total_following);
+        setFollowersCount(connectionsData.total_followers);
+      } else {
+        setFollowingCount((prev) => prev + 1);
+      }
       // Reload feed if we are on the "following" tab
       if (feedTab === "following") {
         const feedData = await getSocialFeed({ scope: "network", limit: 20 });
@@ -552,15 +562,22 @@ export default function DashboardPage() {
   const handleUnfollow = async (userId: string) => {
     try {
       await unfollowUser(userId);
-      setConnections((prev) => {
-        if (!prev) return prev;
-        return {
-          ...prev,
-          following: prev.following.filter((u) => u.id !== userId),
-          total_following: prev.total_following - 1,
-        };
-      });
-      setFollowingCount((prev) => prev - 1);
+      const connectionsData = await getSocialConnections().catch(() => null);
+      if (connectionsData) {
+        setConnections(connectionsData);
+        setFollowingCount(connectionsData.total_following);
+        setFollowersCount(connectionsData.total_followers);
+      } else {
+        setConnections((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            following: prev.following.filter((u) => u.id !== userId),
+            total_following: Math.max(0, prev.total_following - 1),
+          };
+        });
+        setFollowingCount((prev) => Math.max(0, prev - 1));
+      }
       // Reload feed if we are on the "following" tab
       if (feedTab === "following") {
         const feedData = await getSocialFeed({ scope: "network", limit: 20 });
@@ -570,6 +587,11 @@ export default function DashboardPage() {
       console.error("Unfollow failed", err);
     }
   };
+
+  const openConnectionsModal = useCallback((tab: "following" | "followers") => {
+    setConnectionsModalTab(tab);
+    setShowFollowingModal(true);
+  }, []);
 
   const removeAttachment = (index: number) => {
     setPostAttachments((prev) => prev.filter((_, idx) => idx !== index));
@@ -1048,17 +1070,24 @@ export default function DashboardPage() {
                 <div className="text-xs text-neutral-500">@{user.username.toLowerCase()}</div>
               </div>
             </div>
-            <div className="grid grid-cols-3 gap-2 py-3 border-t border-neutral-100 mb-2">
+            <div className="grid grid-cols-4 gap-2 py-3 border-t border-neutral-100 mb-2">
               <div className="text-center">
                 <div className="text-xs text-neutral-500">Proofs</div>
                 <div className="text-sm font-semibold text-neutral-900">{problems.length}</div>
               </div>
               <button
-                onClick={() => setShowFollowingModal(true)}
+                onClick={() => openConnectionsModal("following")}
                 className="text-center hover:bg-neutral-50 rounded-md transition-colors"
               >
                 <div className="text-xs text-neutral-500">Following</div>
                 <div className="text-sm font-semibold text-neutral-900 hover:text-indigo-600">{followingCount}</div>
+              </button>
+              <button
+                onClick={() => openConnectionsModal("followers")}
+                className="text-center hover:bg-neutral-50 rounded-md transition-colors"
+              >
+                <div className="text-xs text-neutral-500">Followers</div>
+                <div className="text-sm font-semibold text-neutral-900 hover:text-indigo-600">{followersCount}</div>
               </button>
               <div className="text-center">
                 <div className="text-xs text-neutral-500">Stars</div>
@@ -1933,7 +1962,33 @@ export default function DashboardPage() {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowFollowingModal(false)}>
           <div className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between p-4 border-b border-neutral-200">
-              <h2 className="text-lg font-semibold text-neutral-900">Following</h2>
+              <div>
+                <h2 className="text-lg font-semibold text-neutral-900">Connections</h2>
+                <div className="mt-1 inline-flex rounded-full bg-neutral-100 p-1 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setConnectionsModalTab("following")}
+                    className={`px-3 py-1 rounded-full transition-colors ${
+                      connectionsModalTab === "following"
+                        ? "bg-white shadow-sm text-neutral-900"
+                        : "text-neutral-600 hover:text-neutral-900"
+                    }`}
+                  >
+                    Following {connections?.total_following ?? followingCount}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConnectionsModalTab("followers")}
+                    className={`px-3 py-1 rounded-full transition-colors ${
+                      connectionsModalTab === "followers"
+                        ? "bg-white shadow-sm text-neutral-900"
+                        : "text-neutral-600 hover:text-neutral-900"
+                    }`}
+                  >
+                    Followers {connections?.total_followers ?? followersCount}
+                  </button>
+                </div>
+              </div>
               <button
                 onClick={() => setShowFollowingModal(false)}
                 className="text-neutral-400 hover:text-neutral-600 transition-colors"
@@ -1944,45 +1999,76 @@ export default function DashboardPage() {
               </button>
             </div>
             <div className="flex-1 overflow-y-auto p-4">
-              {connections && connections.following.length === 0 ? (
+              {connections &&
+              (connectionsModalTab === "following"
+                ? connections.following.length === 0
+                : connections.followers.length === 0) ? (
                 <div className="text-center py-12">
                   <Users className="w-12 h-12 text-neutral-300 mx-auto mb-3" />
-                  <p className="text-sm text-neutral-500">You&apos;re not following anyone yet</p>
-                  <p className="text-xs text-neutral-400 mt-1">Discover researchers in the feed below</p>
+                  {connectionsModalTab === "following" ? (
+                    <>
+                      <p className="text-sm text-neutral-500">You&apos;re not following anyone yet</p>
+                      <p className="text-xs text-neutral-400 mt-1">Discover researchers in the feed below</p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-sm text-neutral-500">No followers yet</p>
+                      <p className="text-xs text-neutral-400 mt-1">Post and collaborate to grow your network</p>
+                    </>
+                  )}
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {connections?.following.map((followedUser) => (
-                    <div key={followedUser.id} className="flex items-center gap-3 p-2 hover:bg-neutral-50 rounded-lg transition-colors">
-                      {followedUser.avatar_url ? (
+                  {(connectionsModalTab === "following"
+                    ? connections?.following
+                    : connections?.followers
+                  )?.map((listedUser) => (
+                    <div key={listedUser.id} className="flex items-center gap-3 p-2 hover:bg-neutral-50 rounded-lg transition-colors">
+                      {listedUser.avatar_url ? (
                         <img
-                          src={followedUser.avatar_url}
-                          alt={`${followedUser.username} avatar`}
+                          src={listedUser.avatar_url}
+                          alt={`${listedUser.username} avatar`}
                           className="w-10 h-10 rounded-full object-cover border border-neutral-200"
                         />
                       ) : (
                         <div className="w-10 h-10 rounded-full bg-neutral-100 border border-neutral-200 flex items-center justify-center text-sm font-bold text-neutral-600">
-                          {getInitials(followedUser.username)}
+                          {getInitials(listedUser.username)}
                         </div>
                       )}
                       <div className="flex-1 min-w-0">
                         <Link
-                          href={`/users/${followedUser.username}`}
+                          href={`/users/${listedUser.username}`}
                           className="text-sm font-medium text-neutral-900 hover:text-indigo-600 block truncate"
                           onClick={() => setShowFollowingModal(false)}
                         >
-                          {followedUser.username}
+                          {listedUser.username}
                         </Link>
-                        {followedUser.bio && (
-                          <p className="text-xs text-neutral-500 truncate">{followedUser.bio}</p>
+                        {listedUser.bio && (
+                          <p className="text-xs text-neutral-500 truncate">{listedUser.bio}</p>
                         )}
                       </div>
-                      <button
-                        onClick={() => handleUnfollow(followedUser.id)}
-                        className="text-xs font-medium text-neutral-600 hover:text-red-600 px-3 py-1.5 rounded-md border border-neutral-200 hover:border-red-200 transition-colors"
-                      >
-                        Unfollow
-                      </button>
+                      {connectionsModalTab === "following" ? (
+                        <button
+                          onClick={() => handleUnfollow(listedUser.id)}
+                          className="text-xs font-medium text-neutral-600 hover:text-red-600 px-3 py-1.5 rounded-md border border-neutral-200 hover:border-red-200 transition-colors"
+                        >
+                          Unfollow
+                        </button>
+                      ) : listedUser.is_following ? (
+                        <button
+                          onClick={() => handleUnfollow(listedUser.id)}
+                          className="text-xs font-medium text-neutral-600 hover:text-red-600 px-3 py-1.5 rounded-md border border-neutral-200 hover:border-red-200 transition-colors"
+                        >
+                          Unfollow
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => handleFollow(listedUser.id)}
+                          className="text-xs font-medium text-white bg-neutral-900 hover:bg-neutral-800 px-3 py-1.5 rounded-md border border-neutral-900 transition-colors"
+                        >
+                          Follow back
+                        </button>
+                      )}
                     </div>
                   ))}
                 </div>
