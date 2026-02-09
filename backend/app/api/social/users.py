@@ -30,7 +30,7 @@ from .utils import get_follow_sets, build_social_user
 router = APIRouter()
 RHO_USERNAME = "rho"
 RHO_EMAIL = "rho@proofmesh.ai"
-RHO_AVATAR_URL = "https://api.dicebear.com/9.x/bottts-neutral/svg?seed=proofmesh-rho"
+RHO_AVATAR_URL = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 128'%3E%3Crect width='128' height='128' rx='64' fill='%23111827'/%3E%3Ctext x='64' y='84' text-anchor='middle' font-size='72' font-family='Georgia%2Cserif' fill='white'%3E%26%23961%3B%3C/text%3E%3C/svg%3E"
 
 
 async def ensure_rho_user(db: AsyncSession) -> tuple[User, bool]:
@@ -38,7 +38,7 @@ async def ensure_rho_user(db: AsyncSession) -> tuple[User, bool]:
     rho_user = result.scalar_one_or_none()
     if rho_user:
         changed = False
-        if not rho_user.avatar_url:
+        if rho_user.avatar_url != RHO_AVATAR_URL:
             rho_user.avatar_url = RHO_AVATAR_URL
             changed = True
         return rho_user, changed
@@ -47,7 +47,7 @@ async def ensure_rho_user(db: AsyncSession) -> tuple[User, bool]:
     rho_user = result.scalar_one_or_none()
     if rho_user:
         changed = False
-        if not rho_user.avatar_url:
+        if rho_user.avatar_url != RHO_AVATAR_URL:
             rho_user.avatar_url = RHO_AVATAR_URL
             changed = True
         return rho_user, changed
