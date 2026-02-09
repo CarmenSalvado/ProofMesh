@@ -12,31 +12,12 @@ import {
 import { DashboardNavbar } from "@/components/layout/DashboardNavbar";
 import {
   Plus,
-  Star,
   BookOpen,
-  Lock,
-  Globe,
   Sparkles,
   RefreshCw,
   Tag,
   TrendingUp,
-  Grid3x3,
-  List,
 } from "lucide-react";
-
-function formatRelativeTime(iso?: string | null) {
-  if (!iso) return "just now";
-  const then = new Date(iso).getTime();
-  const now = Date.now();
-  const diff = Math.max(0, now - then);
-  const minutes = Math.floor(diff / 60000);
-  const hours = Math.floor(diff / 3600000);
-  const days = Math.floor(diff / 86400000);
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  if (hours < 24) return `${hours}h ago`;
-  return `${days}d ago`;
-}
 
 function getInitials(name: string) {
   return name
@@ -56,7 +37,6 @@ function CatalogPageContent() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedDifficulty, setSelectedDifficulty] = useState<"all" | "easy" | "medium" | "hard">("all");
-  const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [seeding, setSeeding] = useState(false);
   const lastSearchParam = useRef<string | null>(null);
 
@@ -246,20 +226,6 @@ function CatalogPageContent() {
                 <RefreshCw className={`w-3 h-3 ${loading ? "animate-spin" : ""}`} />
                 Refresh
               </button>
-              <div className="flex border border-neutral-200 rounded-md overflow-hidden">
-                <button
-                  onClick={() => setViewMode("grid")}
-                  className={`p-1.5 ${viewMode === "grid" ? "bg-neutral-100 text-neutral-900" : "text-neutral-400 hover:text-neutral-900"}`}
-                >
-                  <Grid3x3 className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  onClick={() => setViewMode("list")}
-                  className={`p-1.5 ${viewMode === "list" ? "bg-neutral-100 text-neutral-900" : "text-neutral-400 hover:text-neutral-900"}`}
-                >
-                  <List className="w-3.5 h-3.5" />
-                </button>
-              </div>
             </div>
           </div>
 
@@ -322,7 +288,7 @@ function CatalogPageContent() {
                 </button>
               )}
             </div>
-          ) : viewMode === "grid" ? (
+          ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {filteredProblems.map((problem) => (
                 <Link
@@ -392,83 +358,6 @@ function CatalogPageContent() {
                       )}
                     </div>
                   )}
-                </Link>
-              ))}
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {filteredProblems.map((problem) => (
-                <Link
-                  key={problem.id}
-                  href={`/problems/${problem.id}`}
-                  className="bg-white rounded-lg border border-neutral-200 p-4 shadow-sm hover:shadow-md hover:border-indigo-300 transition-all group"
-                >
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
-                        <h3 className="text-sm font-semibold text-neutral-900 group-hover:text-indigo-600 transition-colors truncate">
-                          {problem.title}
-                        </h3>
-                        {problem.difficulty && (
-                          <span
-                            className={`text-[10px] font-medium px-2 py-0.5 rounded-full flex-shrink-0 ${
-                              problem.difficulty === "easy"
-                                ? "bg-emerald-50 text-emerald-600"
-                                : problem.difficulty === "medium"
-                                  ? "bg-amber-50 text-amber-600"
-                                  : "bg-red-50 text-red-600"
-                            }`}
-                          >
-                            {problem.difficulty}
-                          </span>
-                        )}
-                      </div>
-                      {problem.description && (
-                        <p className="text-xs text-neutral-500 line-clamp-2 mb-2">
-                          {problem.description}
-                        </p>
-                      )}
-                      <div className="flex items-center gap-3 text-xs text-neutral-500">
-                        <span className="flex items-center gap-1">
-                          {problem.author.avatar_url ? (
-                            <img
-                              src={problem.author.avatar_url}
-                              alt={`${problem.author.username} avatar`}
-                              className="w-4 h-4 rounded-full object-cover border border-neutral-200"
-                            />
-                          ) : (
-                            <div className="w-4 h-4 rounded-full bg-neutral-100 border border-neutral-200 flex items-center justify-center text-[8px] font-medium text-neutral-600">
-                              {getInitials(problem.author.username)}
-                            </div>
-                          )}
-                          {problem.author.username}
-                        </span>
-                        <span>·</span>
-                        <span>{problem.library_item_count} items</span>
-                        {problem.tags.length > 0 && (
-                          <>
-                            <span>·</span>
-                            <div className="flex gap-1.5">
-                              {problem.tags.slice(0, 3).map((tag) => (
-                                <span
-                                  key={tag}
-                                  className="px-2 py-0.5 bg-neutral-100 text-neutral-600 text-[10px] rounded-full"
-                                >
-                                  {tag}
-                                </span>
-                              ))}
-                              {problem.tags.length > 3 && (
-                                <span className="px-2 py-0.5 bg-neutral-100 text-neutral-500 text-[10px] rounded-full">
-                                  +{problem.tags.length - 3}
-                                </span>
-                              )}
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                    <Star className="w-4 h-4 text-neutral-300 group-hover:text-amber-400 transition-colors ml-4 flex-shrink-0" />
-                  </div>
                 </Link>
               ))}
             </div>
