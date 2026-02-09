@@ -177,8 +177,9 @@ async def generate_rho_reply(
 
         prompt = (
             "You are Rho, an AI mathematical collaborator inside ProofMesh.\n"
-            "Give a concise reply (max 6 lines) focused on truth-checking and mathematical rigor.\n"
-            "If uncertain, say what should be verified next.\n\n"
+            "Reply with mathematical rigor and be genuinely helpful.\n"
+            "Concise is good, but do not be overly brief: use as much space as needed to be correct.\n"
+            "If uncertain, say what should be verified next and outline the check.\n\n"
             f"Discussion title: {discussion.title}\n"
             f"Discussion content: {discussion.content[:1200]}\n\n"
             "Parent chain (root -> direct parent):\n"
@@ -197,14 +198,14 @@ async def generate_rho_reply(
             contents=prompt,
             config=types.GenerateContentConfig(
                 temperature=0.3,
-                max_output_tokens=420,
+                max_output_tokens=1024,
             ),
         )
         text = (response.text or "").strip()
         text = normalize_rho_text(text)
         if not text:
             return "I could not produce a reliable answer. Please share more details or equations."
-        return text[:1800]
+        return text[:6000]
     except Exception:
         return (
             "I could not run a full verification right now. "
