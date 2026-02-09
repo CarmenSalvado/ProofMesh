@@ -13,8 +13,7 @@ import {
   Comment,
 } from "@/lib/api";
 import { DashboardNavbar } from "@/components/layout/DashboardNavbar";
-
-const PROJECT_LINK_TOKEN_REGEX = /^\[\[project:([^|\]]+)\|([^\]]+)\]\]$/i;
+import { RichSocialMarkdown } from "@/components/social";
 
 function formatRelativeTime(iso?: string | null) {
   if (!iso) return "just now";
@@ -28,47 +27,6 @@ function formatRelativeTime(iso?: string | null) {
   if (minutes < 60) return `${minutes}m ago`;
   if (hours < 24) return `${hours}h ago`;
   return `${days}d ago`;
-}
-
-function renderRichSocialText(text: string) {
-  const parts = text.split(/(\[\[project:[^\]|]+\|[^\]]+\]\]|@[A-Za-z0-9._-]+)/g);
-  return parts.map((part, idx) => {
-    if (!part) return null;
-
-    const projectMatch = part.match(PROJECT_LINK_TOKEN_REGEX);
-    if (projectMatch) {
-      const [, projectId, projectTitle] = projectMatch;
-      return (
-        <Link
-          key={`project-${idx}`}
-          href={`/problems/${encodeURIComponent(projectId)}`}
-          title={`Open project ${projectTitle}`}
-          className="inline-flex items-center rounded-full border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-900 shadow-[inset_0_0_0_1px_rgba(16,185,129,0.08)] transition hover:bg-emerald-100"
-        >
-          #{projectTitle}
-        </Link>
-      );
-    }
-
-    if (!part.startsWith("@")) return <span key={`text-${idx}`}>{part}</span>;
-
-    const isRho = part.toLowerCase() === "@rho";
-    const mentionedUsername = part.slice(1).trim();
-    return (
-      <Link
-        key={`mention-${idx}`}
-        href={`/users/${encodeURIComponent(mentionedUsername)}`}
-        title={`Open profile @${mentionedUsername}`}
-        className={
-          isRho
-            ? "inline-flex items-center rounded-full border border-violet-300 bg-violet-100 px-2 py-0.5 text-[11px] font-semibold text-violet-900 shadow-[inset_0_0_0_1px_rgba(139,92,246,0.15)] transition hover:bg-violet-200"
-            : "inline-flex items-center rounded-full border border-indigo-300 bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-900 shadow-[inset_0_0_0_1px_rgba(99,102,241,0.08)] transition hover:bg-indigo-100"
-        }
-      >
-        {part}
-      </Link>
-    );
-  });
 }
 
 function UserAvatar({
@@ -268,9 +226,7 @@ export default function UserProfilePage() {
                       {formatRelativeTime(discussion.created_at)}
                     </span>
                   </div>
-                  <p className="text-sm text-neutral-600 mt-2 line-clamp-2 leading-6">
-                    {renderRichSocialText(discussion.content)}
-                  </p>
+                  <RichSocialMarkdown text={discussion.content} className="text-sm text-neutral-600 mt-2" />
                   <p className="text-xs text-neutral-500 mt-2">
                     {discussion.comment_count} replies
                   </p>
@@ -313,9 +269,7 @@ export default function UserProfilePage() {
                       {formatRelativeTime(comment.created_at)}
                     </span>
                   </div>
-                  <p className="text-sm text-neutral-600 mt-2 line-clamp-3 leading-6">
-                    {renderRichSocialText(comment.content)}
-                  </p>
+                  <RichSocialMarkdown text={comment.content} className="text-sm text-neutral-600 mt-2" />
                 </div>
               ))}
             </div>
