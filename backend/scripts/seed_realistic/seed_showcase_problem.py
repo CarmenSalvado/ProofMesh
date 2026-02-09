@@ -241,7 +241,8 @@ def showcase_items() -> list[dict]:
                 "5) Achlioptas (2003): database-friendly random projections"
             ),
             "formula": None,
-            "deps": [],
+            # Keep the graph connected: references relate to the main theorem.
+            "deps": ["Theorem: Johnson–Lindenstrauss (Gaussian proof)"],
         },
         {
             "title": "Proof skeleton: Minimal steps you can delegate to an LLM",
