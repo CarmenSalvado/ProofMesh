@@ -93,3 +93,10 @@ seed-custom:
 	read -p "Number of problems (default 120): " problems; \
 	docker compose exec backend python -m scripts.seed_realistic.run \
 		--users $${users:-80} --teams $${teams:-25} --problems $${problems:-120}
+
+# Seed curated showcase problem (demo/video)
+seed-showcase:
+	docker compose exec backend python -m scripts.seed_realistic.seed_showcase_problem
+
+prod-seed-showcase:
+	docker compose --env-file .env.prod -f docker-compose.prod.yml exec backend python -m scripts.seed_realistic.seed_showcase_problem
