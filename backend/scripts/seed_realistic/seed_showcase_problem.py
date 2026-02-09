@@ -319,14 +319,17 @@ async def ensure_showcase_problem():
             select(LibraryItem).where(LibraryItem.problem_id == problem.id)
         )
         existing_items = existing_items_result.scalars().all()
-        existing_by_title = {item.title: item for item in existing_items}
+        # NOTE: On a fresh seed (empty DB), items are created in this run. We must
+        # keep a live mapping that includes newly created items, otherwise the
+        # dependency pass will not find them and the canvas will look disconnected.
+        items_by_title = {item.title: item for item in existing_items}
 
         positions = _layout_positions(len(desired))
         inserted_ids_by_title: dict[str, object] = {}
 
         # First pass: create/update items without deps.
         for idx, spec in enumerate(desired):
-            item = existing_by_title.get(spec["title"])
+            item = items_by_title.get(spec["title"])
             x, y = positions[idx]
             if item is None:
                 item = LibraryItem(
@@ -355,22 +358,31 @@ async def ensure_showcase_problem():
                 # Keep authors/source stable for demo.
                 item.authors = [{"type": "user", "id": str(author.id), "name": author.username}]
                 item.source = {"seed": "showcase_problem"}
+            # Keep mapping updated for brand new items too.
+            items_by_title[item.title] = item
             inserted_ids_by_title[item.title] = item.id
 
         # Second pass: resolve dependencies by title.
         for spec in desired:
             if not spec.get("deps"):
                 continue
-            item = existing_by_title.get(spec["title"])
+            item = items_by_title.get(spec["title"])
             if item is None:
-                # It was created above; reload by title from our map.
                 continue
-            deps = []
+            deps: list[object] = []
             for dep_title in spec["deps"]:
                 dep_id = inserted_ids_by_title.get(dep_title)
                 if dep_id:
                     deps.append(dep_id)
-            item.dependencies = deps
+            # Preserve a stable order, drop duplicates.
+            seen = set()
+            unique_deps = []
+            for dep in deps:
+                if dep in seen:
+                    continue
+                seen.add(dep)
+                unique_deps.append(dep)
+            item.dependencies = unique_deps
 
         # Canvas blocks (nice for demo + fork copies blocks).
         blocks_spec = [
@@ -471,4 +483,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
