@@ -12,8 +12,9 @@ from __future__ import annotations
 import asyncio
 import random
 from datetime import datetime, timedelta
+from uuid import UUID
 
-from sqlalchemy import select, func
+from sqlalchemy import select, func, text
 
 from app.database import async_session_maker
 from app.models.user import User
@@ -32,6 +33,8 @@ SHOWCASE_AUTHOR_USERNAME = "amara"
 SHOWCASE_AUTHOR_EMAIL = "amara@proofmesh.org"
 
 SHOWCASE_TITLE = "Johnson-Lindenstrauss in the Wild: Subgaussian Projections, Tight Bounds, and a Clean Proof Skeleton"
+# Keep a stable UUID so links don't break after reseeds.
+SHOWCASE_PROBLEM_ID = UUID("f2a2afa2-cfac-492f-a0df-c360ad094495")
 SHOWCASE_TAGS = [
     "probability",
     "high-dimensional-geometry",
@@ -286,6 +289,41 @@ def _layout_positions(n: int) -> list[tuple[float, float]]:
     return positions
 
 
+async def _migrate_problem_id(db, *, old_id, new_id):
+    """Move all FK references from old problem id to new one, then delete old problem row."""
+    # Tables that have a direct FK to problems.id.
+    fk_tables = [
+        "library_items",
+        "canvas_blocks",
+        "workspace_files",
+        "discussions",
+        "team_problems",
+        "canvas_ai_runs",
+        "canvas_ai_messages",
+    ]
+
+    for table in fk_tables:
+        try:
+            await db.execute(
+                text(f"UPDATE {table} SET problem_id = :new_id WHERE problem_id = :old_id"),
+                {"new_id": new_id, "old_id": old_id},
+            )
+        except Exception:
+            # Some deployments may not have all optional tables (or different schemas).
+            pass
+
+    # Stars target problems via (target_type, target_id).
+    try:
+        await db.execute(
+            text("UPDATE stars SET target_id = :new_id WHERE target_type = 'problem' AND target_id = :old_id"),
+            {"new_id": new_id, "old_id": old_id},
+        )
+    except Exception:
+        pass
+
+    await db.execute(text("DELETE FROM problems WHERE id = :old_id"), {"old_id": old_id})
+
+
 async def ensure_showcase_problem():
     async with async_session_maker() as db:
         author = await ensure_user(
@@ -306,6 +344,7 @@ async def ensure_showcase_problem():
         created = False
         if not problem:
             problem = Problem(
+                id=SHOWCASE_PROBLEM_ID,
                 title=SHOWCASE_TITLE,
                 description=SHOWCASE_DESCRIPTION,
                 author_id=author.id,
@@ -319,6 +358,28 @@ async def ensure_showcase_problem():
             await db.flush()
             created = True
         else:
+            # If the DB was reseeded, the UUID will change and break bookmarked links.
+            # Re-home the showcase problem to a stable UUID.
+            if problem.id != SHOWCASE_PROBLEM_ID:
+                existing_fixed = await db.execute(select(Problem).where(Problem.id == SHOWCASE_PROBLEM_ID))
+                fixed = existing_fixed.scalar_one_or_none()
+                if fixed is None:
+                    fixed = Problem(
+                        id=SHOWCASE_PROBLEM_ID,
+                        title=problem.title,
+                        description=problem.description,
+                        author_id=problem.author_id,
+                        visibility=problem.visibility,
+                        difficulty=problem.difficulty,
+                        tags=problem.tags,
+                        created_at=problem.created_at,
+                        updated_at=problem.updated_at,
+                    )
+                    db.add(fixed)
+                    await db.flush()
+                await _migrate_problem_id(db, old_id=problem.id, new_id=SHOWCASE_PROBLEM_ID)
+                problem = fixed
+
             # Keep it curated even if previously created.
             problem.description = SHOWCASE_DESCRIPTION
             problem.difficulty = ProblemDifficulty.HARD
