@@ -316,50 +316,55 @@ export default function ProblemPage({ params }: PageProps) {
               </div>
             )}
 
-            <div className="flex flex-wrap gap-3">
-              <Link
-                href={`/problems/${problemId}/lab`}
-                className="inline-flex items-center gap-2 px-4 py-2.5 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors"
-              >
-                <FolderOpen className="w-4 h-4" />
-                Open Workspace Files
-              </Link>
-              <Link
-                href={`/problems/${problemId}/canvas`}
-                className="inline-flex items-center gap-2 px-4 py-2.5 bg-white border border-neutral-200 text-neutral-700 text-sm font-medium rounded-lg hover:bg-neutral-50 hover:border-neutral-300 transition-colors"
-              >
-                <LayoutGrid className="w-4 h-4" />
-                Visual Canvas
-              </Link>
-              <StarButton
-                targetType="problem"
-                targetId={problemId}
-                starCount={problem.star_count ?? 0}
-                size="md"
-                showCount={true}
-              />
-              {canFork && (
-                <button
-                  type="button"
-                  onClick={() => void handleFork()}
-                  disabled={actionBusy !== null}
-                  className="inline-flex items-center gap-2 px-4 py-2.5 bg-white border border-neutral-200 text-neutral-700 text-sm font-medium rounded-lg hover:bg-neutral-50 hover:border-neutral-300 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div className="flex flex-wrap gap-3">
+                <Link
+                  href={`/problems/${problemId}/lab`}
+                  className="inline-flex items-center gap-2 px-4 py-2.5 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors"
                 >
-                  <GitFork className="w-4 h-4" />
-                  {actionBusy === "fork" ? "Forking..." : "Fork to My Workspace"}
-                </button>
-              )}
-              {canDelete && (
-                <button
-                  type="button"
-                  onClick={() => void handleDelete()}
-                  disabled={actionBusy !== null}
-                  className="inline-flex items-center gap-2 px-4 py-2.5 bg-white border border-red-200 text-red-700 text-sm font-medium rounded-lg hover:bg-red-50 hover:border-red-300 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                  <FolderOpen className="w-4 h-4" />
+                  Open Workspace Files
+                </Link>
+                <Link
+                  href={`/problems/${problemId}/canvas`}
+                  className="inline-flex items-center gap-2 px-4 py-2.5 bg-white border border-neutral-200 text-neutral-700 text-sm font-medium rounded-lg hover:bg-neutral-50 hover:border-neutral-300 transition-colors"
                 >
-                  <Trash2 className="w-4 h-4" />
-                  {actionBusy === "delete" ? "Deleting..." : "Delete Problem"}
-                </button>
-              )}
+                  <LayoutGrid className="w-4 h-4" />
+                  Visual Canvas
+                </Link>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3">
+                <StarButton
+                  targetType="problem"
+                  targetId={problemId}
+                  starCount={problem.star_count ?? 0}
+                  size="md"
+                  showCount={true}
+                />
+                {canFork && (
+                  <button
+                    type="button"
+                    onClick={() => void handleFork()}
+                    disabled={actionBusy !== null}
+                    className="inline-flex items-center gap-2 px-4 py-2.5 bg-white border border-neutral-200 text-neutral-700 text-sm font-medium rounded-lg hover:bg-neutral-50 hover:border-neutral-300 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                  >
+                    <GitFork className="w-4 h-4" />
+                    {actionBusy === "fork" ? "Forking..." : "Fork to My Workspace"}
+                  </button>
+                )}
+                {canDelete && (
+                  <button
+                    type="button"
+                    onClick={() => void handleDelete()}
+                    disabled={actionBusy !== null}
+                    className="inline-flex items-center gap-2 px-4 py-2.5 bg-white border border-red-200 text-red-700 text-sm font-medium rounded-lg hover:bg-red-50 hover:border-red-300 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    {actionBusy === "delete" ? "Deleting..." : "Delete Problem"}
+                  </button>
+                )}
+              </div>
             </div>
             {actionError && (
               <p className="mt-3 text-sm text-red-600">{actionError}</p>
