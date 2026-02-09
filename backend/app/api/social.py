@@ -76,6 +76,86 @@ def normalize_rho_text(text: str) -> str:
     raw = RHO_PREFIX_PATTERN.sub("", raw).strip()
     return raw
 
+def normalize_rho_question(text: str) -> str:
+    """Remove @rho mention and redundant prefix to focus the model on the actual question."""
+    raw = (text or "").strip()
+    raw = RHO_MENTION_PATTERN.sub("", raw).strip()
+    raw = normalize_rho_text(raw)
+    return raw
+
+async def _load_comment(db: AsyncSession, comment_id: UUID) -> Comment | None:
+    result = await db.execute(
+        select(Comment)
+        .options(selectinload(Comment.author))
+        .where(Comment.id == comment_id)
+    )
+    return result.scalar_one_or_none()
+
+async def build_rho_thread_context(
+    *,
+    db: AsyncSession,
+    discussion: Discussion,
+    trigger_comment: Comment,
+    max_parent_depth: int = 6,
+    recent_limit: int = 14,
+    sibling_limit: int = 6,
+) -> dict[str, str]:
+    """Build a context bundle for Rho, including parent chain for subreplies."""
+    # Parent chain: root -> ... -> direct parent
+    parent_chain: list[Comment] = []
+    parent_id = trigger_comment.parent_id
+    seen: set[UUID] = set()
+    while parent_id and parent_id not in seen and len(parent_chain) < max_parent_depth:
+        seen.add(parent_id)
+        parent = await _load_comment(db, parent_id)
+        if not parent:
+            break
+        parent_chain.append(parent)
+        parent_id = parent.parent_id
+    parent_chain.reverse()
+
+    # Siblings: other replies to the same parent (useful for subthreads).
+    sibling_comments: list[Comment] = []
+    if trigger_comment.parent_id:
+        sib_result = await db.execute(
+            select(Comment)
+            .options(selectinload(Comment.author))
+            .where(
+                Comment.discussion_id == discussion.id,
+                Comment.parent_id == trigger_comment.parent_id,
+                Comment.id != trigger_comment.id,
+            )
+            .order_by(Comment.created_at.desc())
+            .limit(sibling_limit)
+        )
+        sibling_comments = list(reversed(sib_result.scalars().all()))
+
+    # Recent thread: last messages anywhere in the discussion.
+    recent_result = await db.execute(
+        select(Comment)
+        .options(selectinload(Comment.author))
+        .where(Comment.discussion_id == discussion.id)
+        .order_by(Comment.created_at.desc())
+        .limit(recent_limit)
+    )
+    recent_comments = list(reversed(recent_result.scalars().all()))
+
+    def fmt(items: list[Comment]) -> str:
+        lines: list[str] = []
+        for item in items:
+            author = getattr(item.author, "username", "unknown")
+            content = (item.content or "").strip()
+            if len(content) > 600:
+                content = content[:600] + "…"
+            lines.append(f"{author}: {content}")
+        return "\n".join(lines) if lines else "None."
+
+    return {
+        "parent_chain": fmt(parent_chain),
+        "siblings": fmt(sibling_comments),
+        "recent": fmt(recent_comments),
+    }
+
 
 async def get_or_create_rho_user(db: AsyncSession) -> User:
     result = await db.execute(select(User).where(User.username == RHO_USERNAME))
@@ -108,7 +188,7 @@ async def generate_rho_reply(
     *,
     discussion: Discussion,
     question: str,
-    recent_comments: list[Comment],
+    thread_context: dict[str, str],
 ) -> str:
     api_key = (
         os.environ.get("GEMINI_API_KEY")
@@ -124,10 +204,10 @@ async def generate_rho_reply(
         from google import genai
         from google.genai import types
 
-        history_lines = []
-        for item in recent_comments[-6:]:
-            history_lines.append(f"{item.author.username}: {item.content}")
-        history_text = "\n".join(history_lines) if history_lines else "No prior comments."
+        parent_chain_text = (thread_context.get("parent_chain") or "None.").strip() or "None."
+        sibling_text = (thread_context.get("siblings") or "None.").strip() or "None."
+        recent_text = (thread_context.get("recent") or "None.").strip() or "None."
+        focused_question = normalize_rho_question(question) or (question or "").strip()
 
         prompt = (
             "You are Rho, an AI mathematical collaborator inside ProofMesh.\n"
@@ -135,8 +215,14 @@ async def generate_rho_reply(
             "If uncertain, say what should be verified next.\n\n"
             f"Discussion title: {discussion.title}\n"
             f"Discussion content: {discussion.content[:1200]}\n\n"
-            f"Recent thread:\n{history_text}\n\n"
-            f"User mention: {question}\n"
+            "Parent chain (root -> direct parent):\n"
+            f"{parent_chain_text}\n\n"
+            "Sibling replies (same parent):\n"
+            f"{sibling_text}\n\n"
+            "Recent thread (for overall context):\n"
+            f"{recent_text}\n\n"
+            "User message (answer this):\n"
+            f"{focused_question}\n"
         )
 
         client = genai.Client(api_key=api_key)
@@ -1000,19 +1086,16 @@ async def create_comment(
         db.add(notification)
 
     if has_rho_mention(data.content):
-        recent_result = await db.execute(
-            select(Comment)
-            .options(selectinload(Comment.author))
-            .where(Comment.discussion_id == discussion_id)
-            .order_by(Comment.created_at.desc())
-            .limit(8)
-        )
-        recent_comments = list(reversed(recent_result.scalars().all()))
         rho_user = await get_or_create_rho_user(db)
+        thread_context = await build_rho_thread_context(
+            db=db,
+            discussion=discussion,
+            trigger_comment=comment,
+        )
         rho_reply = await generate_rho_reply(
             discussion=discussion,
             question=data.content,
-            recent_comments=recent_comments,
+            thread_context=thread_context,
         )
         db.add(
             Comment(
