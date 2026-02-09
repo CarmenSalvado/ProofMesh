@@ -1,7 +1,7 @@
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Request
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -27,7 +27,8 @@ from app.services.storage import put_object, delete_object
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 settings = get_settings()
 
-DEMO_EMAIL = "demo@proofmesh.app"
+DEMO_EMAIL = "demo@proofmesh.org"
+DEMO_EMAIL_LEGACY = "demo@proofmesh.app"
 DEMO_USERNAME = "lucia_mora"
 DEMO_PASSWORD = "proofmesh-demo"
 DEMO_BIO = "Collaborative mathematician exploring conjectures and formal proofs on ProofMesh."
@@ -107,7 +108,13 @@ async def demo_login(data: DemoLoginRequest | None = None, db: AsyncSession = De
                 detail="Invalid demo access code",
             )
 
-    result = await db.execute(select(User).where(User.email == DEMO_EMAIL))
+    # Backward-compatible lookup: older deployments used demo@proofmesh.app
+    result = await db.execute(
+        select(User).where(
+            (func.lower(User.username) == DEMO_USERNAME)
+            | (User.email.in_([DEMO_EMAIL, DEMO_EMAIL_LEGACY]))
+        )
+    )
     user = result.scalar_one_or_none()
 
     if not user:

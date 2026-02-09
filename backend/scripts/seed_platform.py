@@ -65,18 +65,18 @@ from app.services.auth import get_password_hash
 # ============================================================================
 
 USERS = [
-    {"username": "elena", "email": "elena@proofmesh.dev", "bio": "Category theory & topos. Working on synthetic homotopy."},
-    {"username": "marcus", "email": "marcus@proofmesh.dev", "bio": "Analytic number theory. Prime distribution enthusiast."},
-    {"username": "yuki", "email": "yuki@proofmesh.dev", "bio": "Algebraic geometry. Moduli spaces & deformation theory."},
-    {"username": "david", "email": "david@proofmesh.dev", "bio": "Logic and foundations. Type theory advocate."},
-    {"username": "priya", "email": "priya@proofmesh.dev", "bio": "Combinatorics, extremal graph theory, probabilistic methods."},
-    {"username": "omar", "email": "omar@proofmesh.dev", "bio": "Differential geometry. Ricci flow & geometric analysis."},
-    {"username": "sophie", "email": "sophie@proofmesh.dev", "bio": "Representation theory. Quantum groups researcher."},
-    {"username": "liang", "email": "liang@proofmesh.dev", "bio": "Harmonic analysis. Operator theory on manifolds."},
-    {"username": "anna", "email": "anna@proofmesh.dev", "bio": "Topology & knot theory. Low-dimensional manifolds."},
-    {"username": "theo", "email": "theo@proofmesh.dev", "bio": "Mathematical physics. QFT & renormalization."},
-    {"username": "carmen", "email": "carmen@proofmesh.dev", "bio": "Probability theory. Stochastic processes & SDEs."},
-    {"username": "felix", "email": "felix@proofmesh.dev", "bio": "Cryptography & computational complexity."},
+    {"username": "elena", "email": "elena@proofmesh.org", "bio": "Category theory & topos. Working on synthetic homotopy."},
+    {"username": "marcus", "email": "marcus@proofmesh.org", "bio": "Analytic number theory. Prime distribution enthusiast."},
+    {"username": "yuki", "email": "yuki@proofmesh.org", "bio": "Algebraic geometry. Moduli spaces & deformation theory."},
+    {"username": "david", "email": "david@proofmesh.org", "bio": "Logic and foundations. Type theory advocate."},
+    {"username": "priya", "email": "priya@proofmesh.org", "bio": "Combinatorics, extremal graph theory, probabilistic methods."},
+    {"username": "omar", "email": "omar@proofmesh.org", "bio": "Differential geometry. Ricci flow & geometric analysis."},
+    {"username": "sophie", "email": "sophie@proofmesh.org", "bio": "Representation theory. Quantum groups researcher."},
+    {"username": "liang", "email": "liang@proofmesh.org", "bio": "Harmonic analysis. Operator theory on manifolds."},
+    {"username": "anna", "email": "anna@proofmesh.org", "bio": "Topology & knot theory. Low-dimensional manifolds."},
+    {"username": "theo", "email": "theo@proofmesh.org", "bio": "Mathematical physics. QFT & renormalization."},
+    {"username": "carmen", "email": "carmen@proofmesh.org", "bio": "Probability theory. Stochastic processes & SDEs."},
+    {"username": "felix", "email": "felix@proofmesh.org", "bio": "Cryptography & computational complexity."},
 ]
 
 PROBLEMS = [

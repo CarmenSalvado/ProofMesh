@@ -11,7 +11,8 @@ from app.database import async_session_maker
 from app.models.user import User
 from app.services.auth import get_password_hash
 
-DEMO_EMAIL = "demo@proofmesh.app"
+DEMO_EMAIL = "demo@proofmesh.org"
+DEMO_EMAIL_LEGACY = "demo@proofmesh.app"
 DEMO_USERNAME = "lucia_mora"
 DEMO_PASSWORD = "proofmesh-demo"
 DEMO_BIO = "Collaborative mathematician exploring conjectures and formal proofs on ProofMesh."
@@ -204,7 +205,12 @@ async def seed_users(num_users: int = 80):
     async with async_session_maker() as db:
         async def ensure_demo_user() -> bool:
             """Ensure demo account exists with human-like identity."""
-            result_demo = await db.execute(select(User).where(User.email == DEMO_EMAIL))
+            result_demo = await db.execute(
+                select(User).where(
+                    (User.username == DEMO_USERNAME)
+                    | (User.email.in_([DEMO_EMAIL, DEMO_EMAIL_LEGACY]))
+                )
+            )
             demo_user = result_demo.scalar_one_or_none()
 
             if not demo_user:

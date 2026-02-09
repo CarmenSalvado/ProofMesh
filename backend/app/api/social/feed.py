@@ -435,21 +435,28 @@ async def seed_social(
 ):
     """Seed demo users, connections, problems, and activities."""
     samples = [
-        {"email": "sofia@proofmesh.dev", "username": "sofia", "bio": "Geometry and synthetic methods."},
-        {"email": "liam@proofmesh.dev", "username": "liam", "bio": "Analytic number theory explorer."},
-        {"email": "amara@proofmesh.dev", "username": "amara", "bio": "Topology + category theory."},
-        {"email": "kai@proofmesh.dev", "username": "kai", "bio": "Computation and experiments."},
-        {"email": "noah@proofmesh.dev", "username": "noah", "bio": "Algebra and structures."},
-        {"email": "lucia@proofmesh.dev", "username": "lucia", "bio": "Combinatorics and probabilistic methods."},
+        {"email": "sofia@proofmesh.org", "username": "sofia", "bio": "Geometry and synthetic methods."},
+        {"email": "liam@proofmesh.org", "username": "liam", "bio": "Analytic number theory explorer."},
+        {"email": "amara@proofmesh.org", "username": "amara", "bio": "Topology + category theory."},
+        {"email": "kai@proofmesh.org", "username": "kai", "bio": "Computation and experiments."},
+        {"email": "noah@proofmesh.org", "username": "noah", "bio": "Algebra and structures."},
+        {"email": "lucia@proofmesh.org", "username": "lucia", "bio": "Combinatorics and probabilistic methods."},
     ]
 
-    existing_result = await db.execute(select(User).where(User.email.in_([s["email"] for s in samples])))
-    existing = {u.email: u for u in existing_result.scalars().all()}
+    existing_result = await db.execute(
+        select(User).where(User.username.in_([s["username"] for s in samples]))
+    )
+    existing = {u.username: u for u in existing_result.scalars().all()}
 
     created_users: list[User] = []
     for sample in samples:
-        if sample["email"] in existing:
-            created_users.append(existing[sample["email"]])
+        if sample["username"] in existing:
+            user = existing[sample["username"]]
+            if user.email != sample["email"]:
+                user.email = sample["email"]
+            if user.bio != sample["bio"]:
+                user.bio = sample["bio"]
+            created_users.append(user)
             continue
         user = User(
             email=sample["email"],

@@ -168,7 +168,7 @@ export function TeamsSidebar({ className = "" }: TeamsSidebarProps) {
                   Team Slug
                 </label>
                 <div className="flex items-center gap-1 text-sm text-neutral-500">
-                  <span>proofmesh.dev/teams/</span>
+                  <span>proofmesh.org/teams/</span>
                   <input
                     type="text"
                     value={createForm.slug}

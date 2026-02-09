@@ -61,7 +61,7 @@ from app.services.auth import get_password_hash
 router = APIRouter(prefix="/api/social", tags=["social"])
 
 RHO_USERNAME = "rho"
-RHO_EMAIL = "rho@proofmesh.ai"
+RHO_EMAIL = "rho@proofmesh.org"
 RHO_AVATAR_URL = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 128'%3E%3Crect width='128' height='128' rx='64' fill='%23111827'/%3E%3Ctext x='64' y='84' text-anchor='middle' font-size='72' font-family='Georgia%2Cserif' fill='white'%3E%26%23961%3B%3C/text%3E%3C/svg%3E"
 RHO_MENTION_PATTERN = re.compile(r"(?:^|\s)@rho\b", flags=re.IGNORECASE)
 
@@ -463,44 +463,52 @@ async def seed_social(
     """Seed demo users, connections, problems, and activities."""
     samples = [
         {
-            "email": "sofia@proofmesh.dev",
+            "email": "sofia@proofmesh.org",
             "username": "sofia",
             "bio": "Geometry and synthetic methods.",
         },
         {
-            "email": "liam@proofmesh.dev",
+            "email": "liam@proofmesh.org",
             "username": "liam",
             "bio": "Analytic number theory explorer.",
         },
         {
-            "email": "amara@proofmesh.dev",
+            "email": "amara@proofmesh.org",
             "username": "amara",
             "bio": "Topology + category theory.",
         },
         {
-            "email": "kai@proofmesh.dev",
+            "email": "kai@proofmesh.org",
             "username": "kai",
             "bio": "Computation and experiments.",
         },
         {
-            "email": "noah@proofmesh.dev",
+            "email": "noah@proofmesh.org",
             "username": "noah",
             "bio": "Algebra and structures.",
         },
         {
-            "email": "lucia@proofmesh.dev",
+            "email": "lucia@proofmesh.org",
             "username": "lucia",
             "bio": "Combinatorics and probabilistic methods.",
         },
     ]
 
-    existing_result = await db.execute(select(User).where(User.email.in_([s["email"] for s in samples])))
-    existing = {u.email: u for u in existing_result.scalars().all()}
+    existing_result = await db.execute(
+        select(User).where(User.username.in_([s["username"] for s in samples]))
+    )
+    existing = {u.username: u for u in existing_result.scalars().all()}
 
     created_users: list[User] = []
     for sample in samples:
-        if sample["email"] in existing:
-            created_users.append(existing[sample["email"]])
+        if sample["username"] in existing:
+            user = existing[sample["username"]]
+            # Keep seed idempotent even if email domain changes over time.
+            if user.email != sample["email"]:
+                user.email = sample["email"]
+            if user.bio != sample["bio"]:
+                user.bio = sample["bio"]
+            created_users.append(user)
             continue
         user = User(
             email=sample["email"],

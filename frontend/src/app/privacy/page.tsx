@@ -108,7 +108,7 @@ export default function PrivacyPage() {
               <h2 className="text-xl font-semibold text-neutral-900 mb-4">6. Contact Us</h2>
               <p className="text-neutral-600">
                 If you have any questions about this Privacy Policy, please contact us at:
-                privacy@proofmesh.io
+                privacy@proofmesh.org
               </p>
             </section>
           </div>

@@ -126,7 +126,7 @@ export default function TermsPage() {
             <section className="mb-8">
               <h2 className="text-xl font-semibold text-neutral-900 mb-4">8. Contact</h2>
               <p className="text-neutral-600">
-                For questions about these Terms, please contact us at: legal@proofmesh.io
+                For questions about these Terms, please contact us at: legal@proofmesh.org
               </p>
             </section>
           </div>

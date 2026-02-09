@@ -49,7 +49,7 @@ python -m scripts.seed_realistic.run --help
 - Real university emails (@mit.edu, @stanford.edu, @ox.ac.uk, etc.)
 - Research areas and academic bios
 - Diverse international names
-- Demo account with human profile: `demo@proofmesh.app` (`@lucia_mora`)
+- Demo account with human profile: `demo@proofmesh.org` (`@lucia_mora`)
 
 **Universities included:**
 MIT, Stanford, Oxford, Cambridge, ETH Zürich, Princeton, Harvard, Berkeley, ENS, Imperial College, University of Tokyo, and more.

@@ -318,7 +318,7 @@ export default function TeamsPage() {
                   Team Slug
                 </label>
                 <div className="flex items-center gap-1">
-                  <span className="text-sm text-neutral-500">proofmesh.dev/teams/</span>
+                  <span className="text-sm text-neutral-500">proofmesh.org/teams/</span>
                   <input
                     type="text"
                     value={createForm.slug}
