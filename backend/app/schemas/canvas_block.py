@@ -15,8 +15,8 @@ class CanvasBlockCreate(CanvasBlockBase):
 
 class CanvasBlockUpdate(BaseModel):
     """Schema for updating a canvas block."""
-    name: str = Field(..., min_length=1, max_length=255)
-    node_ids: list[UUID] = Field(default_factory=list)
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    node_ids: list[UUID] | None = None
 
 
 class CanvasBlockResponse(CanvasBlockBase):

@@ -396,6 +396,7 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
     const existingIds = new Set(libraryItems.map((item) => item.id));
     setBlocks((prev) => {
       let changed = false;
+      const removedBlockIds: string[] = [];
       const next = prev
         .map((block) => {
           const filtered = block.nodeIds.filter((id) => existingIds.has(id));
@@ -408,6 +409,7 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
         .filter((block) => {
           if (block.nodeIds.length > 0) return true;
           changed = true;
+          removedBlockIds.push(block.id);
           return false;
         });
 
@@ -419,14 +421,15 @@ function CanvasPageContent({ problemId }: { problemId: string }) {
           return original && (original.nodeIds.length !== b.nodeIds.length);
         });
         
-        blocksToUpdate.forEach(async (block) => {
-          try {
-            await updateCanvasBlock(problemId, block.id, {
+        void Promise.all([
+          ...blocksToUpdate.map((block) =>
+            updateCanvasBlock(problemId, block.id, {
               node_ids: block.nodeIds,
-            });
-          } catch (err) {
-            console.error("Failed to update block:", err);
-          }
+            })
+          ),
+          ...removedBlockIds.map((blockId) => deleteCanvasBlock(problemId, blockId)),
+        ]).catch((err) => {
+          console.error("Failed to sync block cleanup:", err);
         });
         
         if (selectedBlockId && !next.find((b) => b.id === selectedBlockId)) {

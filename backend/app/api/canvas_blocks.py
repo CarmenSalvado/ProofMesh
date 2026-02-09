@@ -76,6 +76,7 @@ async def get_block(
 
 
 @router.put("/{block_id}", response_model=CanvasBlockResponse)
+@router.patch("/{block_id}", response_model=CanvasBlockResponse)
 async def update_block(
     problem_id: UUID,
     block_id: UUID,
@@ -97,9 +98,16 @@ async def update_block(
             detail="Canvas block not found"
         )
     
-    # Update fields
-    block.name = block_data.name
-    block.node_ids = block_data.node_ids
+    if block_data.name is None and block_data.node_ids is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Provide at least one field to update",
+        )
+
+    if block_data.name is not None:
+        block.name = block_data.name
+    if block_data.node_ids is not None:
+        block.node_ids = block_data.node_ids
     
     await db.commit()
     await db.refresh(block)

@@ -2003,7 +2003,7 @@ export async function updateCanvasBlock(
 }
 
 export async function deleteCanvasBlock(problemId: string, blockId: string): Promise<void> {
-	return apiFetch(`/canvas-blocks/problems/${problemId}/blocks/${blockId}`, {
+	return apiFetch(`/problems/${problemId}/blocks/${blockId}`, {
 		method: "DELETE",
 	});
 }

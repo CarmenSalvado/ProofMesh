@@ -11,6 +11,7 @@ from app.database import get_db
 from app.models.problem import Problem
 from app.models.library_item import LibraryItem, LibraryItemStatus, LibraryItemKind
 from app.models.activity import Activity, ActivityType
+from app.models.canvas_block import CanvasBlock
 from app.models.discussion import Discussion
 from app.models.comment import Comment
 from app.models.user import User
@@ -451,6 +452,22 @@ async def delete_library_item(
     item = result.scalar_one_or_none()
     if not item:
         raise HTTPException(status_code=404, detail="Library item not found")
+
+    # Keep canvas blocks in sync:
+    # - remove deleted node from block memberships
+    # - delete blocks that become empty
+    blocks_result = await db.execute(
+        select(CanvasBlock).where(CanvasBlock.problem_id == problem_id)
+    )
+    blocks = blocks_result.scalars().all()
+    for block in blocks:
+        if item.id not in (block.node_ids or []):
+            continue
+        remaining_node_ids = [node_id for node_id in block.node_ids if node_id != item.id]
+        if remaining_node_ids:
+            block.node_ids = remaining_node_ids
+        else:
+            await db.delete(block)
     
     await db.delete(item)
     await db.commit()
