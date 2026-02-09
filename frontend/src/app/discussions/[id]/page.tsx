@@ -20,6 +20,7 @@ import {
 import { extractPostAttachments } from "@/lib/postAttachments";
 import { DashboardNavbar } from "@/components/layout/DashboardNavbar";
 import { PostAttachmentCard } from "@/components/social";
+import { RichSocialText } from "@/components/social/RichSocialText";
 import {
   MessageSquare,
   CheckCircle2,
@@ -34,7 +35,6 @@ import {
 } from "lucide-react";
 
 const RHO_MENTION_REGEX = /(?:^|\s)@rho\b/i;
-const PROJECT_LINK_TOKEN_REGEX = /^\[\[project:([^|\]]+)\|([^\]]+)\]\]$/i;
 
 type AutocompleteScope = "main" | "reply";
 type AutocompleteMode = "user" | "project";
@@ -103,43 +103,7 @@ function getAutocompleteContext(text: string, cursor: number): AutocompleteConte
 }
 
 function highlightMentions(text: string) {
-  const parts = text.split(/(\[\[project:[^\]|]+\|[^\]]+\]\]|@[A-Za-z0-9._-]+)/g);
-  return parts.map((part, idx) => {
-    if (!part) return null;
-
-    const projectMatch = part.match(PROJECT_LINK_TOKEN_REGEX);
-    if (projectMatch) {
-      const [, projectId, projectTitle] = projectMatch;
-      return (
-        <Link
-          key={`project-${idx}`}
-          href={`/problems/${encodeURIComponent(projectId)}`}
-          title={`Open project ${projectTitle}`}
-          className="inline-flex items-center rounded-full border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-900 shadow-[inset_0_0_0_1px_rgba(16,185,129,0.08)] transition hover:bg-emerald-100"
-        >
-          #{projectTitle}
-        </Link>
-      );
-    }
-
-    if (!part.startsWith("@")) return <span key={`text-${idx}`}>{part}</span>;
-    const isRho = part.toLowerCase() === "@rho";
-    const mentionedUsername = part.slice(1).trim();
-    return (
-      <Link
-        key={`mention-${idx}`}
-        href={`/users/${encodeURIComponent(mentionedUsername)}`}
-        title={`Open profile @${mentionedUsername}`}
-        className={
-          isRho
-            ? "inline-flex items-center rounded-full border border-emerald-300 bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-900 shadow-[inset_0_0_0_1px_rgba(16,185,129,0.15)] transition hover:bg-emerald-200"
-            : "inline-flex items-center rounded-full border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-900 shadow-[inset_0_0_0_1px_rgba(16,185,129,0.08)] transition hover:bg-emerald-100"
-        }
-      >
-        {part}
-      </Link>
-    );
-  });
+  return <RichSocialText text={text} />;
 }
 
 export default function DiscussionDetailPage() {

@@ -36,10 +36,17 @@ RHO_USERNAME = "rho"
 RHO_EMAIL = "rho@proofmesh.org"
 RHO_AVATAR_URL = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 128'%3E%3Crect width='128' height='128' rx='64' fill='%23111827'/%3E%3Ctext x='64' y='84' text-anchor='middle' font-size='72' font-family='Georgia%2Cserif' fill='white'%3E%26%23961%3B%3C/text%3E%3C/svg%3E"
 RHO_MENTION_PATTERN = re.compile(r"(?:^|\s)@rho\b", flags=re.IGNORECASE)
+RHO_PREFIX_PATTERN = re.compile(r"^\s*(?:@?rho)\s*[:\\-–—]\\s*", flags=re.IGNORECASE)
 
 
 def has_rho_mention(content: str) -> bool:
     return bool(RHO_MENTION_PATTERN.search(content or ""))
+
+def normalize_rho_text(text: str) -> str:
+    """Remove redundant 'Rho:' prefix if present (UI already shows author)."""
+    raw = (text or "").strip()
+    raw = RHO_PREFIX_PATTERN.sub("", raw).strip()
+    return raw
 
 
 async def get_or_create_rho_user(db: AsyncSession) -> User:
@@ -78,7 +85,7 @@ async def generate_rho_reply(
     api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_GENERATIVE_AI_API_KEY")
     if not api_key:
         return (
-            "Rho: I can help critique this, but Gemini is not configured yet. "
+            "I can help critique this, but Gemini is not configured yet. "
             "Set GEMINI_API_KEY and mention @rho again."
         )
 
@@ -111,12 +118,13 @@ async def generate_rho_reply(
             ),
         )
         text = (response.text or "").strip()
+        text = normalize_rho_text(text)
         if not text:
-            return "Rho: I could not produce a reliable answer. Please share more details or equations."
-        return f"Rho: {text[:1800]}"
+            return "I could not produce a reliable answer. Please share more details or equations."
+        return text[:1800]
     except Exception:
         return (
-            "Rho: I could not run a full verification right now. "
+            "I could not run a full verification right now. "
             "Please provide the exact claim and assumptions, and I will check it step by step."
         )
 
